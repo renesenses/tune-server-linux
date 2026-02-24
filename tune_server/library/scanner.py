@@ -8,8 +8,9 @@ import structlog
 from tune_server.db.engine import Database
 from tune_server.db.repository import AlbumRepo, ArtistRepo, TrackRepo
 from tune_server.event_bus import Event, EventBus, EventType
-from tune_server.library.artwork import get_album_artwork
+from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork
 from tune_server.library.metadata_reader import SUPPORTED_EXTENSIONS, read_metadata
+from tune_server.config import settings
 from tune_server.models import Track
 
 logger = structlog.get_logger()
@@ -136,6 +137,14 @@ class LibraryScanner:
         # Extract cover art if album doesn't have one yet
         if not album.cover_path:
             cover_path = await asyncio.to_thread(get_album_artwork, file_path)
+            if not cover_path:
+                # Fallback: try MusicBrainz Cover Art Archive
+                cover_path = await asyncio.to_thread(
+                    fetch_cover_from_musicbrainz,
+                    artist_name,
+                    metadata.album,
+                    settings.artwork_cache_dir,
+                )
             if cover_path:
                 album.cover_path = cover_path
                 await self._album_repo.update(album)

@@ -212,6 +212,14 @@ class AlbumRepo:
         await self._db.execute("DELETE FROM albums WHERE id = ?", (album_id,))
         await self._db.commit()
 
+    async def list_without_cover(self) -> list[Album]:
+        rows = await self._db.fetchall(
+            """SELECT al.*, ar.name as artist_name
+               FROM albums al LEFT JOIN artists ar ON al.artist_id = ar.id
+               WHERE al.cover_path IS NULL ORDER BY al.title""",
+        )
+        return [_row_to_album(r) for r in rows]
+
     async def search(self, query: str, limit: int = 50) -> list[Album]:
         rows = await self._db.fetchall(
             """SELECT al.*, ar.name as artist_name FROM albums al

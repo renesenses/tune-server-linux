@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+import structlog
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from tune_server.api.deps import deps
 from tune_server.config import settings
 from tune_server.db.repository import full_text_search
+from tune_server.event_bus import Event, EventType
+from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork
 from tune_server.models import (
     Album,
     AlbumUpdateRequest,
@@ -19,6 +23,7 @@ from tune_server.models import (
     TrackUpdateRequest,
 )
 
+logger = structlog.get_logger()
 router = APIRouter(prefix="/library", tags=["library"])
 
 
@@ -148,6 +153,68 @@ async def delete_artist(artist_id: int):
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
     await deps.artist_repo.delete(artist_id)
+
+
+_artwork_rescan_running = False
+
+
+async def _rescan_artwork_task() -> None:
+    global _artwork_rescan_running
+    _artwork_rescan_running = True
+    try:
+        albums = await deps.album_repo.list_without_cover()
+        total = len(albums)
+        found = 0
+        logger.info("artwork_rescan_started", total=total)
+
+        for i, album in enumerate(albums):
+            # Try local extraction first (from any track of the album)
+            tracks = await deps.track_repo.list_by_album(album.id)
+            cover_path = None
+            for track in tracks:
+                cover_path = await asyncio.to_thread(get_album_artwork, track.file_path)
+                if cover_path:
+                    break
+
+            # Fallback: MusicBrainz
+            if not cover_path and album.artist_name and album.title:
+                cover_path = await asyncio.to_thread(
+                    fetch_cover_from_musicbrainz,
+                    album.artist_name,
+                    album.title,
+                    settings.artwork_cache_dir,
+                )
+
+            if cover_path:
+                album.cover_path = cover_path
+                await deps.album_repo.update(album)
+                found += 1
+
+            # Emit progress every album
+            await deps.event_bus.emit(Event(
+                type=EventType.LIBRARY_ARTWORK_PROGRESS,
+                data={"current": i + 1, "total": total, "found": found},
+                source="artwork_rescan",
+            ))
+
+        logger.info("artwork_rescan_completed", total=total, found=found)
+        await deps.event_bus.emit(Event(
+            type=EventType.LIBRARY_ARTWORK_COMPLETED,
+            data={"total": total, "found": found},
+            source="artwork_rescan",
+        ))
+    except Exception:
+        logger.exception("artwork_rescan_error")
+    finally:
+        _artwork_rescan_running = False
+
+
+@router.post("/artwork/rescan")
+async def rescan_artwork():
+    if _artwork_rescan_running:
+        return {"status": "already_running"}
+    asyncio.create_task(_rescan_artwork_task())
+    return {"status": "started"}
 
 
 @router.get("/artwork/{filename}")
