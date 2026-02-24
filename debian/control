@@ -1,0 +1,16 @@
+Source: tune-server
+Section: sound
+Priority: optional
+Maintainer: renesenses <renesenses@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13), python3 (>= 3.11), python3-venv, python3-pip
+Standards-Version: 4.6.2
+Homepage: https://github.com/renesenses/tune-server
+
+Package: tune-server
+Architecture: all
+Depends: python3 (>= 3.11), python3-venv, ffmpeg, libasound2-dev,
+ libportaudio2, portaudio19-dev, avahi-daemon, ${misc:Depends}
+Description: Multi-room music server
+ Network-accessible music server with DLNA/UPnP, AirPlay,
+ and local audio output. Supports Tidal, Qobuz, YouTube Music,
+ and Amazon Music streaming services.

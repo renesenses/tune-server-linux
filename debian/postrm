@@ -1,0 +1,31 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove)
+        # Disable the service
+        systemctl disable tune-server.service 2>/dev/null || true
+        systemctl daemon-reload
+        ;;
+
+    purge)
+        # Disable the service
+        systemctl disable tune-server.service 2>/dev/null || true
+        systemctl daemon-reload
+
+        # Remove the system user
+        if getent passwd tune-server > /dev/null 2>&1; then
+            deluser --system tune-server 2>/dev/null || true
+        fi
+        if getent group tune-server > /dev/null 2>&1; then
+            delgroup --system tune-server 2>/dev/null || true
+        fi
+
+        # Clean up data directory (venv, db, cache)
+        rm -rf /opt/tune-server
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        # Stop the service before removal
+        if systemctl is-active --quiet tune-server.service; then
+            systemctl stop tune-server.service
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

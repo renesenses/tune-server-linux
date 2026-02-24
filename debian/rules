@@ -1,0 +1,46 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export DESTDIR = debian/tune-server
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# Nothing to build at this stage
+
+override_dh_auto_install:
+	# Create target directory structure
+	install -d $(DESTDIR)/opt/tune-server
+	install -d $(DESTDIR)/opt/tune-server/tune_server
+
+	# Copy application source
+	cp -r tune_server/* $(DESTDIR)/opt/tune-server/tune_server/
+	install -m 644 pyproject.toml $(DESTDIR)/opt/tune-server/pyproject.toml
+
+	# Install .env.example as default config
+	install -m 640 .env.example $(DESTDIR)/opt/tune-server/.env
+
+	# Create virtualenv and install dependencies
+	python3 -m venv $(DESTDIR)/opt/tune-server/.venv
+	$(DESTDIR)/opt/tune-server/.venv/bin/pip install --no-cache-dir .
+
+	# Fix virtualenv shebang paths for installed system
+	# The venv was created with build-time paths; rewrite them
+	cd $(DESTDIR)/opt/tune-server/.venv && \
+		sed -i "s|$(CURDIR)/$(DESTDIR)||g" bin/activate bin/pip* pyvenv.cfg 2>/dev/null || true
+	find $(DESTDIR)/opt/tune-server/.venv/bin -type f -exec \
+		sed -i "1s|^#!$(CURDIR)/$(DESTDIR)/opt/tune-server/.venv/bin/python|#!/opt/tune-server/.venv/bin/python|" {} + 2>/dev/null || true
+
+	# Install systemd service
+	install -d $(DESTDIR)/lib/systemd/system
+	install -m 644 tune-server.service $(DESTDIR)/lib/systemd/system/tune-server.service
+
+override_dh_auto_test:
+	# Skip tests during package build
+
+override_dh_shlibdeps:
+	# Skip shared library dependencies (pure Python package)
+
+override_dh_strip:
+	# Skip strip (pure Python package)

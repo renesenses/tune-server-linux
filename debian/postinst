@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        # Create system user if it doesn't exist
+        if ! getent passwd tune-server > /dev/null 2>&1; then
+            adduser --system --group --home /opt/tune-server \
+                --no-create-home --shell /usr/sbin/nologin tune-server
+        fi
+
+        # Set ownership and permissions
+        chown -R tune-server:tune-server /opt/tune-server
+        chmod 750 /opt/tune-server
+        chmod 640 /opt/tune-server/.env
+
+        # Reload systemd and enable the service
+        systemctl daemon-reload
+        systemctl enable tune-server.service
+
+        echo "tune-server installed successfully."
+        echo "Edit /opt/tune-server/.env to configure, then run:"
+        echo "  systemctl start tune-server"
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
