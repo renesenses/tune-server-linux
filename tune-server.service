@@ -1,0 +1,41 @@
+[Unit]
+Description=Tune Server - Multi-room music server
+Documentation=https://github.com/renesenses/tune-server
+After=network-online.target avahi-daemon.service
+Wants=network-online.target avahi-daemon.service
+
+[Service]
+Type=simple
+User=tune-server
+Group=tune-server
+
+WorkingDirectory=/opt/tune-server
+ExecStart=/opt/tune-server/.venv/bin/python -m tune_server
+Restart=on-failure
+RestartSec=5
+
+# Environment
+EnvironmentFile=-/opt/tune-server/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tune-server
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+# Allow read access to music directories and write to data directory
+ReadWritePaths=/opt/tune-server
+ReadOnlyPaths=/home
+
+[Install]
+WantedBy=multi-user.target

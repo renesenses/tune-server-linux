@@ -1,0 +1,313 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import TYPE_CHECKING, Optional
+
+import structlog
+
+from tune_server.config import settings
+from tune_server.models import Album, Artist, AudioFormat, SearchResult, Source, Track
+from tune_server.streaming.base import StreamingService
+from tune_server.streaming.cache import StreamUrlCache
+
+if TYPE_CHECKING:
+    from tune_server.db.engine import Database
+
+logger = structlog.get_logger()
+
+
+class TidalService(StreamingService):
+    """Tidal streaming service integration using tidalapi."""
+
+    def __init__(self) -> None:
+        self._session = None
+        self._url_cache = StreamUrlCache(ttl_seconds=240)  # Tidal URLs expire ~5min
+
+    @property
+    def name(self) -> str:
+        return "tidal"
+
+    @property
+    def is_authenticated(self) -> bool:
+        return self._session is not None and self._session.check_login()
+
+    async def _ensure_authenticated(self) -> bool:
+        """Check session validity and refresh if needed."""
+        if not self._session:
+            return False
+        try:
+            valid = await asyncio.wait_for(
+                asyncio.to_thread(self._session.check_login), timeout=30
+            )
+            if valid:
+                return True
+            logger.info("tidal_token_refreshing")
+            refreshed = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._session.token_refresh, self._session.refresh_token
+                ),
+                timeout=30,
+            )
+            if refreshed and self._session.check_login():
+                logger.info("tidal_token_refreshed")
+                return True
+        except asyncio.TimeoutError:
+            logger.warning("tidal_refresh_timeout")
+        except Exception:
+            logger.exception("tidal_refresh_error")
+        return False
+
+    async def authenticate(self, **kwargs) -> bool:
+        try:
+            import tidalapi
+
+            session = tidalapi.Session()
+
+            # OAuth device flow
+            login, future = session.login_oauth()
+
+            logger.info(
+                "tidal_auth_started",
+                verification_url=login.verification_uri_complete,
+            )
+
+            # Wait for user to complete auth
+            await asyncio.to_thread(future.result, 300)
+
+            if session.check_login():
+                self._session = session
+                logger.info("tidal_authenticated", user=session.user.name if session.user else "unknown")
+                return True
+
+            logger.warning("tidal_auth_failed")
+            return False
+
+        except ImportError:
+            logger.warning("tidalapi_not_installed")
+            return False
+        except Exception:
+            logger.exception("tidal_auth_error")
+            return False
+
+    async def search(self, query: str, limit: int = 50) -> SearchResult:
+        if not await self._ensure_authenticated():
+            return SearchResult()
+
+        try:
+            results = await asyncio.wait_for(
+                asyncio.to_thread(self._session.search, query, limit=limit),
+                timeout=30,
+            )
+
+            tracks = []
+            for t in results.get("tracks", [])[:limit]:
+                tracks.append(self._map_track(t))
+
+            albums = []
+            for a in results.get("albums", [])[:limit]:
+                albums.append(self._map_album(a))
+
+            artists = []
+            for ar in results.get("artists", [])[:limit]:
+                artists.append(self._map_artist(ar))
+
+            return SearchResult(tracks=tracks, albums=albums, artists=artists)
+
+        except Exception:
+            logger.exception("tidal_search_error")
+            return SearchResult()
+
+    async def get_track(self, track_id: str) -> Optional[Track]:
+        if not await self._ensure_authenticated():
+            return None
+        try:
+            t = await asyncio.wait_for(
+                asyncio.to_thread(self._session.track, int(track_id)), timeout=30
+            )
+            return self._map_track(t)
+        except Exception:
+            logger.exception("tidal_get_track_error", track_id=track_id)
+            return None
+
+    async def get_album(self, album_id: str) -> Optional[Album]:
+        if not await self._ensure_authenticated():
+            return None
+        try:
+            a = await asyncio.wait_for(
+                asyncio.to_thread(self._session.album, int(album_id)), timeout=30
+            )
+            return self._map_album(a)
+        except Exception:
+            logger.exception("tidal_get_album_error", album_id=album_id)
+            return None
+
+    async def get_album_tracks(self, album_id: str) -> list[Track]:
+        if not await self._ensure_authenticated():
+            return []
+        try:
+            album = await asyncio.wait_for(
+                asyncio.to_thread(self._session.album, int(album_id)), timeout=30
+            )
+            tidal_tracks = await asyncio.wait_for(
+                asyncio.to_thread(album.tracks), timeout=30
+            )
+            return [self._map_track(t) for t in tidal_tracks]
+        except Exception:
+            logger.exception("tidal_album_tracks_error", album_id=album_id)
+            return []
+
+    async def get_artist(self, artist_id: str) -> Optional[Artist]:
+        if not await self._ensure_authenticated():
+            return None
+        try:
+            ar = await asyncio.wait_for(
+                asyncio.to_thread(self._session.artist, int(artist_id)), timeout=30
+            )
+            return self._map_artist(ar)
+        except Exception:
+            return None
+
+    async def get_artist_albums(self, artist_id: str) -> list[Album]:
+        if not await self._ensure_authenticated():
+            return []
+        try:
+            artist = await asyncio.wait_for(
+                asyncio.to_thread(self._session.artist, int(artist_id)), timeout=30
+            )
+            albums = await asyncio.wait_for(
+                asyncio.to_thread(artist.get_albums), timeout=30
+            )
+            return [self._map_album(a) for a in albums]
+        except Exception:
+            logger.exception("tidal_artist_albums_error", artist_id=artist_id)
+            return []
+
+    async def get_artist_tracks(self, artist_id: str) -> list[Track]:
+        if not await self._ensure_authenticated():
+            return []
+        try:
+            artist = await asyncio.wait_for(
+                asyncio.to_thread(self._session.artist, int(artist_id)), timeout=30
+            )
+            tracks = await asyncio.wait_for(
+                asyncio.to_thread(artist.get_top_tracks), timeout=30
+            )
+            return [self._map_track(t) for t in tracks]
+        except Exception:
+            logger.exception("tidal_artist_tracks_error", artist_id=artist_id)
+            return []
+
+    async def get_stream_url(self, track_id: str) -> Optional[str]:
+        cached = self._url_cache.get(track_id)
+        if cached:
+            return cached
+
+        if not await self._ensure_authenticated():
+            return None
+
+        try:
+            track = await asyncio.wait_for(
+                asyncio.to_thread(self._session.track, int(track_id)), timeout=30
+            )
+            stream = await asyncio.wait_for(
+                asyncio.to_thread(track.get_stream), timeout=30
+            )
+            url = stream.manifest
+            self._url_cache.set(track_id, url)
+            return url
+        except Exception:
+            logger.exception("tidal_stream_url_error", track_id=track_id)
+            return None
+
+    async def save_auth(self, db: Database) -> None:
+        if not self._session:
+            return
+        try:
+            token_data = json.dumps({
+                "session_id": self._session.session_id,
+                "token_type": self._session.token_type,
+                "access_token": self._session.access_token,
+                "refresh_token": self._session.refresh_token,
+            })
+            await db.execute(
+                "INSERT OR REPLACE INTO streaming_auth (service, token_data, updated_at) "
+                "VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("tidal", token_data),
+            )
+            await db.commit()
+            logger.info("tidal_auth_saved")
+        except Exception:
+            logger.exception("tidal_save_auth_error")
+
+    async def restore_auth(self, db: Database) -> bool:
+        try:
+            import tidalapi
+
+            row = await db.fetchone(
+                "SELECT token_data FROM streaming_auth WHERE service = ?", ("tidal",)
+            )
+            if not row:
+                return False
+
+            data = json.loads(row["token_data"])
+            session = tidalapi.Session()
+            session.load_oauth_session(
+                data.get("token_type", "Bearer"),
+                data.get("access_token", ""),
+                data.get("refresh_token", ""),
+            )
+
+            if session.check_login():
+                self._session = session
+                logger.info("tidal_auth_restored")
+                return True
+
+            logger.warning("tidal_auth_restore_expired")
+            return False
+        except ImportError:
+            logger.warning("tidalapi_not_installed")
+            return False
+        except Exception:
+            logger.exception("tidal_restore_auth_error")
+            return False
+
+    async def close(self) -> None:
+        self._session = None
+
+    def _map_track(self, t) -> Track:
+        duration = int(t.duration * 1000) if t.duration else 0
+        artist_name = t.artist.name if t.artist else "Unknown"
+        album_title = t.album.name if t.album else None
+
+        quality = getattr(t, "audio_quality", None)
+        fmt = AudioFormat.FLAC if quality in ("LOSSLESS", "HI_RES", "HI_RES_LOSSLESS") else AudioFormat.AAC
+
+        return Track(
+            title=t.name or "Unknown",
+            artist_name=artist_name,
+            album_title=album_title,
+            duration_ms=duration,
+            format=fmt,
+            sample_rate=44100,
+            bit_depth=16,
+            channels=2,
+            source=Source.TIDAL,
+            source_id=str(t.id),
+        )
+
+    def _map_album(self, a) -> Album:
+        return Album(
+            title=a.name or "Unknown",
+            artist_name=a.artist.name if a.artist else "Unknown",
+            year=getattr(a, "year", None),
+            track_count=getattr(a, "num_tracks", 0) or 0,
+            source=Source.TIDAL,
+            source_id=str(a.id),
+        )
+
+    def _map_artist(self, ar) -> Artist:
+        return Artist(
+            name=ar.name or "Unknown",
+            source=Source.TIDAL,
+        )

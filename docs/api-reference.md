@@ -1,0 +1,1005 @@
+# API Reference
+
+Base URL: `http://localhost:8888/api/v1`
+
+## Authentication
+
+When `TUNE_API_KEY` is configured, all requests (except `/system/health`) must include the API key header:
+
+```
+X-API-Key: your-secret-key
+```
+
+If the key is missing or invalid, the server returns `401 Unauthorized`.
+
+When `TUNE_API_KEY` is not set (default), no authentication is required.
+
+---
+
+## Library
+
+### GET /library/tracks
+
+List all tracks. Supports pagination.
+
+**Query Parameters:**
+- `limit` (int, default 100) — Max results (1-500)
+- `offset` (int, default 0) — Skip N results (must be >= 0)
+
+**Response:** `Track[]`
+
+### GET /library/tracks/{id}
+
+Get a single track by ID.
+
+**Response:** `Track`
+
+### PUT /library/tracks/{id}
+
+Update track metadata.
+
+**Request Body:**
+```json
+{
+    "title": "New Title",
+    "track_number": 3
+}
+```
+
+**Response:** `Track`
+
+### DELETE /library/tracks/{id}
+
+Delete a track.
+
+**Response:** 204 No Content
+
+### GET /library/albums
+
+List all albums.
+
+**Query Parameters:**
+- `limit` (int, default 100) — Max results (1-500)
+- `offset` (int, default 0) — Skip N results (must be >= 0)
+
+**Response:** `Album[]`
+
+### GET /library/albums/{id}
+
+Get a single album.
+
+**Response:** `Album`
+
+### GET /library/albums/{id}/tracks
+
+Get all tracks in an album, ordered by disc/track number.
+
+**Response:** `Track[]`
+
+### PUT /library/albums/{id}
+
+Update album metadata.
+
+**Request Body:**
+```json
+{
+    "title": "Updated Title",
+    "year": 1999
+}
+```
+
+**Response:** `Album`
+
+### DELETE /library/albums/{id}
+
+Delete an album.
+
+**Response:** 204 No Content
+
+### GET /library/artists
+
+List all artists.
+
+**Query Parameters:**
+- `limit` (int, default 100) — Max results (1-500)
+- `offset` (int, default 0) — Skip N results (must be >= 0)
+
+**Response:** `Artist[]`
+
+### GET /library/artists/{id}
+
+Get a single artist.
+
+**Response:** `Artist`
+
+### GET /library/artists/{id}/albums
+
+Get all albums by an artist.
+
+**Response:** `Album[]`
+
+### GET /library/artists/{id}/tracks
+
+Get all tracks by an artist.
+
+**Response:** `Track[]`
+
+### PUT /library/artists/{id}
+
+Update artist metadata.
+
+**Request Body:**
+```json
+{
+    "name": "Updated Name",
+    "sort_name": "Name, Updated"
+}
+```
+
+**Response:** `Artist`
+
+### DELETE /library/artists/{id}
+
+Delete an artist.
+
+**Response:** 204 No Content
+
+### GET /library/search
+
+Full-text search across tracks, albums, and artists (local library only).
+
+**Query Parameters:**
+- `q` (string, required) — Search query
+- `limit` (int, default 50) — Max results per category
+
+**Response:**
+```json
+{
+    "tracks": [Track, ...],
+    "albums": [Album, ...],
+    "artists": [Artist, ...]
+}
+```
+
+### GET /library/artwork/{filename}
+
+Serve album artwork from the artwork cache.
+
+**Response:** Image file (JPEG/PNG)
+
+**Errors:**
+- `404` — Artwork not found
+- `400` — Invalid filename (path traversal attempt)
+
+### GET /library/stats
+
+Library statistics (track, album, artist counts).
+
+**Response:**
+```json
+{
+    "tracks": 7491,
+    "albums": 838,
+    "artists": 402
+}
+```
+
+---
+
+## Federated Search
+
+### GET /search
+
+Search across local library and all authenticated streaming services simultaneously.
+
+**Query Parameters:**
+- `q` (string, required) — Search query
+- `limit` (int, default 20, max 100) — Max results per source
+- `sources` (string, optional) — Comma-separated source filter (e.g., `local,tidal,youtube`)
+
+**Response:**
+```json
+{
+    "local": {
+        "tracks": [Track, ...],
+        "albums": [Album, ...],
+        "artists": [Artist, ...]
+    },
+    "services": {
+        "tidal": {
+            "tracks": [Track, ...],
+            "albums": [Album, ...],
+            "artists": [Artist, ...]
+        },
+        "youtube": {
+            "tracks": [Track, ...],
+            "albums": [Album, ...],
+            "artists": [Artist, ...]
+        }
+    }
+}
+```
+
+**Behavior:**
+- All sources are queried in parallel via `asyncio.gather`
+- If a streaming service fails, its results are omitted (warning logged, other results returned)
+- Only authenticated services are queried
+- If `sources` is omitted, all available sources are searched
+
+```mermaid
+flowchart LR
+    CLIENT["Client"] -->|"GET /search?q=radiohead"| API["API"]
+    API --> LOCAL["Local FTS5"]
+    API --> TIDAL["Tidal API"]
+    API --> QOBUZ["Qobuz API"]
+    API --> YT["YouTube Music"]
+    API --> AMZN["Amazon Music"]
+    LOCAL --> MERGE["Merge Results"]
+    TIDAL --> MERGE
+    QOBUZ --> MERGE
+    YT --> MERGE
+    AMZN --> MERGE
+    MERGE --> CLIENT
+```
+
+---
+
+## Playlists
+
+### POST /playlists
+
+Create a new playlist.
+
+**Request Body:**
+```json
+{
+    "name": "Favorites",
+    "description": "My top tracks"
+}
+```
+
+**Response:** `Playlist` (201 Created)
+
+**Events emitted:** `PLAYLIST_CREATED`
+
+### GET /playlists
+
+List all playlists.
+
+**Query Parameters:**
+- `limit` (int, default 100)
+- `offset` (int, default 0)
+
+**Response:** `Playlist[]`
+
+### GET /playlists/{playlist_id}
+
+Get playlist details.
+
+**Response:** `Playlist`
+
+### PUT /playlists/{playlist_id}
+
+Update playlist name/description.
+
+**Request Body:**
+```json
+{
+    "name": "New Name",
+    "description": "Updated description"
+}
+```
+
+**Response:** `Playlist`
+
+**Events emitted:** `PLAYLIST_UPDATED`
+
+### DELETE /playlists/{playlist_id}
+
+Delete a playlist and all its track associations.
+
+**Response:** 204 No Content
+
+**Events emitted:** `PLAYLIST_DELETED`
+
+### GET /playlists/{playlist_id}/tracks
+
+Get all tracks in a playlist, ordered by position.
+
+**Response:** `Track[]`
+
+### POST /playlists/{playlist_id}/tracks
+
+Add tracks to a playlist.
+
+**Request Body:**
+```json
+{
+    "track_ids": [42, 43, 44],
+    "position": null
+}
+```
+
+- `position`: insert position (null = append at end)
+
+**Response:** `Playlist`
+
+**Events emitted:** `PLAYLIST_TRACKS_CHANGED`
+
+### DELETE /playlists/{playlist_id}/tracks/{track_id}
+
+Remove a track from a playlist.
+
+**Response:** 204 No Content
+
+**Events emitted:** `PLAYLIST_TRACKS_CHANGED`
+
+### PUT /playlists/{playlist_id}/tracks
+
+Reorder tracks in a playlist.
+
+**Request Body:**
+```json
+{
+    "track_ids": [44, 42, 43]
+}
+```
+
+Provide the full ordered list of track IDs.
+
+**Response:** `Playlist`
+
+**Events emitted:** `PLAYLIST_TRACKS_CHANGED`
+
+---
+
+## Devices
+
+### GET /devices
+
+List all discovered network audio devices.
+
+**Response:** `DiscoveredDevice[]`
+
+```json
+[
+    {
+        "id": "uuid:9C41535E-...",
+        "name": "DMP-A8",
+        "type": "dlna",
+        "host": "192.168.1.23",
+        "port": 8080,
+        "available": true,
+        "capabilities": {"dlna": true, "model": "AV Renderer Device"}
+    }
+]
+```
+
+### GET /devices/{device_id}
+
+Get details for a specific device.
+
+**Response:** `DiscoveredDevice`
+
+---
+
+## Zones
+
+### GET /zones
+
+List all zones.
+
+**Response:** `Zone[]`
+
+### POST /zones
+
+Create a new zone.
+
+**Request Body:**
+```json
+{
+    "name": "Living Room",
+    "output_type": "dlna",
+    "output_device_id": "uuid:..."
+}
+```
+
+- `output_type`: `"local"`, `"dlna"`, or `"airplay"`
+- `output_device_id`: required for `dlna` and `airplay`
+
+**Response:** `Zone` (201 Created)
+
+**Errors:**
+- `503` — Output device not available (discovery pending or device offline)
+
+### GET /zones/{zone_id}
+
+Get zone details.
+
+**Response:** `Zone`
+
+### DELETE /zones/{zone_id}
+
+Delete a zone.
+
+**Response:** 204 No Content
+
+### POST /zones/group
+
+Group zones for multi-room playback.
+
+**Request Body:**
+```json
+{
+    "leader_id": 4,
+    "zone_ids": [1, 4]
+}
+```
+
+**Response:**
+```json
+{
+    "group_id": "e73f13c7",
+    "leader_id": 4,
+    "zone_ids": [4, 1]
+}
+```
+
+### DELETE /zones/group/{group_id}
+
+Dissolve a group.
+
+**Response:** 204 No Content
+
+### GET /zones/groups/list
+
+List all active groups.
+
+**Response:**
+```json
+[
+    {
+        "group_id": "e73f13c7",
+        "leader_id": 4,
+        "zone_ids": [4, 1]
+    }
+]
+```
+
+---
+
+## Playback
+
+All playback endpoints operate on a zone. If the zone is in a group, the command affects all zones in the group.
+
+### POST /zones/{zone_id}/play
+
+Start playback. Multiple ways to specify what to play:
+
+**Play a single track:**
+```json
+{"track_id": 42}
+```
+
+**Play multiple tracks:**
+```json
+{"track_ids": [42, 43, 44]}
+```
+
+**Play an album:**
+```json
+{"album_id": 10}
+```
+
+**Play a streaming track:**
+```json
+{"source": "tidal", "source_id": "12345678"}
+```
+
+**Resume (no body or empty body):**
+```json
+{}
+```
+
+**Response:** `Zone`
+
+### POST /zones/{zone_id}/pause
+
+Pause playback.
+
+**Response:** `Zone`
+
+### POST /zones/{zone_id}/resume
+
+Resume from pause.
+
+**Response:** `Zone`
+
+### POST /zones/{zone_id}/stop
+
+Stop playback.
+
+**Response:** `Zone`
+
+### POST /zones/{zone_id}/next
+
+Skip to next track in queue.
+
+**Response:** `Zone`
+
+### POST /zones/{zone_id}/previous
+
+Skip to previous track in queue.
+
+**Response:** `Zone`
+
+### POST /zones/{zone_id}/seek
+
+Seek to position.
+
+**Request Body:**
+```json
+{"position_ms": 60000}
+```
+
+**Response:** `Zone`
+
+### GET /zones/{zone_id}/volume
+
+Get zone volume.
+
+**Response:** `{"volume": 0.7}`
+
+### PUT /zones/{zone_id}/volume
+
+Set volume.
+
+**Request Body:**
+```json
+{"volume": 0.7}
+```
+
+**Response:** `Zone`
+
+### GET /zones/{zone_id}/shuffle
+
+Get shuffle state.
+
+**Response:** `{"shuffle": true}`
+
+### PUT /zones/{zone_id}/shuffle
+
+Set shuffle mode.
+
+**Request Body:**
+```json
+{"enabled": true}
+```
+
+**Response:** `{"shuffle": true}`
+
+### GET /zones/{zone_id}/repeat
+
+Get repeat mode.
+
+**Response:** `{"repeat": "all"}`
+
+### PUT /zones/{zone_id}/repeat
+
+Set repeat mode.
+
+**Request Body:**
+```json
+{"mode": "all"}
+```
+
+Modes: `off`, `one`, `all`
+
+**Response:** `{"repeat": "all"}`
+
+### GET /zones/{zone_id}/state
+
+Get current playback state.
+
+**Response:** `Zone`
+
+### GET /zones/{zone_id}/queue
+
+Get the current play queue.
+
+**Response:**
+```json
+{
+    "tracks": [Track, ...],
+    "position": 0,
+    "length": 12
+}
+```
+
+### POST /zones/{zone_id}/queue
+
+Add tracks to the queue.
+
+**Request Body:**
+```json
+{
+    "track_ids": [42, 43],
+    "position": null
+}
+```
+
+- `position`: insert position (null = append at end)
+
+**Response:** Queue state
+
+### DELETE /zones/{zone_id}/queue/{position}
+
+Remove a track from the queue by position.
+
+**Response:** Queue state
+
+### PUT /zones/{zone_id}/queue/move
+
+Reorder a track in the queue.
+
+**Request Body:**
+```json
+{
+    "from_position": 3,
+    "to_position": 1
+}
+```
+
+**Response:** Queue state
+
+### POST /zones/{zone_id}/queue/jump
+
+Jump to a specific queue position.
+
+**Request Body:**
+```json
+{
+    "position": 5
+}
+```
+
+**Response:** `Zone`
+
+---
+
+## Streaming Services
+
+### GET /streaming/services
+
+List all registered streaming services and their authentication status.
+
+**Response:**
+```json
+[
+    {"name": "tidal", "enabled": true, "authenticated": true},
+    {"name": "qobuz", "enabled": true, "authenticated": false},
+    {"name": "youtube", "enabled": false, "authenticated": false},
+    {"name": "amazon", "enabled": true, "authenticated": true}
+]
+```
+
+### GET /streaming/{service_name}/status
+
+Get detailed status for a specific streaming service.
+
+**Response:**
+```json
+{
+    "name": "tidal",
+    "authenticated": true,
+    "quality": "HI_RES_LOSSLESS"
+}
+```
+
+### POST /streaming/{service_name}/auth
+
+Initiate authentication for a streaming service. The flow varies by service (OAuth device flow for Tidal/YouTube/Amazon, API key for Qobuz).
+
+**Request Body (Qobuz):**
+```json
+{
+    "username": "user@example.com",
+    "password": "secret"
+}
+```
+
+**Response:** Service-specific auth response (may include device code URL for OAuth flows)
+
+### GET /streaming/{service_name}/search
+
+Search a specific streaming service catalog.
+
+**Query Parameters:**
+- `q` (string, required) — Search query
+- `limit` (int, default 20)
+
+**Response:** `SearchResult`
+
+### GET /streaming/{service_name}/tracks/{track_id}
+
+Get a track from a streaming service.
+
+**Response:** `Track`
+
+### GET /streaming/{service_name}/albums/{album_id}
+
+Get an album from a streaming service.
+
+**Response:** `Album`
+
+### GET /streaming/{service_name}/albums/{album_id}/tracks
+
+Get all tracks in a streaming service album.
+
+**Response:** `Track[]`
+
+### GET /streaming/{service_name}/artists/{artist_id}
+
+Get an artist from a streaming service.
+
+**Response:** `Artist`
+
+### GET /streaming/{service_name}/artists/{artist_id}/albums
+
+Get all albums by an artist from a streaming service.
+
+**Response:** `Album[]`
+
+### GET /streaming/{service_name}/artists/{artist_id}/tracks
+
+Get all tracks by an artist from a streaming service.
+
+**Response:** `Track[]`
+
+---
+
+## System
+
+### GET /system/health
+
+Health check. Exempt from API key authentication.
+
+**Response:**
+```json
+{"status": "ok"}
+```
+
+### GET /system/config
+
+Get current server configuration (sensitive values redacted).
+
+**Response:**
+```json
+{
+    "music_dirs": ["~/Music"],
+    "api_host": "0.0.0.0",
+    "api_port": 8888,
+    "stream_port": 8080,
+    "scan_on_startup": true,
+    "watch_filesystem": true,
+    "tidal_enabled": true,
+    "qobuz_enabled": false,
+    "youtube_enabled": true,
+    "amazon_music_enabled": false,
+    "discovery_enabled": true,
+    "ws_heartbeat_interval": 30
+}
+```
+
+### POST /system/scan
+
+Trigger a library scan.
+
+**Response:** `{"status": "scanning"}`
+
+### GET /system/scan/status
+
+Get library scan status.
+
+**Response:**
+```json
+{
+    "status": "scanning",
+    "progress": 0.45,
+    "files_scanned": 3200,
+    "files_total": 7100,
+    "tracks_added": 150,
+    "tracks_updated": 23,
+    "tracks_removed": 5
+}
+```
+
+When idle:
+```json
+{
+    "status": "idle",
+    "progress": 1.0,
+    "last_scan_at": "2026-02-13T10:30:00"
+}
+```
+
+### GET /system/stats
+
+System statistics.
+
+**Response:**
+```json
+{
+    "tracks": 7491,
+    "albums": 838,
+    "artists": 402,
+    "zones": 3,
+    "devices": 5
+}
+```
+
+---
+
+## WebSocket
+
+### WS /ws
+
+Real-time event stream. Connect with any WebSocket client.
+
+**Connection flow:**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    C->>S: Connect to ws://localhost:8888/ws
+    Note over S: Subscribe client to "*" (all events)
+    S->>C: {"type": "playback.started", "data": {...}, "source": "player"}
+    S->>C: {"type": "device.discovered", "data": {...}, "source": "ssdp"}
+
+    C->>S: {"action": "subscribe", "patterns": ["playback.*", "zone.*"]}
+    Note over S: Client now receives only playback.* and zone.* events
+
+    S->>C: {"type": "playback.paused", "data": {...}, "source": "player"}
+
+    C->>S: {"action": "unsubscribe", "patterns": []}
+    Note over S: Client reset to "*" (all events)
+
+    S-->>C: {"type": "ping"}
+    C-->>S: pong
+```
+
+**Event message format:**
+```json
+{
+    "type": "playback.started",
+    "data": {"zone_id": 1, "track_id": 42, "track_title": "La Nuit Je Mens"},
+    "source": "player"
+}
+```
+
+**Subscribe to specific event patterns:**
+```json
+{"action": "subscribe", "patterns": ["playback.*", "playlist.*"]}
+```
+
+Patterns use fnmatch syntax (shell-style wildcards):
+- `"*"` — All events
+- `"playback.*"` — All playback events
+- `"playlist.*"` — All playlist events
+- `"zone.*"` — All zone events
+- `"playback.position"` — Only position updates
+
+**Unsubscribe (reset to all events):**
+```json
+{"action": "unsubscribe", "patterns": []}
+```
+
+**Heartbeat:**
+- Server sends `{"type": "ping"}` every `WS_HEARTBEAT_INTERVAL` seconds (default 30)
+- Client should respond with `pong` (text message)
+- Set `TUNE_WS_HEARTBEAT_INTERVAL=0` to disable
+
+See [Event Bus](event-bus.md) for the full list of 28 event types.
+
+---
+
+## Data Models
+
+### Track
+
+```json
+{
+    "id": 2212,
+    "title": "La Nuit Je Mens",
+    "album_id": 236,
+    "album_title": "Fantaisie Militaire",
+    "artist_id": 89,
+    "artist_name": "Alain Bashung",
+    "disc_number": 1,
+    "track_number": 2,
+    "duration_ms": 264733,
+    "file_path": "/Users/bertrand/Music/.../02 La Nuit Je Mens.m4a",
+    "format": "aac",
+    "sample_rate": 44100,
+    "bit_depth": 16,
+    "channels": 2,
+    "source": "local",
+    "source_id": null
+}
+```
+
+### Album
+
+```json
+{
+    "id": 236,
+    "title": "Fantaisie Militaire",
+    "artist_id": 89,
+    "artist_name": "Alain Bashung",
+    "year": 1998,
+    "genre": "Chanson Francaise",
+    "disc_count": 1,
+    "track_count": 12,
+    "cover_path": "artwork_cache/24363c6426bd28423705720120d41b7f.jpg",
+    "source": "local",
+    "source_id": null
+}
+```
+
+### Artist
+
+```json
+{
+    "id": 89,
+    "name": "Alain Bashung",
+    "sort_name": null,
+    "musicbrainz_id": null,
+    "discogs_id": null,
+    "bio": null,
+    "image_path": null
+}
+```
+
+### Zone
+
+```json
+{
+    "id": 4,
+    "name": "EverSolo DMP-A8",
+    "output_type": "dlna",
+    "output_device_id": "uuid:9C41535E-...",
+    "volume": 0.5,
+    "group_id": "e73f13c7",
+    "state": "playing",
+    "current_track": {Track},
+    "position_ms": 42000,
+    "queue_length": 12
+}
+```
+
+### Playlist
+
+```json
+{
+    "id": 1,
+    "name": "Favorites",
+    "description": "My top tracks",
+    "track_count": 42
+}
+```
+
+### Playback States
+
+```mermaid
+stateDiagram-v2
+    [*] --> stopped
+    stopped --> buffering : play
+    buffering --> playing : buffer ready
+    playing --> paused : pause
+    paused --> playing : resume
+    playing --> stopped : stop
+    paused --> stopped : stop
+    playing --> playing : next/previous (gapless)
+```
