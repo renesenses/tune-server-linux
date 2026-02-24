@@ -5,6 +5,7 @@ LABEL description="Tune Server - Multi-room music server"
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     ffmpeg \
     libasound2-dev \
     libportaudio2 \
@@ -18,12 +19,10 @@ RUN useradd --system --create-home --shell /bin/bash tune-server
 
 WORKDIR /opt/tune-server
 
-# Install Python dependencies
+# Copy source then install (source needed for metadata)
 COPY pyproject.toml .
-RUN pip install --no-cache-dir -e .
-
-# Copy application
 COPY tune_server/ tune_server/
+RUN pip install --no-cache-dir .
 
 # Default environment
 ENV TUNE_MUSIC_DIRS='["/music"]' \
@@ -31,7 +30,8 @@ ENV TUNE_MUSIC_DIRS='["/music"]' \
     TUNE_ARTWORK_CACHE_DIR=/data/artwork_cache \
     TUNE_LOG_FORMAT=json
 
-# Data volume
+# Data & music volumes — ensure writable by app user
+RUN mkdir -p /data /music && chown tune-server:tune-server /data
 VOLUME /data
 VOLUME /music
 
