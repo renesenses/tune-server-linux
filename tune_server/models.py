@@ -136,6 +136,13 @@ class DiscoveredDevice(BaseModel):
     capabilities: dict = Field(default_factory=dict)
 
 
+class LocalAudioDevice(BaseModel):
+    id: str
+    name: str
+    channels: int
+    sample_rate: int
+
+
 class AudioStreamInfo(BaseModel):
     format: AudioFormat
     sample_rate: int

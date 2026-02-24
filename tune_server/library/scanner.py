@@ -105,6 +105,11 @@ class LibraryScanner:
                     await self._track_repo.delete_by_path(path_str)
                     stats["removed"] += 1
 
+            # Clean up orphan albums (no tracks)
+            orphans = await self._album_repo.delete_orphans()
+            if orphans:
+                logger.info("deleted_orphan_albums", count=orphans)
+
             logger.info("scan_completed", **stats)
 
         finally:
@@ -127,12 +132,24 @@ class LibraryScanner:
         artist = await self._artist_repo.get_or_create(artist_name)
 
         # Get or create album
-        album = await self._album_repo.get_or_create(
-            title=metadata.album,
-            artist_id=artist.id,
-            year=metadata.year,
-            genre=metadata.genre,
-        )
+        # When album_artist tag is missing (compilations), match by title only
+        # to avoid creating duplicate album entries per track artist.
+        if metadata.album_artist:
+            album = await self._album_repo.get_or_create(
+                title=metadata.album,
+                artist_id=artist.id,
+                year=metadata.year,
+                genre=metadata.genre,
+            )
+        else:
+            album = await self._album_repo.get_by_title(metadata.album)
+            if not album:
+                album = await self._album_repo.get_or_create(
+                    title=metadata.album,
+                    artist_id=artist.id,
+                    year=metadata.year,
+                    genre=metadata.genre,
+                )
 
         # Extract cover art if album doesn't have one yet
         if not album.cover_path:

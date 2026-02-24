@@ -145,6 +145,15 @@ class AlbumRepo:
         )
         return _row_to_album(row) if row else None
 
+    async def get_by_title(self, title: str) -> Album | None:
+        row = await self._db.fetchone(
+            """SELECT al.*, ar.name as artist_name
+               FROM albums al LEFT JOIN artists ar ON al.artist_id = ar.id
+               WHERE al.title = ? LIMIT 1""",
+            (title,),
+        )
+        return _row_to_album(row) if row else None
+
     async def list(self, limit: int = 100, offset: int = 0) -> list[Album]:
         rows = await self._db.fetchall(
             """SELECT al.*, ar.name as artist_name
@@ -211,6 +220,16 @@ class AlbumRepo:
     async def delete(self, album_id: int) -> None:
         await self._db.execute("DELETE FROM albums WHERE id = ?", (album_id,))
         await self._db.commit()
+
+    async def delete_orphans(self) -> int:
+        """Delete albums that have no tracks."""
+        cursor = await self._db.execute(
+            """DELETE FROM albums WHERE id NOT IN (
+                SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL
+            )""",
+        )
+        await self._db.commit()
+        return cursor.rowcount
 
     async def list_without_cover(self) -> list[Album]:
         rows = await self._db.fetchall(
