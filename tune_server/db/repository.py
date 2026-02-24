@@ -231,6 +231,33 @@ class AlbumRepo:
         await self._db.commit()
         return cursor.rowcount
 
+    async def merge_duplicates(self) -> int:
+        """Merge albums with the same title: reassign tracks, delete dupes."""
+        rows = await self._db.fetchall(
+            """SELECT title, MIN(id) as keep_id, GROUP_CONCAT(id) as all_ids
+               FROM albums GROUP BY title HAVING COUNT(*) > 1""",
+        )
+        merged = 0
+        for row in rows:
+            keep_id = row["keep_id"]
+            all_ids = [int(x) for x in row["all_ids"].split(",")]
+            delete_ids = [x for x in all_ids if x != keep_id]
+            for did in delete_ids:
+                await self._db.execute(
+                    "UPDATE tracks SET album_id = ? WHERE album_id = ?",
+                    (keep_id, did),
+                )
+                await self._db.execute("DELETE FROM albums WHERE id = ?", (did,))
+                merged += 1
+            await self._db.execute(
+                """UPDATE albums SET track_count = (
+                    SELECT COUNT(*) FROM tracks WHERE album_id = ?
+                ) WHERE id = ?""",
+                (keep_id, keep_id),
+            )
+        await self._db.commit()
+        return merged
+
     async def list_without_cover(self) -> list[Album]:
         rows = await self._db.fetchall(
             """SELECT al.*, ar.name as artist_name

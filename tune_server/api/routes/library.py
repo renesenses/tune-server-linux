@@ -127,6 +127,12 @@ async def update_album(album_id: int, req: AlbumUpdateRequest):
     return await deps.album_repo.get(album_id)
 
 
+@router.post("/albums/merge-duplicates")
+async def merge_duplicate_albums():
+    merged = await deps.album_repo.merge_duplicates()
+    return {"merged": merged}
+
+
 @router.delete("/albums/{album_id}", status_code=204)
 async def delete_album(album_id: int):
     album = await deps.album_repo.get(album_id)
