@@ -28,6 +28,48 @@ class TidalService(StreamingService):
         self._auth_task = None
         self._featured_cache: dict[str, object] = {}  # section_id -> PageCategory
 
+    def _make_session(self):
+        """Create a tidalapi Session with configured quality."""
+        import tidalapi
+        quality_map = {
+            "LOW": tidalapi.Quality.low_96k,
+            "HIGH": tidalapi.Quality.low_320k,
+            "LOSSLESS": tidalapi.Quality.high_lossless,
+            "HI_RES_LOSSLESS": tidalapi.Quality.hi_res_lossless,
+        }
+        config = tidalapi.Config(quality=quality_map.get(settings.tidal_quality, tidalapi.Quality.high_lossless))
+        return tidalapi.Session(config)
+
+    async def _get_track_url(self, track) -> Optional[str]:
+        """Get stream URL with quality fallback."""
+        import tidalapi
+        # Try configured quality first, then fall back to lower qualities
+        fallback_order = [
+            tidalapi.Quality.hi_res_lossless,
+            tidalapi.Quality.high_lossless,
+            tidalapi.Quality.low_320k,
+        ]
+        # Start from the configured quality level
+        quality_map = {
+            "LOW": 2,
+            "HIGH": 2,
+            "LOSSLESS": 1,
+            "HI_RES_LOSSLESS": 0,
+        }
+        start_idx = quality_map.get(settings.tidal_quality, 1)
+        for quality in fallback_order[start_idx:]:
+            try:
+                self._session.audio_quality = quality
+                url = await asyncio.wait_for(
+                    asyncio.to_thread(track.get_url), timeout=30
+                )
+                if url:
+                    return url
+            except Exception:
+                logger.debug("tidal_quality_fallback", quality=quality)
+                continue
+        return None
+
     @property
     def name(self) -> str:
         return "tidal"
@@ -71,9 +113,7 @@ class TidalService(StreamingService):
     async def authenticate(self, **kwargs) -> bool:
         db = kwargs.get("db")
         try:
-            import tidalapi
-
-            session = tidalapi.Session()
+            session = self._make_session()
 
             # OAuth device flow
             login, future = session.login_oauth()
@@ -239,11 +279,9 @@ class TidalService(StreamingService):
             track = await asyncio.wait_for(
                 asyncio.to_thread(self._session.track, int(track_id)), timeout=30
             )
-            stream = await asyncio.wait_for(
-                asyncio.to_thread(track.get_stream), timeout=30
-            )
-            url = stream.manifest
-            self._url_cache.set(track_id, url)
+            url = await self._get_track_url(track)
+            if url:
+                self._url_cache.set(track_id, url)
             return url
         except Exception:
             logger.exception("tidal_stream_url_error", track_id=track_id)
@@ -271,8 +309,6 @@ class TidalService(StreamingService):
 
     async def restore_auth(self, db: Database) -> bool:
         try:
-            import tidalapi
-
             row = await db.fetchone(
                 "SELECT token_data FROM streaming_auth WHERE service = ?", ("tidal",)
             )
@@ -280,7 +316,7 @@ class TidalService(StreamingService):
                 return False
 
             data = json.loads(row["token_data"])
-            session = tidalapi.Session()
+            session = self._make_session()
             session.load_oauth_session(
                 data.get("token_type", "Bearer"),
                 data.get("access_token", ""),
