@@ -68,13 +68,13 @@ def extract_cover_art(file_path: str) -> Optional[bytes]:
     return None
 
 
-def save_artwork(file_path: str, image_data: bytes) -> Optional[str]:
+def save_artwork(file_path: str, image_data: bytes, force: bool = False) -> Optional[str]:
     try:
         cache_dir = _get_cache_dir()
         hash_name = _hash_path(file_path)
         output_path = cache_dir / f"{hash_name}.jpg"
 
-        if output_path.exists():
+        if output_path.exists() and not force:
             return str(output_path)
 
         img = Image.open(BytesIO(image_data))

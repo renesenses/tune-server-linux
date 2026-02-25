@@ -113,6 +113,12 @@ class ArtistRepo:
         await self._db.execute("DELETE FROM artists WHERE id = ?", (artist_id,))
         await self._db.commit()
 
+    async def count_without_image(self) -> int:
+        row = await self._db.fetchone(
+            "SELECT COUNT(*) as cnt FROM artists WHERE image_path IS NULL OR image_path = ''"
+        )
+        return row["cnt"]
+
     async def search(self, query: str, limit: int = 50) -> list[Artist]:
         rows = await self._db.fetchall(
             """SELECT a.* FROM artists a
@@ -257,6 +263,24 @@ class AlbumRepo:
             )
         await self._db.commit()
         return merged
+
+    async def count_without_cover(self) -> int:
+        row = await self._db.fetchone(
+            "SELECT COUNT(*) as cnt FROM albums WHERE cover_path IS NULL"
+        )
+        return row["cnt"]
+
+    async def count_without_genre(self) -> int:
+        row = await self._db.fetchone(
+            "SELECT COUNT(*) as cnt FROM albums WHERE genre IS NULL OR genre = ''"
+        )
+        return row["cnt"]
+
+    async def count_without_year(self) -> int:
+        row = await self._db.fetchone(
+            "SELECT COUNT(*) as cnt FROM albums WHERE year IS NULL OR year = 0"
+        )
+        return row["cnt"]
 
     async def list_without_cover(self) -> list[Album]:
         rows = await self._db.fetchall(

@@ -88,6 +88,7 @@ class Track(BaseModel):
     sample_rate: Optional[int] = None
     bit_depth: Optional[int] = None
     channels: int = 2
+    cover_path: Optional[str] = None
     source: Source = Source.LOCAL
     source_id: Optional[str] = None
 
@@ -342,3 +343,12 @@ class SystemStatsResponse(BaseModel):
 class WsSubscribeMessage(BaseModel):
     action: str  # "subscribe" or "unsubscribe"
     patterns: list[str]  # e.g. ["playback.*", "zone.1.*"]
+
+
+class CompletenessStats(BaseModel):
+    total_albums: int = 0
+    albums_without_cover: int = 0
+    albums_without_genre: int = 0
+    albums_without_year: int = 0
+    total_artists: int = 0
+    artists_without_image: int = 0

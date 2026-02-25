@@ -4,19 +4,20 @@ import asyncio
 from pathlib import Path
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 from tune_server.api.deps import deps
 from tune_server.config import settings
 from tune_server.db.repository import full_text_search
 from tune_server.event_bus import Event, EventType
-from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork
+from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork, save_artwork
 from tune_server.models import (
     Album,
     AlbumUpdateRequest,
     Artist,
     ArtistUpdateRequest,
+    CompletenessStats,
     LibraryStatsResponse,
     SearchResult,
     Track,
@@ -159,6 +160,75 @@ async def delete_artist(artist_id: int):
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
     await deps.artist_repo.delete(artist_id)
+
+
+@router.get("/stats/completeness", response_model=CompletenessStats)
+async def completeness_stats():
+    return CompletenessStats(
+        total_albums=await deps.album_repo.count(),
+        albums_without_cover=await deps.album_repo.count_without_cover(),
+        albums_without_genre=await deps.album_repo.count_without_genre(),
+        albums_without_year=await deps.album_repo.count_without_year(),
+        total_artists=await deps.artist_repo.count(),
+        artists_without_image=await deps.artist_repo.count_without_image(),
+    )
+
+
+@router.post("/albums/{album_id}/artwork", response_model=Album)
+async def upload_album_artwork(album_id: int, file: UploadFile):
+    album = await deps.album_repo.get(album_id)
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    content_type = file.content_type or ""
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    image_data = await file.read()
+    if not image_data:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    cover_path = await asyncio.to_thread(
+        save_artwork, f"upload:album:{album_id}", image_data, True,
+    )
+    if not cover_path:
+        raise HTTPException(status_code=500, detail="Failed to save artwork")
+
+    album.cover_path = cover_path
+    await deps.album_repo.update(album)
+    return await deps.album_repo.get(album_id)
+
+
+@router.post("/albums/{album_id}/artwork/rescan")
+async def rescan_album_artwork(album_id: int):
+    album = await deps.album_repo.get(album_id)
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    cover_path = None
+
+    # Try local extraction from album tracks
+    tracks = await deps.track_repo.list_by_album(album_id)
+    for track in tracks:
+        cover_path = await asyncio.to_thread(get_album_artwork, track.file_path)
+        if cover_path:
+            break
+
+    # Fallback: MusicBrainz
+    if not cover_path and album.artist_name and album.title:
+        cover_path = await asyncio.to_thread(
+            fetch_cover_from_musicbrainz,
+            album.artist_name,
+            album.title,
+            settings.artwork_cache_dir,
+        )
+
+    if cover_path:
+        album.cover_path = cover_path
+        await deps.album_repo.update(album)
+        return {"status": "found", "cover_path": cover_path}
+
+    return {"status": "not_found", "cover_path": None}
 
 
 _artwork_rescan_running = False
