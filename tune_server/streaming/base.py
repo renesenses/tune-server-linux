@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional
 
-from tune_server.models import Album, Artist, SearchResult, Track
+from tune_server.models import Album, Artist, FeaturedSection, SearchResult, Track
 
 if TYPE_CHECKING:
     from tune_server.db.engine import Database
@@ -72,3 +72,14 @@ class StreamingService(ABC):
     async def restore_auth(self, db: Database) -> bool:
         """Restore auth tokens from DB. Override in subclasses. Returns True if restored."""
         return False
+
+    async def disconnect(self, db: Database) -> None:
+        """Clear auth tokens and remove from DB. Override in subclasses."""
+
+    async def get_featured_sections(self) -> list[FeaturedSection]:
+        """Return available featured content sections. Override in subclasses."""
+        return []
+
+    async def get_featured(self, section: str, limit: int = 20) -> list[Album]:
+        """Return featured albums for a given section. Override in subclasses."""
+        return []

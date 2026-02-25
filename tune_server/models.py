@@ -298,6 +298,11 @@ class ScanStatusResponse(BaseModel):
     scanning: bool
 
 
+class FeaturedSection(BaseModel):
+    id: str
+    name: str
+
+
 class StreamingServiceStatus(BaseModel):
     enabled: bool
     authenticated: bool

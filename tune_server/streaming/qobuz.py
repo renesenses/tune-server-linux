@@ -9,7 +9,7 @@ import aiohttp
 import structlog
 
 from tune_server.config import settings
-from tune_server.models import Album, Artist, AudioFormat, SearchResult, Source, Track
+from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, Track
 from tune_server.streaming.base import StreamingService
 from tune_server.streaming.cache import StreamUrlCache
 
@@ -197,6 +197,23 @@ class QobuzService(StreamingService):
             logger.exception("qobuz_stream_url_error")
             return None
 
+    async def get_featured_sections(self) -> list[FeaturedSection]:
+        return [
+            FeaturedSection(id="new-releases", name="Nouvelles Sorties"),
+            FeaturedSection(id="best-sellers", name="Meilleures Ventes"),
+            FeaturedSection(id="press-awards", name="Récompenses Presse"),
+            FeaturedSection(id="editor-picks", name="Sélection de la Rédaction"),
+        ]
+
+    async def get_featured(self, section: str, limit: int = 20) -> list[Album]:
+        try:
+            data = await self._api_get("album/getFeatured", {"type": section, "limit": limit})
+            albums = data.get("albums", {}).get("items", [])
+            return [self._map_album(a) for a in albums]
+        except Exception:
+            logger.exception("qobuz_get_featured_error", section=section)
+            return []
+
     async def save_auth(self, db: Database) -> None:
         if not self._user_auth_token:
             return
@@ -231,6 +248,17 @@ class QobuzService(StreamingService):
             logger.exception("qobuz_restore_auth_error")
             return False
 
+    async def disconnect(self, db: Database) -> None:
+        self._user_auth_token = None
+        try:
+            await db.execute(
+                "DELETE FROM streaming_auth WHERE service = ?", ("qobuz",)
+            )
+            await db.commit()
+            logger.info("qobuz_disconnected")
+        except Exception:
+            logger.exception("qobuz_disconnect_error")
+
     async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()
@@ -254,11 +282,14 @@ class QobuzService(StreamingService):
 
     def _map_album(self, a: dict) -> Album:
         artist = a.get("artist", {})
+        image = a.get("image", {})
+        cover_path = image.get("large") or image.get("small") or image.get("thumbnail") or None
         return Album(
             title=a.get("title", "Unknown"),
             artist_name=artist.get("name", "Unknown"),
             year=a.get("released_at", 0) // 10000000000 if a.get("released_at") else None,
             track_count=a.get("tracks_count", 0),
+            cover_path=cover_path,
             source=Source.QOBUZ,
             source_id=str(a.get("id", "")),
         )

@@ -6,6 +6,7 @@ from tune_server.api.deps import deps
 from tune_server.models import (
     Album,
     Artist,
+    FeaturedSection,
     SearchResult,
     StreamingAuthRequest,
     StreamingAuthResponse,
@@ -67,6 +68,27 @@ async def authenticate(
     if success and deps.db:
         await service.save_auth(deps.db)
     return StreamingAuthResponse(authenticated=success, verification_url=verification_url)
+
+
+@router.post("/{service_name}/disconnect")
+async def disconnect_service(service_name: str):
+    service = deps.streaming_services.get(service_name)
+    if not service:
+        raise HTTPException(status_code=503, detail=f"{service_name} not configured")
+    await service.disconnect(deps.db)
+    return {"disconnected": True}
+
+
+@router.get("/{service_name}/featured/sections", response_model=list[FeaturedSection])
+async def get_featured_sections(service_name: str):
+    service = _get_service(service_name)
+    return await service.get_featured_sections()
+
+
+@router.get("/{service_name}/featured/{section}", response_model=list[Album])
+async def get_featured(service_name: str, section: str, limit: int = Query(20, ge=1, le=100)):
+    service = _get_service(service_name)
+    return await service.get_featured(section, limit=limit)
 
 
 @router.get("/{service_name}/search", response_model=SearchResult)
