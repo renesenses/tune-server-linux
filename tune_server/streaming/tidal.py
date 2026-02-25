@@ -106,7 +106,7 @@ class TidalService(StreamingService):
                 self._session = session
                 logger.info(
                     "tidal_authenticated",
-                    user=session.user.name if session.user else "unknown",
+                    user=session.user.first_name if session.user else "unknown",
                 )
                 if db:
                     await self.save_auth(db)
@@ -307,20 +307,19 @@ class TidalService(StreamingService):
         try:
             import tidalapi
 
-            explore_page = await asyncio.wait_for(
-                asyncio.to_thread(self._session.explore), timeout=30
+            home_page = await asyncio.wait_for(
+                asyncio.to_thread(self._session.home), timeout=30
             )
             sections = []
             self._featured_cache = {}
-            for i, cat in enumerate(explore_page.categories):
+            for i, cat in enumerate(home_page.categories):
                 title = getattr(cat, "title", None)
                 if not title:
                     continue
-                # Only keep categories that have album items
                 items = getattr(cat, "items", [])
                 has_albums = any(isinstance(item, tidalapi.Album) for item in items)
                 if has_albums:
-                    section_id = f"explore-{i}"
+                    section_id = f"home-{i}"
                     sections.append(FeaturedSection(id=section_id, name=title))
                     self._featured_cache[section_id] = cat
             return sections
