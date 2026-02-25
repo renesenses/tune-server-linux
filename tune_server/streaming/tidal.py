@@ -23,6 +23,9 @@ class TidalService(StreamingService):
     def __init__(self) -> None:
         self._session = None
         self._url_cache = StreamUrlCache(ttl_seconds=240)  # Tidal URLs expire ~5min
+        self._pending_login = None
+        self._pending_session = None
+        self._auth_task = None
 
     @property
     def name(self) -> str:
@@ -58,7 +61,14 @@ class TidalService(StreamingService):
             logger.exception("tidal_refresh_error")
         return False
 
+    @property
+    def verification_url(self) -> str | None:
+        if self._pending_login:
+            return self._pending_login.verification_uri_complete
+        return None
+
     async def authenticate(self, **kwargs) -> bool:
+        db = kwargs.get("db")
         try:
             import tidalapi
 
@@ -72,16 +82,14 @@ class TidalService(StreamingService):
                 verification_url=login.verification_uri_complete,
             )
 
-            # Wait for user to complete auth
-            await asyncio.to_thread(future.result, 300)
+            # Store pending state and launch background wait
+            self._pending_login = login
+            self._pending_session = session
+            self._auth_task = asyncio.create_task(
+                self._wait_for_oauth(session, future, db)
+            )
 
-            if session.check_login():
-                self._session = session
-                logger.info("tidal_authenticated", user=session.user.name if session.user else "unknown")
-                return True
-
-            logger.warning("tidal_auth_failed")
-            return False
+            return False  # not yet authenticated
 
         except ImportError:
             logger.warning("tidalapi_not_installed")
@@ -89,6 +97,26 @@ class TidalService(StreamingService):
         except Exception:
             logger.exception("tidal_auth_error")
             return False
+
+    async def _wait_for_oauth(self, session, future, db) -> None:
+        try:
+            await asyncio.to_thread(future.result, 300)
+            if session.check_login():
+                self._session = session
+                logger.info(
+                    "tidal_authenticated",
+                    user=session.user.name if session.user else "unknown",
+                )
+                if db:
+                    await self.save_auth(db)
+            else:
+                logger.warning("tidal_auth_failed")
+        except Exception:
+            logger.exception("tidal_oauth_wait_error")
+        finally:
+            self._pending_login = None
+            self._pending_session = None
+            self._auth_task = None
 
     async def search(self, query: str, limit: int = 50) -> SearchResult:
         if not await self._ensure_authenticated():

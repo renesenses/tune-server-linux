@@ -58,6 +58,11 @@ class StreamingService(ABC):
     async def get_artist_tracks(self, artist_id: str) -> list[Track]:
         ...
 
+    @property
+    def verification_url(self) -> str | None:
+        """Return pending OAuth verification URL, if any."""
+        return None
+
     async def close(self) -> None:
         """Clean up resources. Override in subclasses."""
 

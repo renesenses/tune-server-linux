@@ -56,9 +56,23 @@ Follow the installer prompts:
 1. **Language**: English (or your preference)
 2. **Keyboard**: French / French (Macintosh) if applicable
 3. **Network**: The Ethernet interface should auto-configure via DHCP. Note the IP for SSH later.
-4. **Storage layout**:
-   - **Use entire disk** (simplest) — this will erase macOS
-   - Or set up manual partitions if dual-booting (not recommended for a server)
+4. **Storage layout** — select **Custom storage layout**, then create:
+
+   | # | Partition | Size | Type | Mount | Rôle |
+   |---|-----------|------|------|-------|------|
+   | 1 | `/dev/sda1` | 512 MB | EFI System Partition (fat32) | `/boot/efi` | Bootloader Mac EFI |
+   | 2 | `/dev/sda2` | 1 GB | ext4 | `/boot` | Kernel & initrd |
+   | 3 | `/dev/sda3` | 48.5 GB | ext4 | `/` | Système + programmes (~50 Go total avec boot) |
+   | 4 | `/dev/sda4` | 950 GB | ext4 | `/mnt/music` | Bibliothèque musicale |
+
+   > **Pas de swap ?** Avec 8 Go+ de RAM pour un serveur audio, le swap n'est pas nécessaire. Ubuntu crée un fichier swap automatique (`/swap.img`) si besoin.
+
+   Dans l'installeur Ubuntu :
+   1. Sélectionner le SSD (`/dev/sda` — ~1 TB)
+   2. **"Add GPT Partition"** pour chaque partition ci-dessus
+   3. Pour la partition EFI : choisir **Format: fat32**, **Mount: /boot/efi**
+   4. Pour les autres : choisir **Format: ext4** et le point de montage correspondant
+   5. Vérifier le récapitulatif, puis **Done** → **Continue**
 5. **Profile**:
    - Name / username / password as desired
    - Server name suggestion: `tune-server` or `mac-mini`
@@ -190,37 +204,46 @@ For optical output, insert a mini-TOSLINK cable — the port switches automatica
 
 ## Step 7 — Music Storage
 
-### External USB drive
+La partition `/mnt/music` (950 Go, `/dev/sda4`) est déjà montée automatiquement via le partitionnement fait à l'installation.
 
 ```bash
-# Identify the drive
-lsblk
+# Vérifier le montage
+df -h /mnt/music
 
-# Create a mount point
-sudo mkdir -p /mnt/music
-
-# Get the UUID
-sudo blkid /dev/sda1
-
-# Add to /etc/fstab for auto-mount
-echo 'UUID=<your-uuid>  /mnt/music  ext4  defaults,nofail  0  2' | sudo tee -a /etc/fstab
-
-# Mount now
-sudo mount -a
-
-# Grant read access to tune-server
-sudo chmod -R a+rX /mnt/music
+# Donner les droits au user tune-server
+sudo chown tune-server:tune-server /mnt/music
+sudo chmod 755 /mnt/music
 ```
 
-Then set `TUNE_MUSIC_DIRS=["/mnt/music"]` in `/opt/tune-server/.env`.
+Configurer tune-server pour utiliser cette partition :
 
-### Network share (NFS)
+```bash
+# Dans /opt/tune-server/.env :
+TUNE_MUSIC_DIRS=["/mnt/music"]
+```
+
+### Transférer de la musique
+
+```bash
+# Depuis votre Mac, via SCP
+scp -r ~/Music/* your-username@192.168.1.50:/mnt/music/
+
+# Ou via rsync (reprend les transferts interrompus)
+rsync -avz --progress ~/Music/ your-username@192.168.1.50:/mnt/music/
+```
+
+### Stockage supplémentaire (NFS, optionnel)
+
+Si vous avez aussi un NAS :
 
 ```bash
 sudo apt install -y nfs-common
-sudo mkdir -p /mnt/music
-echo 'nas.local:/volume1/music  /mnt/music  nfs  defaults,ro,soft  0  0' | sudo tee -a /etc/fstab
+sudo mkdir -p /mnt/nas-music
+echo 'nas.local:/volume1/music  /mnt/nas-music  nfs  defaults,ro,soft  0  0' | sudo tee -a /etc/fstab
 sudo mount -a
+
+# Ajouter les deux répertoires dans .env :
+TUNE_MUSIC_DIRS=["/mnt/music", "/mnt/nas-music"]
 ```
 
 ## Step 8 — Firewall

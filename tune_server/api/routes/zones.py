@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from tune_server.api.deps import deps
-from tune_server.models import Zone, ZoneCreateRequest, ZoneGroupRequest, ZoneGroupResponse
+from tune_server.models import Zone, ZoneCreateRequest, ZoneUpdateRequest, ZoneGroupRequest, ZoneGroupResponse
 
 router = APIRouter(prefix="/zones", tags=["zones"])
 
@@ -32,6 +32,19 @@ async def get_zone(zone_id: int):
     zone = deps.zone_manager.get_zone(zone_id)
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
+    return zone.to_model()
+
+
+@router.put("/{zone_id}", response_model=Zone)
+async def update_zone(zone_id: int, request: ZoneUpdateRequest):
+    zone = deps.zone_manager.get_zone(zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    if request.name is not None:
+        try:
+            zone = await deps.zone_manager.rename_zone(zone_id, request.name)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Zone not found")
     return zone.to_model()
 
 

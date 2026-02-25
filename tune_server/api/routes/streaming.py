@@ -62,10 +62,11 @@ async def authenticate(
             kwargs["password"] = request.password
         if request.oauth_json is not None:
             kwargs["oauth_json"] = request.oauth_json
-    success = await service.authenticate(**kwargs)
+    success = await service.authenticate(**kwargs, db=deps.db)
+    verification_url = getattr(service, "verification_url", None)
     if success and deps.db:
         await service.save_auth(deps.db)
-    return StreamingAuthResponse(authenticated=success)
+    return StreamingAuthResponse(authenticated=success, verification_url=verification_url)
 
 
 @router.get("/{service_name}/search", response_model=SearchResult)

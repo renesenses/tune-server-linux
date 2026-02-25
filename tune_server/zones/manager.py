@@ -111,6 +111,20 @@ class ZoneManager:
         logger.info("zone_created", id=zone_id, name=name, type=output_type)
         return zone
 
+    async def rename_zone(self, zone_id: int, name: str) -> ZoneInstance:
+        zone = self._zones.get(zone_id)
+        if not zone:
+            raise KeyError(f"Zone {zone_id} not found")
+        zone.name = name
+        await self._zone_repo.update(zone_id, name=name)
+        await self._event_bus.emit(Event(
+            type=EventType.ZONE_UPDATED,
+            data={"zone_id": zone_id, "name": name},
+            source="zone_manager",
+        ))
+        logger.info("zone_renamed", id=zone_id, name=name)
+        return zone
+
     async def delete_zone(self, zone_id: int) -> None:
         zone = self._zones.pop(zone_id, None)
         if zone:

@@ -179,6 +179,10 @@ class ZoneCreateRequest(BaseModel):
     output_device_id: Optional[str] = None
 
 
+class ZoneUpdateRequest(BaseModel):
+    name: Optional[str] = None
+
+
 class ZoneGroupRequest(BaseModel):
     zone_ids: list[int]
     leader_id: int
@@ -307,6 +311,7 @@ class StreamingAuthRequest(BaseModel):
 
 class StreamingAuthResponse(BaseModel):
     authenticated: bool
+    verification_url: Optional[str] = None
 
 
 class ZoneGroupResponse(BaseModel):

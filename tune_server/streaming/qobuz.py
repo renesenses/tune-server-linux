@@ -72,17 +72,14 @@ class QobuzService(StreamingService):
             return False
 
         try:
-            # Hash password
-            pw_hash = hashlib.md5(password.encode()).hexdigest()
-
             session = await self._ensure_session()
             url = f"{QOBUZ_API_BASE}/user/login"
-            params = {
-                "username": username,
-                "password": pw_hash,
+            data = {
+                "email": username,
+                "password": password,
                 "app_id": self._app_id,
             }
-            async with session.get(url, params=params) as resp:
+            async with session.post(url, data=data) as resp:
                 if resp.status != 200:
                     logger.warning("qobuz_auth_failed", status=resp.status)
                     return False
