@@ -122,6 +122,8 @@ cp .env.example .env
 | **Security** | | |
 | `TUNE_API_KEY` | `None` | API key for authentication (None = no auth) |
 | `TUNE_CORS_ORIGINS` | `["*"]` | Allowed CORS origins |
+| **Web UI** | | |
+| `TUNE_WEB_DIR` | `None` | Path to built SPA (enables embedded web UI) |
 | **Streaming** | | |
 | `TUNE_TIDAL_ENABLED` | `false` | Enable Tidal integration |
 | `TUNE_QOBUZ_ENABLED` | `false` | Enable Qobuz integration |
@@ -144,8 +146,23 @@ tune-server
 ```
 
 The server starts on two ports:
-- **:8888** — REST API + WebSocket
+- **:8888** — REST API + WebSocket (+ Web UI if configured)
 - **:8080** — HTTP audio streaming (for DLNA renderers)
+
+### With embedded Web UI
+
+Build the web client and point `TUNE_WEB_DIR` to the output:
+
+```bash
+# Build the web client
+cd /path/to/tune-web-client
+npm ci && npm run build
+
+# Start the server with the embedded UI
+TUNE_WEB_DIR=/path/to/tune-web-client/dist python -m tune_server
+```
+
+Open `http://localhost:8888` in your browser — both API and UI are served from the same port.
 
 ## systemd
 
@@ -209,8 +226,11 @@ curl localhost:8888/api/v1/playlists/1/tracks
 ### Devices
 
 ```bash
-# List discovered devices
+# List discovered network devices (DLNA/AirPlay)
 curl localhost:8888/api/v1/devices
+
+# List local audio output devices (USB DACs, soundcards)
+curl localhost:8888/api/v1/devices/audio
 ```
 
 ### Zones
