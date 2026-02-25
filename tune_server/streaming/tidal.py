@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 import structlog
 
 from tune_server.config import settings
-from tune_server.models import Album, Artist, AudioFormat, SearchResult, Source, Track
+from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, Track
 from tune_server.streaming.base import StreamingService
 from tune_server.streaming.cache import StreamUrlCache
 
@@ -26,6 +26,7 @@ class TidalService(StreamingService):
         self._pending_login = None
         self._pending_session = None
         self._auth_task = None
+        self._featured_cache: dict[str, object] = {}  # section_id -> PageCategory
 
     @property
     def name(self) -> str:
@@ -300,6 +301,64 @@ class TidalService(StreamingService):
             logger.exception("tidal_restore_auth_error")
             return False
 
+    async def get_featured_sections(self) -> list[FeaturedSection]:
+        if not await self._ensure_authenticated():
+            return []
+        try:
+            import tidalapi
+
+            explore_page = await asyncio.wait_for(
+                asyncio.to_thread(self._session.explore), timeout=30
+            )
+            sections = []
+            self._featured_cache = {}
+            for i, cat in enumerate(explore_page.categories):
+                title = getattr(cat, "title", None)
+                if not title:
+                    continue
+                # Only keep categories that have album items
+                items = getattr(cat, "items", [])
+                has_albums = any(isinstance(item, tidalapi.Album) for item in items)
+                if has_albums:
+                    section_id = f"explore-{i}"
+                    sections.append(FeaturedSection(id=section_id, name=title))
+                    self._featured_cache[section_id] = cat
+            return sections
+        except Exception:
+            logger.exception("tidal_featured_sections_error")
+            return []
+
+    async def get_featured(self, section: str, limit: int = 20) -> list[Album]:
+        cat = self._featured_cache.get(section)
+        if not cat:
+            return []
+        try:
+            import tidalapi
+
+            items = getattr(cat, "items", [])
+            albums = []
+            for item in items:
+                if isinstance(item, tidalapi.Album):
+                    albums.append(self._map_album(item))
+                    if len(albums) >= limit:
+                        break
+            return albums
+        except Exception:
+            logger.exception("tidal_featured_error", section=section)
+            return []
+
+    async def disconnect(self, db: Database) -> None:
+        self._session = None
+        self._featured_cache = {}
+        try:
+            await db.execute(
+                "DELETE FROM streaming_auth WHERE service = ?", ("tidal",)
+            )
+            await db.commit()
+            logger.info("tidal_disconnected")
+        except Exception:
+            logger.exception("tidal_disconnect_error")
+
     async def close(self) -> None:
         self._session = None
 
@@ -325,11 +384,17 @@ class TidalService(StreamingService):
         )
 
     def _map_album(self, a) -> Album:
+        cover_path = None
+        try:
+            cover_path = a.image(640)
+        except Exception:
+            pass
         return Album(
             title=a.name or "Unknown",
             artist_name=a.artist.name if a.artist else "Unknown",
             year=getattr(a, "year", None),
             track_count=getattr(a, "num_tracks", 0) or 0,
+            cover_path=cover_path,
             source=Source.TIDAL,
             source_id=str(a.id),
         )
