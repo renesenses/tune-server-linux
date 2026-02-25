@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Optional
 import structlog
 
 from tune_server.config import settings
-from tune_server.models import Album, Artist, AudioFormat, SearchResult, Source, Track
+from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, Track
 from tune_server.streaming.base import StreamingService
 from tune_server.streaming.cache import StreamUrlCache
 
@@ -33,6 +33,7 @@ class YouTubeService(StreamingService):
         self._oauth_json_path: str | None = settings.youtube_oauth_json
         self._url_cache = StreamUrlCache(ttl_seconds=settings.youtube_url_cache_ttl)
         self._lock = asyncio.Lock()  # Serialize access to _ytmusic (not thread-safe)
+        self._featured_cache: dict[str, list] = {}  # section_id -> list of items
 
     @property
     def name(self) -> str:
@@ -208,6 +209,54 @@ class YouTubeService(StreamingService):
             logger.exception("youtube_artist_tracks_error", artist_id=artist_id)
             return []
 
+    async def get_featured_sections(self) -> list[FeaturedSection]:
+        if not self._ytmusic:
+            return []
+        try:
+            async with self._lock:
+                home = await asyncio.to_thread(self._ytmusic.get_home, limit=6)
+            self._featured_cache = {}
+            sections = []
+            for i, row in enumerate(home):
+                title = row.get("title", "")
+                if not title:
+                    continue
+                items = row.get("contents", [])
+                has_albums = any(
+                    item.get("resultType") in ("album", "single")
+                    or item.get("browseId", "").startswith("MPREb_")
+                    for item in items
+                )
+                if has_albums:
+                    section_id = f"home-{i}"
+                    sections.append(FeaturedSection(id=section_id, name=title))
+                    self._featured_cache[section_id] = items
+            return sections
+        except Exception:
+            logger.exception("youtube_featured_sections_error")
+            return []
+
+    async def get_featured(self, section: str, limit: int = 20) -> list[Album]:
+        items = self._featured_cache.get(section, [])
+        albums = []
+        for item in items[:limit]:
+            browse_id = item.get("browseId", "")
+            if not browse_id:
+                continue
+            thumbnails = item.get("thumbnails", [])
+            cover = thumbnails[-1]["url"] if thumbnails else None
+            albums.append(Album(
+                title=item.get("title", ""),
+                artist_name=", ".join(
+                    a.get("name", "") for a in item.get("artists", [])
+                ) or None,
+                year=_safe_int(item.get("year")),
+                cover_path=cover,
+                source=Source.YOUTUBE,
+                source_id=browse_id,
+            ))
+        return albums
+
     async def get_stream_url(self, track_id: str) -> Optional[str]:
         cached = self._url_cache.get(track_id)
         if cached:
@@ -302,6 +351,7 @@ class YouTubeService(StreamingService):
         async with self._lock:
             self._ytmusic = None
         self._url_cache.clear()
+        self._featured_cache = {}
 
     # --- Mapping helpers ---
 
