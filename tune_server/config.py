@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     api_key: Optional[str] = None  # None = no auth required (backward-compatible)
 
+    # Web UI (built SPA served as static files, empty = disabled)
+    web_dir: Optional[str] = None
+
     # Server
     api_host: str = "0.0.0.0"
     api_port: int = 8888
