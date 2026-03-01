@@ -10,6 +10,7 @@ class OutputTarget(Protocol):
     capabilities: AudioCapabilities        # Supported formats
     is_available: bool                     # Device reachable?
 
+    def supports_direct_url(track) -> bool  # Can fetch URL directly?
     async def start(stream_info, track)    # Begin playback
     async def write(data: bytes)           # Feed audio data
     async def flush()                      # Flush buffers
@@ -64,9 +65,31 @@ Most formats are passed through bit-perfectly. The renderer decodes internally.
 
 SSDP multicast discovers `urn:schemas-upnp-org:device:MediaRenderer:1` devices every 30 seconds. For each device, a `DmrDevice` wrapper is created from the device description XML.
 
+### Direct URL Passthrough
+
+For streaming service tracks (Qobuz, Tidal), the DLNA output can bypass the local pipeline entirely. The renderer fetches the audio directly from the CDN:
+
+```mermaid
+sequenceDiagram
+    participant DO as DlnaOutput
+    participant DMR as DLNA Renderer
+    participant CDN as Qobuz/Tidal CDN
+
+    DO->>DMR: SetTransportURI(CDN_URL, title, DIDL-Lite)
+    DO->>DMR: Play()
+    DMR->>CDN: GET (FLAC/MP3/AAC)
+    CDN-->>DMR: Audio stream
+    Note over DMR: Native format decoding
+```
+
+- `supports_direct_url(track)` returns `True` for HTTP(S) URLs with FLAC, MP3, or AAC format
+- `write()` becomes a no-op — the renderer pulls data on its own
+- The player skips pipeline creation entirely (no FFmpeg subprocess)
+- DIDL-Lite metadata includes album art URL, duration, and audio properties
+
 ### Gapless Playback
 
-Supported via `SetNextAVTransportURI` — tells the renderer what track comes next before the current one ends.
+Supported via `SetNextAVTransportURI` — tells the renderer what track comes next before the current one ends. Works with both local files and direct URLs.
 
 ## AirPlay Output
 

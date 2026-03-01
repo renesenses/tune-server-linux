@@ -8,15 +8,70 @@ The audio pipeline determines how audio data flows from a source file to an outp
 
 ```mermaid
 flowchart TD
-    SRC["Source file<br>(FLAC, AAC, MP3, WAV, ALAC, OGG, DSD, ...)"]
-    DECIDE{"Can the output handle<br>this format natively?"}
-    PASS["Passthrough (bit-perfect)<br>Original file bytes served directly<br>Zero CPU, zero quality loss"]
+    SRC["Source<br>(local file or streaming URL)"]
+    URL{"Is it a streaming URL<br>+ DLNA output?"}
+    DIRECT["Direct URL Passthrough<br>Renderer fetches from CDN directly<br>Zero CPU, zero local processing"]
+    LOCAL{"Can the output handle<br>this format natively?"}
+    PASS["File Passthrough (bit-perfect)<br>Original file bytes served via HTTP<br>Zero CPU, zero quality loss"]
     DECODE["Decode via FFmpeg<br>Source → PCM (raw audio samples)<br>Downsample if output max rate < source rate<br>Never upsample"]
 
-    SRC --> DECIDE
-    DECIDE -->|YES| PASS
-    DECIDE -->|NO| DECODE
+    SRC --> URL
+    URL -->|"YES (FLAC/MP3/AAC)"| DIRECT
+    URL -->|NO| LOCAL
+    LOCAL -->|YES| PASS
+    LOCAL -->|NO| DECODE
 ```
+
+## Direct URL Passthrough (DLNA + Streaming)
+
+When a DLNA renderer plays a streaming service track (Qobuz, Tidal), the server passes the CDN URL directly to the renderer. No local pipeline, no FFmpeg, no HTTP streamer — the renderer fetches and decodes natively.
+
+```mermaid
+sequenceDiagram
+    participant P as Player
+    participant DO as DlnaOutput
+    participant DMR as DLNA Renderer
+    participant CDN as Streaming CDN
+
+    P->>DO: start(stream_info, track)
+    Note over DO: URL + FLAC/MP3/AAC → direct passthrough
+    DO->>DMR: SetTransportURI(CDN URL, title, DIDL-Lite)
+    DO->>DMR: Play()
+    DMR->>CDN: GET (FLAC stream)
+    CDN-->>DMR: Audio data
+    Note over DMR: Native decoding — bit-perfect
+```
+
+### Why?
+
+The previous approach decoded FLAC to PCM 24-bit then re-wrapped as WAV. But WAV format code 1 (PCM) is only specified for up to 16-bit audio — 24-bit requires WAVE_FORMAT_EXTENSIBLE. Most DLNA renderers misinterpreted the 24-bit WAV, producing loud noise.
+
+Direct URL passthrough solves this by letting the renderer handle the original FLAC natively.
+
+### Supported formats
+
+FLAC, MP3, AAC — these are universally supported by DLNA renderers.
+
+### Track-end detection
+
+Without a local pipeline, the server monitors track position via a background task (`_direct_url_monitor`) and auto-advances to the next track based on `track.duration_ms`.
+
+### DIDL-Lite metadata
+
+The metadata sent with `SetTransportURI` includes:
+
+| Element | Value |
+|---------|-------|
+| `dc:title` | Track title |
+| `dc:creator` | Artist |
+| `upnp:album` | Album title |
+| `upnp:albumArtURI` | Cover art URL (e.g., Qobuz CDN) |
+| `res@duration` | Track duration (`H:MM:SS.mmm`) |
+| `res@sampleFrequency` | Sample rate |
+| `res@bitsPerSample` | Bit depth |
+| `res@nrAudioChannels` | Channel count |
+
+---
 
 ## Passthrough Mode
 

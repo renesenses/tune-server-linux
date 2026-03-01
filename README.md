@@ -60,38 +60,66 @@ graph TD
 
 ## Installation
 
-### System dependencies
+### Option 1: Debian package (recommended for production)
+
+Build and install the `.deb` package, which handles everything: dependencies, systemd service, user creation, web UI.
 
 ```bash
-sudo apt update
-sudo apt install -y python3 python3-pip python3-venv ffmpeg \
-    libasound2-dev libportaudio2 portaudio19-dev \
-    avahi-daemon
-```
-
-### Application
-
-```bash
-# Clone
+# On the build machine
 git clone git@github.com:renesenses/tune-server.git
 cd tune-server
 
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+# Build the web client (requires Node.js)
+cd /path/to/tune-web-client
+npm ci && npm run build
+cp -r dist/ /path/to/tune-server/web/
 
-# Install
-pip install -e .
+# Build the .deb package (requires debhelper)
+sudo apt install build-essential debhelper python3 python3-venv python3-pip
+cd /path/to/tune-server
+./build-deb.sh
+
+# Install on the target machine
+sudo dpkg -i ../tune-server_*.deb
+sudo apt install -f  # install any missing dependencies
 ```
 
-### Quick install script
+After installation:
+1. Edit `/opt/tune-server/.env` to configure music directories and streaming services
+2. Start the service: `sudo systemctl start tune-server`
+3. Open `http://<server-ip>:8888` in your browser
+
+### Option 2: Quick install script
 
 ```bash
+git clone git@github.com:renesenses/tune-server.git
+cd tune-server
 sudo ./install.sh           # Install to /opt/tune-server
 sudo ./install.sh --systemd # Install + enable systemd service
 ```
 
-### Docker
+### Option 3: Development setup
+
+```bash
+# System dependencies
+sudo apt update
+sudo apt install -y python3 python3-pip python3-venv ffmpeg \
+    libasound2-dev libportaudio2 portaudio19-dev \
+    avahi-daemon
+
+# Clone and install
+git clone git@github.com:renesenses/tune-server.git
+cd tune-server
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
+
+# Run
+cp .env.example .env  # edit as needed
+python -m tune_server
+```
+
+### Option 4: Docker
 
 ```bash
 docker build -t tune-server .
@@ -100,6 +128,25 @@ docker run -d --name tune-server \
     -v /path/to/music:/music:ro \
     -v tune-data:/data \
     tune-server
+```
+
+`--network host` is required for DLNA/SSDP multicast discovery and mDNS.
+
+### Upgrading
+
+**Debian package:**
+```bash
+sudo dpkg -i tune-server_<new-version>.deb
+# .env is preserved (conffile), service restarts automatically
+```
+
+**Manual install:**
+```bash
+cd /path/to/tune-server
+git pull
+source .venv/bin/activate
+pip install -e .
+sudo systemctl restart tune-server
 ```
 
 ## Configuration
@@ -112,14 +159,17 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TUNE_MUSIC_DIRS` | `["~/Music"]` | Directories to scan for music |
+| **Library** | | |
+| `TUNE_MUSIC_DIRS` | `["~/Music"]` | Directories to scan for music (JSON array) |
 | `TUNE_DB_PATH` | `tune_server.db` | SQLite database path |
+| `TUNE_SCAN_ON_STARTUP` | `true` | Scan library on startup |
+| `TUNE_WATCH_FILESYSTEM` | `true` | Watch for file changes |
+| `TUNE_ARTWORK_CACHE_DIR` | `artwork_cache` | Directory for cached album artwork |
+| **Server** | | |
 | `TUNE_API_HOST` | `0.0.0.0` | API listen address |
 | `TUNE_API_PORT` | `8888` | API port |
 | `TUNE_STREAM_HOST` | `0.0.0.0` | Audio stream server address |
 | `TUNE_STREAM_PORT` | `8080` | Audio stream server port |
-| `TUNE_SCAN_ON_STARTUP` | `true` | Scan library on startup |
-| `TUNE_WATCH_FILESYSTEM` | `true` | Watch for file changes |
 | `TUNE_LOG_LEVEL` | `INFO` | Log level |
 | `TUNE_LOG_FORMAT` | `console` | `console` or `json` |
 | **Security** | | |
@@ -129,12 +179,23 @@ cp .env.example .env
 | `TUNE_WEB_DIR` | `None` | Path to built SPA (enables embedded web UI) |
 | **Streaming** | | |
 | `TUNE_TIDAL_ENABLED` | `false` | Enable Tidal integration |
+| `TUNE_TIDAL_QUALITY` | `HI_RES_LOSSLESS` | Tidal quality: `LOW`, `HIGH`, `LOSSLESS`, `HI_RES_LOSSLESS` |
 | `TUNE_QOBUZ_ENABLED` | `false` | Enable Qobuz integration |
+| `TUNE_QOBUZ_APP_ID` | `None` | Qobuz application ID |
+| `TUNE_QOBUZ_APP_SECRET` | `None` | Qobuz application secret |
 | `TUNE_YOUTUBE_ENABLED` | `false` | Enable YouTube Music integration |
 | `TUNE_YOUTUBE_OAUTH_JSON` | `None` | Path to YouTube OAuth credentials |
 | `TUNE_AMAZON_MUSIC_ENABLED` | `false` | Enable Amazon Music integration |
 | `TUNE_AMAZON_MUSIC_REGION` | `us` | Amazon Music region |
 | `TUNE_AMAZON_MUSIC_QUALITY` | `HD` | Amazon quality: `SD`, `HD`, `ULTRA_HD` |
+| **Discovery** | | |
+| `TUNE_DISCOVERY_ENABLED` | `true` | Enable network device discovery |
+| `TUNE_SSDP_ENABLED` | `true` | Enable SSDP (DLNA renderer discovery) |
+| `TUNE_MDNS_ENABLED` | `true` | Enable mDNS (AirPlay discovery) |
+| **Network** | | |
+| `TUNE_NETWORK_SHARES_ENABLED` | `false` | Enable SMB/NFS share discovery |
+| `TUNE_NETWORK_MEDIA_SERVERS_ENABLED` | `false` | Enable DLNA MediaServer discovery |
+| `TUNE_SMB_MOUNT_DIR` | `~/.tune/mounts` | Directory for network share mount points |
 | **WebSocket** | | |
 | `TUNE_WS_HEARTBEAT_INTERVAL` | `30` | WebSocket ping interval (seconds, 0 = disabled) |
 

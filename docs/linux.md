@@ -1,5 +1,64 @@
 # Linux Deployment Guide
 
+## Installation via Debian Package
+
+The recommended way to deploy Tune Server on Debian/Ubuntu is the `.deb` package.
+
+### Build the package
+
+```bash
+# Prerequisites
+sudo apt install build-essential debhelper python3 python3-venv python3-pip
+
+# Build (from the tune-server repo root)
+./build-deb.sh
+```
+
+The package is created in the parent directory (`../tune-server_*.deb`).
+
+### Install
+
+```bash
+sudo dpkg -i tune-server_0.1.0_all.deb
+sudo apt install -f  # resolve any missing dependencies
+```
+
+This installs:
+- Application to `/opt/tune-server/` (source + virtualenv + web UI)
+- systemd service `tune-server.service`
+- Configuration at `/opt/tune-server/.env`
+- System user `tune-server` (no login shell)
+
+### Post-install configuration
+
+```bash
+# Edit configuration
+sudo nano /opt/tune-server/.env
+
+# Start the service
+sudo systemctl start tune-server
+
+# Check logs
+sudo journalctl -u tune-server -f
+```
+
+### Upgrade
+
+```bash
+sudo dpkg -i tune-server_<new-version>.deb
+```
+
+The `.env` file is preserved across upgrades (declared as conffile). The service restarts automatically via `postinst`.
+
+### Uninstall
+
+```bash
+sudo apt remove tune-server         # keep config and data
+sudo apt purge tune-server           # remove everything (config, data, user)
+```
+
+---
+
 ## Audio Configuration
 
 ### ALSA (direct hardware access)
@@ -81,6 +140,52 @@ sudo ufw allow 5353/udp comment "mDNS/Avahi"
 sudo ufw status verbose
 ```
 
+## Network Mounts (SMB/NFS)
+
+To mount network shares, the `tune-server` user needs permission to run `mount`/`umount`.
+
+### Configure sudoers
+
+```bash
+# Create sudoers rule (no password required for mount/umount)
+sudo visudo -f /etc/sudoers.d/tune-server
+```
+
+Add:
+```
+tune-server ALL=(ALL) NOPASSWD: /usr/bin/mount, /usr/bin/umount
+```
+
+### Enable network share discovery
+
+In `/opt/tune-server/.env`:
+```bash
+TUNE_NETWORK_SHARES_ENABLED=true
+TUNE_SMB_MOUNT_DIR=/mnt/tune-shares
+```
+
+Create the mount directory:
+```bash
+sudo mkdir -p /mnt/tune-shares
+sudo chown tune-server:tune-server /mnt/tune-shares
+```
+
+### Install SMB client (for SMB shares)
+
+```bash
+sudo apt install cifs-utils
+```
+
+### Install NFS client (for NFS exports)
+
+```bash
+sudo apt install nfs-common
+```
+
+Mounted shares are automatically added to the music directories and scanned by the library.
+
+---
+
 ## Running as a systemd Service
 
 ```bash
@@ -120,6 +225,36 @@ Then reload:
 sudo systemctl daemon-reload
 sudo systemctl restart tune-server
 ```
+
+### systemd overrides
+
+To customize the service without editing the unit file (survives package upgrades):
+
+```bash
+sudo systemctl edit tune-server
+```
+
+Common overrides:
+
+```ini
+[Service]
+# Allow access to external mount points
+ReadWritePaths=/mnt/music /mnt/tune-shares
+
+# Increase restart delay
+RestartSec=10
+
+# Set environment variables directly
+Environment="TUNE_LOG_LEVEL=DEBUG"
+```
+
+Then reload:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart tune-server
+```
+
+---
 
 ## Troubleshooting
 
@@ -186,3 +321,63 @@ Ensure the service user can read the music directories:
 ```bash
 sudo -u tune-server ls /path/to/music/
 ```
+
+For external mount points, add them to the systemd override:
+```bash
+sudo systemctl edit tune-server
+# Add: ReadWritePaths=/mnt/music
+```
+
+### Network mount failures
+
+1. Check sudoers is configured:
+   ```bash
+   sudo -u tune-server sudo -n mount --version
+   # Should not ask for password
+   ```
+
+2. Check SMB/NFS client is installed:
+   ```bash
+   dpkg -l | grep cifs-utils    # for SMB
+   dpkg -l | grep nfs-common    # for NFS
+   ```
+
+3. Check mount directory exists and is writable:
+   ```bash
+   ls -la /mnt/tune-shares/
+   ```
+
+### Streaming services not connecting
+
+1. Check the service is enabled and configured in `.env`:
+   ```bash
+   grep -E 'TIDAL|QOBUZ|YOUTUBE|AMAZON' /opt/tune-server/.env
+   ```
+
+2. Check authentication status:
+   ```bash
+   curl -s localhost:8888/api/v1/streaming/services | python3 -m json.tool
+   ```
+
+3. For Tidal/YouTube/Amazon (OAuth): the authentication flow requires a browser. Use the API to initiate:
+   ```bash
+   curl -s -X POST localhost:8888/api/v1/streaming/tidal/auth | python3 -m json.tool
+   # Follow the verification_url in the response
+   ```
+
+4. For Qobuz: provide credentials:
+   ```bash
+   curl -s -X POST localhost:8888/api/v1/streaming/qobuz/auth \
+     -H 'Content-Type: application/json' \
+     -d '{"username": "user@email.com", "password": "pass"}'
+   ```
+
+### Web UI not loading
+
+1. Check `TUNE_WEB_DIR` is set and points to the built files:
+   ```bash
+   grep WEB_DIR /opt/tune-server/.env
+   ls /opt/tune-server/web/index.html
+   ```
+
+2. Ensure the directory contains `index.html` and `assets/` at the root (not inside a `dist/` subdirectory).
