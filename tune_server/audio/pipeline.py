@@ -7,7 +7,7 @@ import structlog
 
 from tune_server.audio.buffer import AsyncRingBuffer
 from tune_server.audio.decoder import FFmpegDecoder
-from tune_server.audio.formats import AudioCapabilities, can_passthrough, choose_output_format
+from tune_server.audio.formats import AudioCapabilities, can_passthrough
 from tune_server.models import AudioFormat, AudioStreamInfo
 
 logger = structlog.get_logger()
@@ -109,34 +109,27 @@ class AudioPipeline:
             if out_depth < 16:
                 out_depth = 16
 
-            # Pick the best output format the target supports (FLAC > WAV > ...)
-            out_format = choose_output_format(source_format, self._capabilities)
-            # Only use encoded formats (FLAC) for transcoding; fall back to WAV for raw PCM
-            use_encoded = out_format == AudioFormat.FLAC
-
             logger.info(
                 "pipeline_decode",
                 source_format=source_format,
                 source_rate=sample_rate,
-                output_format=out_format,
                 output_rate=out_rate,
                 output_depth=out_depth,
             )
 
             self._stream_info = AudioStreamInfo(
-                format=out_format if use_encoded else AudioFormat.WAV,
+                format=AudioFormat.WAV,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
                 channels=channels,
             )
 
-            # Decoder: source file → FLAC or raw PCM
+            # Decoder: source file → raw PCM (streamed as WAV with header)
             self._decoder = FFmpegDecoder(
                 file_path=file_path,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
                 channels=channels,
-                output_format=out_format if use_encoded else None,
             )
             await self._decoder.start(seek_ms=seek_ms)
 
