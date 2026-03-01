@@ -27,23 +27,35 @@ def _format_duration(ms: int | None) -> str:
     return f"{hours}:{minutes:02d}:{seconds:02d}.{remainder_ms:03d}"
 
 
-def _build_didl_lite(track: Track, stream_url: str, mime_type: str) -> str:
-    """Build DIDL-Lite XML metadata for DLNA."""
+def _build_didl_lite(
+    track: Track, stream_url: str, mime_type: str,
+    stream_info: Optional[AudioStreamInfo] = None,
+) -> str:
+    """Build DIDL-Lite XML metadata for DLNA.
+
+    When stream_info is provided (transcoded stream), use its audio properties
+    instead of the source track's (e.g. DSD 2.8MHz/1-bit → WAV 192kHz/16-bit).
+    """
     title = xml_escape(track.title or "Unknown")
     artist = xml_escape(track.artist_name or "Unknown Artist")
     album = xml_escape(track.album_title or "Unknown Album")
+
+    # Use stream properties when transcoding, source properties when passthrough
+    sample_rate = stream_info.sample_rate if stream_info else track.sample_rate
+    bit_depth = stream_info.bit_depth if stream_info else track.bit_depth
+    channels = stream_info.channels if stream_info else track.channels
 
     # Build res attributes
     res_attrs = f'protocolInfo="http-get:*:{mime_type}:*"'
     duration = _format_duration(track.duration_ms)
     if duration:
         res_attrs += f' duration="{duration}"'
-    if track.sample_rate:
-        res_attrs += f' sampleFrequency="{track.sample_rate}"'
-    if track.bit_depth:
-        res_attrs += f' bitsPerSample="{track.bit_depth}"'
-    if track.channels:
-        res_attrs += f' nrAudioChannels="{track.channels}"'
+    if sample_rate:
+        res_attrs += f' sampleFrequency="{sample_rate}"'
+    if bit_depth:
+        res_attrs += f' bitsPerSample="{bit_depth}"'
+    if channels:
+        res_attrs += f' nrAudioChannels="{channels}"'
 
     # Album art
     art_tag = ""
@@ -131,7 +143,7 @@ class DlnaOutput(OutputTarget):
             stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
 
             mime = mime_type_for_format(stream_info.format)
-            metadata = _build_didl_lite(track, stream_url, mime) if track else ""
+            metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info) if track else ""
 
             title = track.title if track else "Unknown"
             dmr = self._device
@@ -208,7 +220,7 @@ class DlnaOutput(OutputTarget):
             stream_id = self._streamer.create_session(stream_info, track.file_path)
             stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
             mime = mime_type_for_format(stream_info.format)
-            metadata = _build_didl_lite(track, stream_url, mime)
+            metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info)
 
             await self._device.async_set_next_transport_uri(stream_url, track.title or "Unknown", meta_data=metadata)
             logger.info("dlna_next_track_set", track=track.title)

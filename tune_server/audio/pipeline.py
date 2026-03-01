@@ -85,6 +85,9 @@ class AudioPipeline:
             # Decode to PCM
             out_rate = min(sample_rate, self._capabilities.max_sample_rate)
             out_depth = min(bit_depth, self._capabilities.max_bit_depth)
+            # DSD is 1-bit; FFmpeg decodes to minimum 16-bit PCM
+            if out_depth < 16:
+                out_depth = 16
 
             logger.info(
                 "pipeline_decode",
