@@ -242,14 +242,14 @@ Batch rescan artwork for all albums without cover art. Runs in the background.
 
 ### GET /library/browse
 
-List configured music directories with track counts.
+List configured music directories and mounted network shares with track counts. Network mount names are resolved from discovered DLNA device names (e.g., "DMP-A8" instead of the raw mount path).
 
 **Response:**
 ```json
 {
     "roots": [
-        {"name": "Music", "path": "/home/user/Music", "track_count": 7491},
-        {"name": "NAS", "path": "/mnt/nas/music", "track_count": 3200}
+        {"name": "music", "path": "/mnt/music", "track_count": 22469},
+        {"name": "DMP-A8", "path": "/mnt/tune-mounts/192.168.1.23_Share", "track_count": 4107}
     ]
 }
 ```

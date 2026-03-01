@@ -155,6 +155,11 @@ Mounted shares are added to `TUNE_MUSIC_DIRS` and scanned by the library scanner
 - Persists mount configurations in SQLite
 - Uses `sudo mount`/`umount` on Linux (requires sudoers configuration)
 - Supports remounting after network reconnection
+- **Auto-restore on startup**: mounts with `auto_mount=true` are detected via `Path.is_mount()` and restored to `music_dirs` automatically — no re-mount needed if the OS mount persists across restarts
+
+### Browse Integration
+
+Network mounts appear as roots in `GET /library/browse` alongside local music directories. The display name is resolved from discovered DLNA devices (e.g., "DMP-A8" instead of "192.168.1.23_Share").
 
 ### API
 
