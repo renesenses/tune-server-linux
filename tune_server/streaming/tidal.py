@@ -402,6 +402,13 @@ class TidalService(StreamingService):
         artist_name = t.artist.name if t.artist else "Unknown"
         album_title = t.album.name if t.album else None
 
+        cover_path = None
+        if t.album:
+            try:
+                cover_path = t.album.image(640)
+            except Exception:
+                pass
+
         quality = getattr(t, "audio_quality", None)
         fmt = AudioFormat.FLAC if quality in ("LOSSLESS", "HI_RES", "HI_RES_LOSSLESS") else AudioFormat.AAC
 
@@ -414,6 +421,7 @@ class TidalService(StreamingService):
             sample_rate=44100,
             bit_depth=16,
             channels=2,
+            cover_path=cover_path,
             source=Source.TIDAL,
             source_id=str(t.id),
         )

@@ -358,6 +358,8 @@ class YouTubeService(StreamingService):
     def _map_track_from_search(self, item: dict) -> Track:
         artists = item.get("artists", [])
         album = item.get("album", {}) or {}
+        thumbnails = item.get("thumbnails", [])
+        cover = thumbnails[-1]["url"] if thumbnails else None
         return Track(
             title=item.get("title", "Unknown"),
             artist_name=_first_artist_name(artists),
@@ -367,12 +369,16 @@ class YouTubeService(StreamingService):
             sample_rate=48000,
             bit_depth=16,
             channels=2,
+            cover_path=cover,
             source=Source.YOUTUBE,
             source_id=item.get("videoId", ""),
         )
 
     def _map_track_from_song(self, song: dict) -> Track:
         details = song.get("videoDetails", {})
+        thumbnail = details.get("thumbnail", {})
+        thumbnails = thumbnail.get("thumbnails", [])
+        cover = thumbnails[-1]["url"] if thumbnails else None
         return Track(
             title=details.get("title", "Unknown"),
             artist_name=details.get("author", "Unknown"),
@@ -381,6 +387,7 @@ class YouTubeService(StreamingService):
             sample_rate=48000,
             bit_depth=16,
             channels=2,
+            cover_path=cover,
             source=Source.YOUTUBE,
             source_id=details.get("videoId", ""),
         )

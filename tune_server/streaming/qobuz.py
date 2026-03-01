@@ -266,6 +266,8 @@ class QobuzService(StreamingService):
     def _map_track(self, t: dict) -> Track:
         performer = t.get("performer", {})
         album = t.get("album", {})
+        image = album.get("image", {}) if album else {}
+        cover_path = image.get("large") or image.get("small") or image.get("thumbnail") or None
 
         return Track(
             title=t.get("title", "Unknown"),
@@ -276,6 +278,7 @@ class QobuzService(StreamingService):
             sample_rate=t.get("maximum_sampling_rate", 44.1) * 1000,
             bit_depth=t.get("maximum_bit_depth", 16),
             channels=2,
+            cover_path=cover_path,
             source=Source.QOBUZ,
             source_id=str(t.get("id", "")),
         )
