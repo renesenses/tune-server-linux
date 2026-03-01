@@ -225,7 +225,10 @@ class MountManager:
         """Execute OS mount command. Returns (success, error_message)."""
         try:
             cmd = self._build_mount_cmd(request, mount_path)
-            logger.info("os_mount_exec", cmd=cmd[0], host=request.host, share=request.share_name)
+            # On Linux, mount requires root — use sudo (configured via sudoers)
+            if not _IS_MACOS:
+                cmd = ["sudo", "-n"] + cmd
+            logger.info("os_mount_exec", cmd=cmd, host=request.host, share=request.share_name)
 
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -300,8 +303,11 @@ class MountManager:
     async def _os_unmount(self, mount_path: str) -> None:
         """Execute OS unmount command."""
         try:
+            cmd = ["umount", mount_path]
+            if not _IS_MACOS:
+                cmd = ["sudo", "-n"] + cmd
             proc = await asyncio.create_subprocess_exec(
-                "umount", mount_path,
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
