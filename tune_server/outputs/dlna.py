@@ -6,7 +6,13 @@ from xml.sax.saxutils import escape as xml_escape
 
 import structlog
 
-from tune_server.audio.formats import DLNA_CAPABILITIES, AudioCapabilities, mime_type_for_format
+from tune_server.audio.formats import (
+    DLNA_CAPABILITIES,
+    AudioCapabilities,
+    detect_dsd_from_sink_protocols,
+    dsd_mime_from_extension,
+    mime_type_for_format,
+)
 from tune_server.models import AudioFormat, AudioStreamInfo, Source, Track
 from tune_server.outputs.base import OutputTarget
 from tune_server.outputs.http_streamer import HttpAudioStreamer
@@ -94,6 +100,7 @@ class DlnaOutput(OutputTarget):
         device: object,  # async_upnp_client.DmrDevice
         streamer: HttpAudioStreamer,
         server_ip: str,
+        sink_protocols: list[str] | None = None,
     ) -> None:
         self._device = device
         self._streamer = streamer
@@ -102,14 +109,31 @@ class DlnaOutput(OutputTarget):
         self._direct_url: bool = False
         self._available = True
         self._volume: float = 0.5
+        self._supports_native_dsd = detect_dsd_from_sink_protocols(sink_protocols or [])
+        self._capabilities = self._build_capabilities()
+
+    def _build_capabilities(self) -> AudioCapabilities:
+        formats = {AudioFormat.FLAC, AudioFormat.WAV, AudioFormat.MP3, AudioFormat.AAC}
+        if self._supports_native_dsd:
+            formats.add(AudioFormat.DSD)
+        return AudioCapabilities(
+            formats=formats,
+            max_sample_rate=192000,
+            max_bit_depth=24,
+            supports_gapless=True,
+        )
 
     @property
     def name(self) -> str:
         return getattr(self._device, "name", "DLNA Renderer")
 
     @property
+    def supports_native_dsd(self) -> bool:
+        return self._supports_native_dsd
+
+    @property
     def capabilities(self) -> AudioCapabilities:
-        return DLNA_CAPABILITIES
+        return self._capabilities
 
     @property
     def is_available(self) -> bool:
@@ -142,6 +166,34 @@ class DlnaOutput(OutputTarget):
                 self._direct_url = True
                 self._available = True
                 logger.info("dlna_direct_url_playback", device=self.name, url=track.file_path[:80])
+                return
+
+            # Native DSD passthrough: serve DSF/DFF file directly to the renderer
+            if (
+                track
+                and stream_info.format == AudioFormat.DSD
+                and self._supports_native_dsd
+                and track.file_path
+                and not track.file_path.startswith("http")
+            ):
+                mime = dsd_mime_from_extension(track.file_path)
+                self._stream_id = self._streamer.create_session(stream_info, track.file_path)
+                stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+                metadata = _build_didl_lite(track, stream_url, mime)
+
+                dmr = self._device
+                title = track.title or "Unknown"
+                await asyncio.wait_for(
+                    dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
+                )
+                await asyncio.wait_for(dmr.async_play(), timeout=10)
+
+                self._available = True
+                logger.info(
+                    "dlna_native_dsd_playback", device=self.name,
+                    file=track.file_path, mime=mime,
+                    sample_rate=track.sample_rate,
+                )
                 return
 
             # Standard flow: stream via local HTTP server
@@ -222,6 +274,21 @@ class DlnaOutput(OutputTarget):
                 metadata = _build_didl_lite(track, track.file_path, mime)
                 await self._device.async_set_next_transport_uri(track.file_path, track.title or "Unknown", meta_data=metadata)
                 logger.info("dlna_next_track_set_direct", track=track.title)
+                return True
+
+            # Native DSD passthrough for next track
+            if (
+                stream_info.format == AudioFormat.DSD
+                and self._supports_native_dsd
+                and track.file_path
+                and not track.file_path.startswith("http")
+            ):
+                mime = dsd_mime_from_extension(track.file_path)
+                stream_id = self._streamer.create_session(stream_info, track.file_path)
+                stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
+                metadata = _build_didl_lite(track, stream_url, mime)
+                await self._device.async_set_next_transport_uri(stream_url, track.title or "Unknown", meta_data=metadata)
+                logger.info("dlna_next_track_set_native_dsd", track=track.title)
                 return True
 
             stream_id = self._streamer.create_session(stream_info, track.file_path)

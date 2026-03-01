@@ -64,6 +64,9 @@ def can_passthrough(
 ) -> bool:
     if source_format not in target_caps.formats:
         return False
+    # DSD is 1-bit at MHz rates — skip normal rate/depth checks
+    if source_format == AudioFormat.DSD:
+        return True
     if source_sample_rate > target_caps.max_sample_rate:
         return False
     if source_bit_depth > target_caps.max_bit_depth:
@@ -123,5 +126,37 @@ def mime_type_for_format(fmt: AudioFormat) -> str:
         AudioFormat.OGG: "audio/ogg",
         AudioFormat.OPUS: "audio/opus",
         AudioFormat.AIFF: "audio/aiff",
+        AudioFormat.DSD: "application/x-dsd",
     }
     return mapping.get(fmt, "application/octet-stream")
+
+
+# MIME types that indicate DSD/DSF/DFF support in DLNA sink protocols
+DSD_MIME_TYPES = {
+    "application/x-dsd",
+    "audio/x-dsd",
+    "audio/x-dsf",
+    "audio/dsf",
+    "audio/x-dff",
+    "audio/dff",
+}
+
+
+def detect_dsd_from_sink_protocols(sink_protocols: list[str]) -> bool:
+    """Check if any DLNA sink protocol entry indicates DSD support."""
+    for entry in sink_protocols:
+        # Format: "http-get:*:audio/x-dsf:*" or similar
+        lower = entry.lower()
+        if any(mime in lower for mime in DSD_MIME_TYPES):
+            return True
+        # Some renderers use generic patterns — check for dsf/dsd/dff keywords
+        if "dsf" in lower or "dff" in lower:
+            return True
+    return False
+
+
+def dsd_mime_from_extension(file_path: str) -> str:
+    """Return the appropriate MIME type for a DSD file based on extension."""
+    if file_path.lower().endswith(".dff"):
+        return "audio/x-dff"
+    return "audio/x-dsf"  # default for .dsf

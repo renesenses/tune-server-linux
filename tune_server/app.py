@@ -219,7 +219,10 @@ class TuneServer:
                 logger.warning("dlna_factory_device_not_found", device_id=device_id,
                              available=list(self._discovery_manager.ssdp._dmr_devices.keys()))
                 return None
-            return DlnaOutput(dmr, self._http_streamer, self._server_ip)
+            # Pass sink protocols for DSD detection
+            disc_device = self._discovery_manager.ssdp.devices.get(device_id)
+            sink_protocols = disc_device.capabilities.get("sink_protocols", []) if disc_device else []
+            return DlnaOutput(dmr, self._http_streamer, self._server_ip, sink_protocols=sink_protocols)
 
         async def create_airplay_output(device_id: str | None):
             if not device_id or not self._discovery_manager or not self._discovery_manager.mdns:

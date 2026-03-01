@@ -88,6 +88,15 @@ class SsdpDiscovery:
                             name = device.friendly_name or "Unknown DLNA"
                             parsed = urlparse(device.device_url or location)
 
+                            # Query sink protocol info for format detection
+                            sink_protocols: list[str] = []
+                            try:
+                                if dmr.has_get_protocol_info:
+                                    await dmr.async_get_protocol_info()
+                                    sink_protocols = dmr.sink_protocol_info or []
+                            except Exception:
+                                logger.debug("ssdp_protocol_info_error", name=name)
+
                             disc_device = DiscoveredDevice(
                                 id=dev_id,
                                 name=name,
@@ -95,7 +104,11 @@ class SsdpDiscovery:
                                 host=parsed.hostname or "",
                                 port=parsed.port or 0,
                                 available=True,
-                                capabilities={"dlna": True, "model": device.model_name or ""},
+                                capabilities={
+                                    "dlna": True,
+                                    "model": device.model_name or "",
+                                    "sink_protocols": sink_protocols,
+                                },
                             )
 
                             async with self._lock:
@@ -110,7 +123,12 @@ class SsdpDiscovery:
                                     data=disc_device.model_dump(),
                                     source="ssdp",
                                 ))
-                                logger.info("dlna_device_found", name=name, model=device.model_name, id=dev_id, recovered=was_lost)
+                                dsd_support = any("dsf" in p.lower() or "dsd" in p.lower() or "dff" in p.lower() for p in sink_protocols)
+                                logger.info(
+                                    "dlna_device_found", name=name, model=device.model_name,
+                                    id=dev_id, recovered=was_lost, dsd_native=dsd_support,
+                                    sink_protocol_count=len(sink_protocols),
+                                )
 
                         except Exception:
                             logger.debug("ssdp_device_create_error", location=location)

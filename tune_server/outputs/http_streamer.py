@@ -9,7 +9,8 @@ from typing import Optional
 import structlog
 from aiohttp import web
 
-from tune_server.audio.formats import mime_type_for_format
+from tune_server.audio.formats import dsd_mime_from_extension, mime_type_for_format
+from tune_server.models import AudioFormat
 from tune_server.config import settings
 from tune_server.models import AudioFormat, AudioStreamInfo
 
@@ -113,6 +114,13 @@ class HttpAudioStreamer:
             session.close()
         self._file_paths.pop(stream_id, None)
 
+    def _resolve_mime(self, stream_id: str, session) -> str:
+        """Return the correct MIME type, using file extension for DSD."""
+        if session.stream_info.format == AudioFormat.DSD:
+            file_path = self._file_paths.get(stream_id, "")
+            return dsd_mime_from_extension(file_path)
+        return mime_type_for_format(session.stream_info.format)
+
     def get_stream_url(self, stream_id: str, server_ip: str) -> str:
         session = self._sessions.get(stream_id)
         if not session:
@@ -138,7 +146,7 @@ class HttpAudioStreamer:
         if not session:
             return web.Response(status=404)
 
-        mime = mime_type_for_format(session.stream_info.format)
+        mime = self._resolve_mime(stream_id, session)
         headers = {
             "Content-Type": mime,
             "Accept-Ranges": "bytes",
@@ -158,7 +166,7 @@ class HttpAudioStreamer:
         if not session:
             return web.Response(status=404)
 
-        mime = mime_type_for_format(session.stream_info.format)
+        mime = self._resolve_mime(stream_id, session)
 
         # Signal that the renderer has connected
         session.client_connected.set()
