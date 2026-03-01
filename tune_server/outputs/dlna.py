@@ -7,7 +7,7 @@ from xml.sax.saxutils import escape as xml_escape
 import structlog
 
 from tune_server.audio.formats import DLNA_CAPABILITIES, AudioCapabilities, mime_type_for_format
-from tune_server.models import AudioFormat, AudioStreamInfo, Track
+from tune_server.models import AudioFormat, AudioStreamInfo, Source, Track
 from tune_server.outputs.base import OutputTarget
 from tune_server.outputs.http_streamer import HttpAudioStreamer
 
@@ -63,6 +63,13 @@ def _build_didl_lite(
         art_url = xml_escape(track.cover_path)
         art_tag = f'<upnp:albumArtURI>{art_url}</upnp:albumArtURI>'
 
+    # Use audioBroadcast class for radio streams
+    upnp_class = (
+        "object.item.audioItem.audioBroadcast"
+        if track.source == Source.RADIO
+        else "object.item.audioItem.musicTrack"
+    )
+
     return (
         '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
         'xmlns:dc="http://purl.org/dc/elements/1.1/" '
@@ -73,7 +80,7 @@ def _build_didl_lite(
         f'<upnp:artist>{artist}</upnp:artist>'
         f'<upnp:album>{album}</upnp:album>'
         f'{art_tag}'
-        f'<upnp:class>object.item.audioItem.musicTrack</upnp:class>'
+        f'<upnp:class>{upnp_class}</upnp:class>'
         f'<res {res_attrs}>{xml_escape(stream_url)}</res>'
         '</item></DIDL-Lite>'
     )

@@ -12,6 +12,7 @@ class Source(str, Enum):
     QOBUZ = "qobuz"
     YOUTUBE = "youtube"
     AMAZON = "amazon"
+    RADIO = "radio"
 
 
 class AudioFormat(str, Enum):
@@ -151,6 +152,52 @@ class AudioStreamInfo(BaseModel):
     channels: int
     duration_ms: int = 0
     file_size: Optional[int] = None
+
+
+# --- Radio station models ---
+
+
+class RadioStation(BaseModel):
+    id: Optional[int] = None
+    name: str
+    stream_url: str
+    logo_url: Optional[str] = None
+    genre: Optional[str] = None
+    tags: Optional[str] = None
+    codec: Optional[str] = None
+    country: Optional[str] = None
+    homepage_url: Optional[str] = None
+    favorite: bool = False
+
+
+class RadioStationCreate(BaseModel):
+    name: str
+    stream_url: str
+    logo_url: Optional[str] = None
+    genre: Optional[str] = None
+    tags: Optional[str] = None
+    codec: Optional[str] = None
+    country: Optional[str] = None
+    homepage_url: Optional[str] = None
+    favorite: bool = False
+
+
+class RadioStationUpdate(BaseModel):
+    name: Optional[str] = None
+    stream_url: Optional[str] = None
+    logo_url: Optional[str] = None
+    genre: Optional[str] = None
+    tags: Optional[str] = None
+    codec: Optional[str] = None
+    country: Optional[str] = None
+    homepage_url: Optional[str] = None
+    favorite: Optional[bool] = None
+
+
+class RadioImportResult(BaseModel):
+    imported: int
+    skipped: int
+    errors: list[str]
 
 
 # --- API request/response models ---

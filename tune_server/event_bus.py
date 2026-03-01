@@ -59,6 +59,11 @@ class EventType(str, Enum):
     MEDIA_SERVER_DISCOVERED = "network.media_server.discovered"
     MEDIA_SERVER_LOST = "network.media_server.lost"
 
+    # Radio events
+    RADIO_CREATED = "radio.created"
+    RADIO_UPDATED = "radio.updated"
+    RADIO_DELETED = "radio.deleted"
+
     # System events
     SYSTEM_STARTED = "system.started"
     SYSTEM_STOPPING = "system.stopping"

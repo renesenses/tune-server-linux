@@ -73,6 +73,24 @@ class Database:
         """)
         await self._db.commit()
 
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS radio_stations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                stream_url TEXT NOT NULL,
+                logo_url TEXT,
+                genre TEXT,
+                tags TEXT,
+                codec TEXT,
+                country TEXT,
+                homepage_url TEXT,
+                favorite INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self._db.commit()
+
     async def close(self) -> None:
         if self._db:
             await self._db.close()

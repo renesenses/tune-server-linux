@@ -116,7 +116,7 @@ class ZoneInstance:
                     "disc_number": t.disc_number,
                     "track_number": t.track_number,
                     "duration_ms": t.duration_ms,
-                    "file_path": t.file_path if t.source == Source.LOCAL else None,
+                    "file_path": t.file_path if t.source in (Source.LOCAL, Source.RADIO) else None,
                     "format": t.format.value if t.format else None,
                     "sample_rate": t.sample_rate,
                     "bit_depth": t.bit_depth,
