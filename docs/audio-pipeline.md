@@ -73,32 +73,94 @@ The metadata sent with `SetTransportURI` includes:
 
 ---
 
+## Native DSD Passthrough (DLNA)
+
+When a DLNA renderer supports native DSD (DSF/DFF), the server sends the file directly without transcoding. The renderer's DAC handles DSD→analog conversion natively.
+
+```mermaid
+sequenceDiagram
+    participant P as Player
+    participant PL as Pipeline
+    participant DO as DlnaOutput
+    participant HS as HTTP Streamer
+    participant DMR as DLNA Renderer<br>(e.g. DMP-A8)
+
+    P->>PL: start(file.dsf, DSD, 2822400, 1-bit)
+    Note over PL: DSD in device caps → passthrough
+    PL-->>P: AudioStreamInfo(format=DSD)
+    P->>DO: start(stream_info, track)
+    Note over DO: supports_native_dsd=true → native path
+    DO->>HS: create_session(DSD, file.dsf)
+    DO->>DMR: SetTransportURI(url, DIDL-Lite)
+    Note over DO: MIME: audio/x-dsf
+    DO->>DMR: Play()
+    DMR->>HS: GET /stream/<id>
+    HS-->>DMR: DSF file bytes (bit-perfect)
+    Note over DMR: Native DSD decoding by DAC
+```
+
+### DSD Detection
+
+Two-layer detection:
+
+1. **GetProtocolInfo** — The server queries the renderer's `SinkProtocolInfo` for DSD MIME types (`audio/x-dsf`, `audio/x-dff`, `application/x-dsd`)
+2. **Device heuristic** — If `GetProtocolInfo` returns empty (common with audiophile devices), the server checks the device name/model against known DSD-capable patterns (Eversolo, Lumin, Naim, Cambridge Audio, etc.)
+
+### DSD Transcoding Fallback
+
+When the renderer doesn't support native DSD:
+
+- **Sample rate**: 44.1kHz family (`_best_dsd_rate()`) — 176.4kHz preferred, avoids SRC artifacts from mixing 44.1k and 48k families
+- **Bit depth**: 24-bit (maximum dynamic range from 1-bit DSD)
+- **Output format**: WAV (PCM) — FLAC pipe has `total_samples=0` which breaks some renderers
+- **Buffer**: 32KB chunks, 512-slot ring buffer
+
+### MIME Types
+
+| Extension | MIME Type |
+|-----------|-----------|
+| `.dsf` | `audio/x-dsf` |
+| `.dff` | `audio/x-dff` |
+
+---
+
 ## Passthrough Mode
 
 Used when the output supports the source format. Example: DLNA renderer playing an AAC file.
 
 ```mermaid
 flowchart LR
-    FILE["AAC File<br>on disk"] -->|"read 4KB chunks"| BUF["Output Buffer<br>(AsyncRingBuffer)"]
+    FILE["AAC File<br>on disk"] -->|"read 32KB chunks"| BUF["Output Buffer<br>(AsyncRingBuffer, 512 slots)"]
     BUF --> HTTP["HTTP Streamer<br>(serve file)"]
     HTTP --> DMR["DLNA Renderer"]
 ```
 
-- File is read in 4KB chunks via `asyncio.to_thread(f.read)`
-- Chunks are pushed to `AsyncRingBuffer` (256 slots)
+- File is read in 32KB chunks via `asyncio.to_thread(f.read)`
+- Chunks are pushed to `AsyncRingBuffer` (512 slots)
 - For DLNA: the HTTP streamer serves the file directly with Range support
 - `AudioStreamInfo` includes `file_size` for Content-Length headers
 
 ### Format Capabilities
 
+DLNA capabilities are built **per device** based on protocol info and device detection:
+
 ```python
-DLNA_CAPABILITIES = AudioCapabilities(
-    formats={FLAC, WAV, MP3, AAC, OGG, ALAC},
+# Base formats for all DLNA renderers
+base_formats = {FLAC, WAV, MP3, AAC}
+
+# DSD added when renderer supports native DSF/DFF
+if supports_native_dsd:
+    formats.add(DSD)
+
+AudioCapabilities(
+    formats=formats,
     max_sample_rate=192000,
     max_bit_depth=24,
-    supports_gapless=True,  # via SetNextAVTransportURI
+    supports_gapless=True,
 )
+```
 
+```python
 LOCAL_CAPABILITIES = AudioCapabilities(
     formats={WAV},  # sounddevice only accepts raw PCM
     max_sample_rate=384000,
@@ -158,8 +220,8 @@ block-beta
     end
     block:SIZES
         columns 2
-        F["Decoder buffer:<br>128 chunks (512KB)"]
-        G["Output buffer:<br>256 chunks (1MB)"]
+        F["Decoder buffer:<br>512 chunks (16MB)"]
+        G["Output buffer:<br>512 chunks (16MB)"]
     end
 ```
 

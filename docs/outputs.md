@@ -51,19 +51,28 @@ sequenceDiagram
 
 ### Capabilities
 
+DLNA capabilities are built **per device**, not globally. The base set is:
+
 ```python
-DLNA_CAPABILITIES = {
-    formats: {FLAC, WAV, MP3, AAC, OGG, ALAC},
-    max_sample_rate: 192000,
-    max_bit_depth: 24,
-}
+base_formats = {FLAC, WAV, MP3, AAC}
+max_sample_rate = 192000
+max_bit_depth = 24
 ```
 
-Most formats are passed through bit-perfectly. The renderer decodes internally.
+When the renderer supports native DSD (detected via `GetProtocolInfo` or device name heuristic), `DSD` is added to the format set. This enables bit-perfect DSF/DFF passthrough.
+
+### Native DSD Support
+
+The `DlnaOutput` detects DSD capability via two methods:
+
+1. **GetProtocolInfo**: queries the renderer's `SinkProtocolInfo` for DSD MIME types (`audio/x-dsf`, `audio/x-dff`, `application/x-dsd`)
+2. **Device heuristic**: if protocol info is empty (many audiophile devices don't implement it), checks the device name/model against known DSD-capable patterns (Eversolo DMP-A, Lumin, Naim, Cambridge Audio, Linn, Auralic, HEOS, Oppo)
+
+When DSD is supported, DSF files are served via the HTTP streamer with `audio/x-dsf` MIME type. The renderer's DAC decodes DSD natively. When not supported, FFmpeg transcodes to PCM WAV (176.4kHz/24-bit).
 
 ### Device Discovery
 
-SSDP multicast discovers `urn:schemas-upnp-org:device:MediaRenderer:1` devices every 30 seconds. For each device, a `DmrDevice` wrapper is created from the device description XML.
+SSDP multicast discovers `urn:schemas-upnp-org:device:MediaRenderer:1` devices every 30 seconds. For each device, a `DmrDevice` wrapper is created from the device description XML. The server also queries `GetProtocolInfo` to detect supported formats (including DSD).
 
 ### Direct URL Passthrough
 

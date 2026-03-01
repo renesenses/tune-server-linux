@@ -11,7 +11,9 @@ A multi-room music server for local libraries and streaming services, with DLNA/
 - **Streaming Services** — Tidal, Qobuz, YouTube Music, and Amazon Music integration with featured content browsing
 - **Federated Search** — Search across local library and all streaming services simultaneously
 - **Playlists** — Full CRUD with track management and real-time sync events
+- **Internet Radio** — CRUD management of Icecast/Shoutcast stations, M3U/PLS import, cover upload, genre filtering and favorites
 - **Bit-Perfect Playback** — Passthrough when the output supports the source format; direct URL passthrough for DLNA + streaming services
+- **Native DSD** — DSF/DFF bit-perfect passthrough to DSD-capable DLNA renderers (auto-detected via GetProtocolInfo or device heuristic); PCM transcoding fallback (176.4kHz/24-bit) for non-DSD devices
 - **Gapless Playback** — Seamless track transitions with pre-buffering
 - **Device Discovery** — Automatic SSDP (DLNA) and mDNS (AirPlay) scanning
 - **Network Shares** — Discover, mount, and scan SMB/NFS network shares; browse DLNA MediaServers
@@ -414,6 +416,27 @@ curl -X POST localhost:8888/api/v1/library/artwork/rescan
 
 # Merge duplicate albums
 curl -X POST localhost:8888/api/v1/library/albums/merge-duplicates
+```
+
+### Radios
+
+```bash
+# List radios
+curl localhost:8888/api/v1/radios
+
+# Create a radio station
+curl -X POST localhost:8888/api/v1/radios \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "FIP", "stream_url": "https://icecast.radiofrance.fr/fip-hifi.aac", "genre": "Éclectique"}'
+
+# Upload radio cover
+curl -X POST localhost:8888/api/v1/radios/1/artwork -F "file=@logo.jpg"
+
+# Import from M3U/PLS
+curl -X POST localhost:8888/api/v1/radios/import -F "file=@stations.m3u"
+
+# Play on a zone
+curl -X POST localhost:8888/api/v1/radios/1/play/1
 ```
 
 ### Multi-Room

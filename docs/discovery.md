@@ -53,7 +53,13 @@ urn:schemas-upnp-org:device:MediaRenderer:1
 | `host` | Parsed from device URL |
 | `port` | Parsed from device URL |
 | `model` | `modelName` from device XML |
-| `capabilities` | `{dlna: true, model: "..."}` |
+| `capabilities` | `{dlna: true, model: "...", sink_protocols: [...], device_name: "..."}` |
+
+### Protocol Info Query
+
+After discovering a device, the server queries `GetProtocolInfo` via the ConnectionManager service. This returns the list of MIME types the renderer can handle (e.g., `http-get:*:audio/flac:*`, `http-get:*:audio/x-dsf:*`). This is used to detect native DSD support.
+
+Many audiophile devices (Eversolo, etc.) don't implement `GetProtocolInfo` properly — the server falls back to a device name/model heuristic for DSD detection.
 
 ### Example Discovered Devices
 

@@ -80,6 +80,15 @@ erDiagram
         text token_data
         timestamp updated_at
     }
+    radio_stations {
+        int id PK
+        text name
+        text stream_url
+        text logo_url
+        text genre
+        text codec
+        int favorite
+    }
 ```
 
 ## Tables
@@ -170,6 +179,23 @@ erDiagram
 | `track_id` | INTEGER FK | → tracks.id (CASCADE delete) |
 | `position` | INTEGER | Order in queue |
 | `is_current` | INTEGER | 1 if this is the currently playing track (default 0) |
+
+### radio_stations
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `name` | TEXT NOT NULL | Station name |
+| `stream_url` | TEXT NOT NULL | Icecast/Shoutcast stream URL |
+| `logo_url` | TEXT | Path to station logo/cover (artwork cache or external URL) |
+| `genre` | TEXT | Genre (e.g., "Jazz", "Éclectique") |
+| `tags` | TEXT | Comma-separated tags |
+| `codec` | TEXT | Audio codec (aac, mp3, flac) |
+| `country` | TEXT | Country code (e.g., "FR") |
+| `homepage_url` | TEXT | Station website |
+| `favorite` | INTEGER | 1 if favorited (default 0) |
+| `created_at` | TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP | Last modification time |
 
 ### streaming_auth
 
@@ -311,6 +337,15 @@ classDiagram
         +get(id) dict
         +list() dict[]
         +create(name, output_type, device_id) int
+        +update(id, kwargs) void
+        +delete(id) void
+    }
+    class RadioStationRepo {
+        +get(id) RadioStation
+        +get_by_url(url) RadioStation
+        +list(limit, offset, genre, favorite) RadioStation[]
+        +count() int
+        +create(station) int
         +update(id, kwargs) void
         +delete(id) void
     }

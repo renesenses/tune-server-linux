@@ -992,6 +992,104 @@ Re-mount an existing network share (e.g., after network reconnection).
 
 ---
 
+## Radios
+
+### POST /radios
+
+Create a radio station.
+
+**Request Body:**
+```json
+{
+    "name": "FIP",
+    "stream_url": "https://icecast.radiofrance.fr/fip-hifi.aac",
+    "genre": "Éclectique",
+    "codec": "aac",
+    "country": "FR"
+}
+```
+
+**Response:** `RadioStation` (201 Created)
+
+**Events emitted:** `RADIO_CREATED`
+
+### GET /radios
+
+List radio stations.
+
+**Query Parameters:**
+- `genre` (string, optional) — Filter by genre
+- `favorite` (bool, optional) — Filter favorites only
+- `limit` (int, default 100)
+- `offset` (int, default 0)
+
+**Response:** `RadioStation[]`
+
+### GET /radios/{id}
+
+Get a radio station.
+
+**Response:** `RadioStation`
+
+### PUT /radios/{id}
+
+Update a radio station (partial update).
+
+**Request Body:**
+```json
+{
+    "name": "FIP Jazz",
+    "genre": "Jazz"
+}
+```
+
+**Response:** `RadioStation`
+
+**Events emitted:** `RADIO_UPDATED`
+
+### DELETE /radios/{id}
+
+Delete a radio station.
+
+**Response:** 204 No Content
+
+**Events emitted:** `RADIO_DELETED`
+
+### POST /radios/{id}/artwork
+
+Upload radio station cover art (multipart file upload).
+
+**Request:** `multipart/form-data` with `file` field (image/jpeg, image/png, image/webp)
+
+**Response:** `RadioStation` (with updated `logo_url`)
+
+**Events emitted:** `RADIO_UPDATED`
+
+### POST /radios/import
+
+Import radio stations from an M3U or PLS playlist file.
+
+**Request:** `multipart/form-data` with `file` field (.m3u, .m3u8, .pls)
+
+**Response:**
+```json
+{
+    "imported": 5,
+    "skipped": 2,
+    "errors": []
+}
+```
+
+Duplicate URLs are skipped (matched by `stream_url`).
+
+### POST /radios/{id}/play/{zone_id}
+
+Play a radio station on a zone. The station is converted to a `Track` with `source=radio` and `duration_ms=0` (infinite stream).
+
+**Response:** `Zone`
+
+---
+
 ## System
 
 ### GET /system/health
@@ -1029,7 +1127,17 @@ Get current server configuration (sensitive values redacted).
 
 Trigger a library scan.
 
-**Response:** `{"status": "scanning"}`
+**Query Parameters:**
+- `path` (string, optional) — Scan a single configured music directory instead of all
+
+**Response:**
+```json
+{"status": "scan_started", "music_dirs": ["/mnt/music"]}
+```
+
+**Errors:**
+- `400` — Path is not a configured music directory
+- `409` — Scan already in progress
 
 ### GET /system/scan/status
 
@@ -1221,6 +1329,23 @@ See [Event Bus](event-bus.md) for the full list of 28 event types.
     "name": "Favorites",
     "description": "My top tracks",
     "track_count": 42
+}
+```
+
+### RadioStation
+
+```json
+{
+    "id": 1,
+    "name": "FIP",
+    "stream_url": "https://icecast.radiofrance.fr/fip-hifi.aac",
+    "logo_url": "artwork_cache/abc123.jpg",
+    "genre": "Éclectique",
+    "tags": null,
+    "codec": "aac",
+    "country": "FR",
+    "homepage_url": null,
+    "favorite": true
 }
 ```
 
