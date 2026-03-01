@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     ssdp_enabled: bool = True
     mdns_enabled: bool = True
 
+    # Network shares & media servers
+    network_shares_enabled: bool = False
+    network_media_servers_enabled: bool = False
+    smb_mount_dir: str = "~/.tune/mounts"
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "console"  # console or json

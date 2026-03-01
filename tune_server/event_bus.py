@@ -51,6 +51,14 @@ class EventType(str, Enum):
     DEVICE_LOST = "device.lost"
     DEVICE_UPDATED = "device.updated"
 
+    # Network events
+    NETWORK_SHARE_DISCOVERED = "network.share.discovered"
+    NETWORK_SHARE_LOST = "network.share.lost"
+    NETWORK_MOUNT_ADDED = "network.mount.added"
+    NETWORK_MOUNT_REMOVED = "network.mount.removed"
+    MEDIA_SERVER_DISCOVERED = "network.media_server.discovered"
+    MEDIA_SERVER_LOST = "network.media_server.lost"
+
     # System events
     SYSTEM_STARTED = "system.started"
     SYSTEM_STOPPING = "system.stopping"
