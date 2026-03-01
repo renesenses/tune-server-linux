@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import structlog
@@ -17,6 +18,10 @@ from tune_server.models import (
     AlbumUpdateRequest,
     Artist,
     ArtistUpdateRequest,
+    BrowseDirectory,
+    BrowseResult,
+    BrowseRootEntry,
+    BrowseRootsResponse,
     CompletenessStats,
     LibraryStatsResponse,
     SearchResult,
@@ -309,3 +314,65 @@ async def get_artwork(filename: str):
     }
     media_type = media_types.get(suffix, "application/octet-stream")
     return FileResponse(filepath, media_type=media_type)
+
+
+# --- Browse by directory ---
+
+
+def _is_path_under_roots(path: str) -> str | None:
+    """Validate that path is under a configured music_dir. Returns the matching root or None."""
+    try:
+        resolved = Path(path).resolve()
+    except (ValueError, OSError):
+        return None
+    for music_dir in settings.music_dirs:
+        root = Path(music_dir).resolve()
+        if resolved == root or str(resolved).startswith(str(root) + os.sep):
+            return str(root)
+    return None
+
+
+@router.get("/browse", response_model=BrowseRootsResponse)
+async def browse_roots():
+    """List configured music directories with track counts."""
+    roots = []
+    for music_dir in settings.music_dirs:
+        resolved = str(Path(music_dir).resolve())
+        count = await deps.track_repo.count_by_root(resolved)
+        roots.append(BrowseRootEntry(
+            name=Path(resolved).name,
+            path=resolved,
+            track_count=count,
+        ))
+    return BrowseRootsResponse(roots=roots)
+
+
+@router.get("/browse/dir", response_model=BrowseResult)
+async def browse_directory(path: str = Query(..., description="Absolute path to browse")):
+    """Browse a directory: returns subdirectories and tracks."""
+    music_root = _is_path_under_roots(path)
+    if music_root is None:
+        raise HTTPException(status_code=403, detail="Path is not under a configured music directory")
+
+    resolved = str(Path(path).resolve())
+
+    subdirs = await deps.track_repo.list_subdirectories(resolved)
+    tracks = await deps.track_repo.list_by_directory(resolved)
+
+    directories = [
+        BrowseDirectory(name=d["name"], path=d["path"], track_count=d["track_count"])
+        for d in subdirs
+    ]
+
+    # Compute parent (None if we're at the music root)
+    parent = None
+    if resolved != music_root:
+        parent = str(Path(resolved).parent)
+
+    return BrowseResult(
+        path=resolved,
+        parent=parent,
+        music_root=music_root,
+        directories=directories,
+        tracks=tracks,
+    )

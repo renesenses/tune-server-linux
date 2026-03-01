@@ -419,6 +419,53 @@ class TrackRepo:
         )
         return [_row_to_track(r) for r in rows]
 
+    async def list_by_directory(self, directory: str) -> list[Track]:
+        """Return tracks directly in a directory (not in subdirectories)."""
+        prefix = directory.rstrip("/") + "/"
+        rows = await self._db.fetchall(
+            f"""{self._SELECT}
+                WHERE t.file_path LIKE ? || '%'
+                AND t.file_path NOT LIKE ? || '%/%'
+                ORDER BY t.file_path""",
+            (prefix, prefix),
+        )
+        return [_row_to_track(r) for r in rows]
+
+    async def list_subdirectories(self, directory: str) -> list[dict]:
+        """Return immediate subdirectories with recursive track counts."""
+        prefix = directory.rstrip("/") + "/"
+        prefix_len = len(prefix) + 1  # SQL SUBSTR is 1-based
+        rows = await self._db.fetchall(
+            """SELECT
+                CASE
+                    WHEN INSTR(SUBSTR(file_path, ?), '/') > 0
+                    THEN SUBSTR(file_path, ?, INSTR(SUBSTR(file_path, ?), '/') - 1)
+                    ELSE SUBSTR(file_path, ?)
+                END AS dir_name,
+                COUNT(*) AS track_count
+               FROM tracks
+               WHERE file_path LIKE ? || '%'
+               AND LENGTH(file_path) > ?
+               GROUP BY dir_name
+               HAVING INSTR(SUBSTR(file_path, ?), '/') > 0
+               ORDER BY dir_name""",
+            (prefix_len, prefix_len, prefix_len, prefix_len,
+             prefix, len(prefix), prefix_len),
+        )
+        return [
+            {"name": r["dir_name"], "path": prefix + r["dir_name"], "track_count": r["track_count"]}
+            for r in rows
+        ]
+
+    async def count_by_root(self, root_dir: str) -> int:
+        """Count all tracks under a root directory."""
+        prefix = root_dir.rstrip("/") + "/"
+        row = await self._db.fetchone(
+            "SELECT COUNT(*) as cnt FROM tracks WHERE file_path LIKE ? || '%'",
+            (prefix,),
+        )
+        return row["cnt"]
+
 
 class PlayQueueRepo:
     def __init__(self, db: Database) -> None:
