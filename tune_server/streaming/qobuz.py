@@ -176,15 +176,15 @@ class QobuzService(StreamingService):
 
         try:
             import time
-            ts = str(int(time.time()))
-            sig_data = f"trackgetFileUrlformat_id27intentstreamtrack_id{track_id}{ts}{self._app_secret}"
-            sig = hashlib.md5(sig_data.encode()).hexdigest()
+            unix = time.time()
+            sig_data = f"trackgetFileUrlformat_id27intentstreamtrack_id{track_id}{unix}{self._app_secret}"
+            sig = hashlib.md5(sig_data.encode("utf-8")).hexdigest()
 
             data = await self._api_get("track/getFileUrl", {
                 "track_id": track_id,
-                "format_id": 27,  # FLAC up to 24/192
+                "format_id": 27,
                 "intent": "stream",
-                "request_ts": ts,
+                "request_ts": unix,
                 "request_sig": sig,
             })
 
