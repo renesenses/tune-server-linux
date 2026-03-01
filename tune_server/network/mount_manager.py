@@ -40,7 +40,26 @@ class MountManager:
 
         mounts = await self.list_mounts()
         for mount in mounts:
-            if mount.auto_mount and mount.status != "mounted":
+            if not mount.auto_mount:
+                continue
+
+            mount_path = mount.mount_path
+            is_os_mounted = Path(mount_path).is_mount()
+
+            if is_os_mounted:
+                # OS mount persisted across restart — just add to music_dirs
+                if mount_path not in settings.music_dirs:
+                    settings.music_dirs.append(mount_path)
+                    logger.info("mount_restored", mount_path=mount_path, mount_id=mount.id)
+                # Ensure DB status is correct
+                if mount.status != "mounted":
+                    await self._db.execute(
+                        "UPDATE network_mounts SET status = 'mounted', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (mount.id,),
+                    )
+                    await self._db.commit()
+            else:
+                # Need to (re-)mount
                 try:
                     await self._remount(mount.id)
                 except Exception:

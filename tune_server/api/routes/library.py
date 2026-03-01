@@ -335,12 +335,28 @@ def _is_path_under_roots(path: str) -> str | None:
 @router.get("/browse", response_model=BrowseRootsResponse)
 async def browse_roots():
     """List configured music directories with track counts."""
+    # Build mount_path → friendly name from network mounts + discovered devices
+    mount_display: dict[str, str] = {}
+    if deps.mount_manager:
+        mounts = await deps.mount_manager.list_mounts()
+        # host → device name from discovered DLNA renderers
+        device_names: dict[str, str] = {}
+        if deps.discovery_manager:
+            for dev in deps.discovery_manager.list_devices():
+                if dev.host:
+                    device_names[dev.host] = dev.name
+        for m in mounts:
+            if m.status == "mounted":
+                name = device_names.get(m.host, m.host)
+                mount_display[m.mount_path] = name
+
     roots = []
     for music_dir in settings.music_dirs:
         resolved = str(Path(music_dir).resolve())
         count = await deps.track_repo.count_by_root(resolved)
+        name = mount_display.get(resolved, Path(resolved).name)
         roots.append(BrowseRootEntry(
-            name=Path(resolved).name,
+            name=name,
             path=resolved,
             track_count=count,
         ))
