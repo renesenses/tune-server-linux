@@ -352,3 +352,104 @@ class CompletenessStats(BaseModel):
     albums_without_year: int = 0
     total_artists: int = 0
     artists_without_image: int = 0
+
+
+# --- Browse by directory models ---
+
+
+class BrowseDirectory(BaseModel):
+    name: str
+    path: str
+    track_count: int = 0
+
+
+class BrowseResult(BaseModel):
+    path: str
+    parent: Optional[str] = None
+    music_root: str
+    directories: list[BrowseDirectory] = Field(default_factory=list)
+    tracks: list[Track] = Field(default_factory=list)
+
+
+class BrowseRootEntry(BaseModel):
+    name: str
+    path: str
+    track_count: int = 0
+
+
+class BrowseRootsResponse(BaseModel):
+    roots: list[BrowseRootEntry] = Field(default_factory=list)
+
+
+# --- Network discovery & browsing models ---
+
+
+class ShareProtocol(str, Enum):
+    SMB = "smb"
+    NFS = "nfs"
+
+
+class NetworkShare(BaseModel):
+    id: str  # "smb://host/share" or "nfs://host/export"
+    name: str  # mDNS name or hostname
+    host: str
+    port: int = 0
+    protocol: ShareProtocol
+    shares: list[str] = Field(default_factory=list)
+    available: bool = True
+
+
+class MountRequest(BaseModel):
+    host: str
+    share_name: str  # e.g. "Music" (SMB) or "/export/music" (NFS)
+    protocol: ShareProtocol
+    username: Optional[str] = None
+    password: Optional[str] = None
+    auto_mount: bool = True
+
+
+class MountInfo(BaseModel):
+    id: int
+    host: str
+    share_name: str
+    protocol: ShareProtocol
+    mount_path: str
+    status: str  # "mounted", "unmounted", "error"
+    auto_mount: bool = True
+    error: Optional[str] = None
+
+
+class DiscoveredMediaServer(BaseModel):
+    id: str
+    name: str
+    host: str
+    port: int
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    available: bool = True
+
+
+class MediaServerContainer(BaseModel):
+    id: str
+    parent_id: str
+    title: str
+    child_count: int = 0
+
+
+class MediaServerItem(BaseModel):
+    id: str
+    parent_id: str
+    title: str
+    artist: Optional[str] = None
+    album: Optional[str] = None
+    res_url: Optional[str] = None
+    duration_ms: int = 0
+    album_art_uri: Optional[str] = None
+
+
+class MediaServerBrowseResult(BaseModel):
+    object_id: str
+    containers: list[MediaServerContainer] = Field(default_factory=list)
+    items: list[MediaServerItem] = Field(default_factory=list)
+    total_matches: int = 0
+    number_returned: int = 0

@@ -70,6 +70,7 @@ class TuneServer:
         self._sync_engine: SyncEngine | None = None
         self._discovery_manager: DiscoveryManager | None = None
         self._http_streamer: HttpAudioStreamer | None = None
+        self._mount_manager = None
         self._ws_manager = None
         self._scan_task: asyncio.Task | None = None
         self._server_ip = get_local_ip()
@@ -125,6 +126,15 @@ class TuneServer:
         # Discovery — start BEFORE zone init so DLNA devices can be found
         self._discovery_manager = DiscoveryManager(self._event_bus)
         await self._discovery_manager.start()
+
+        # Mount manager for network shares
+        if settings.network_shares_enabled or settings.network_media_servers_enabled:
+            from tune_server.network.mount_manager import MountManager
+            self._mount_manager = MountManager(
+                self._db, self._event_bus, self._scanner, settings.smb_mount_dir,
+            )
+            await self._mount_manager.initialize()
+            deps.mount_manager = self._mount_manager
 
         # Brief wait for initial SSDP scan to find devices
         await asyncio.sleep(2)
@@ -318,6 +328,9 @@ class TuneServer:
 
         if self._ws_manager:
             await self._safe_stop("ws_manager", self._ws_manager.stop())
+
+        if self._mount_manager:
+            await self._safe_stop("mount_manager", self._mount_manager.stop())
 
         if self._discovery_manager:
             await self._safe_stop("discovery", self._discovery_manager.stop())

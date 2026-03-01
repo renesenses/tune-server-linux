@@ -42,7 +42,7 @@ class Database:
         logger.info("database_schema_initialized")
 
     async def _run_migrations(self) -> None:
-        """Run safe column additions for schema evolution."""
+        """Run safe column additions and table creations for schema evolution."""
         migrations = [
             "ALTER TABLE tracks ADD COLUMN file_mtime REAL",
             "ALTER TABLE zones ADD COLUMN queue_json TEXT",
@@ -53,6 +53,25 @@ class Database:
                 await self._db.commit()
             except Exception:
                 pass  # Column already exists
+
+        # Table migrations (idempotent via IF NOT EXISTS)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS network_mounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                host TEXT NOT NULL,
+                share_name TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                mount_path TEXT NOT NULL,
+                username TEXT,
+                password TEXT,
+                auto_mount INTEGER DEFAULT 1,
+                status TEXT DEFAULT 'unmounted',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(host, share_name, protocol)
+            )
+        """)
+        await self._db.commit()
 
     async def close(self) -> None:
         if self._db:
