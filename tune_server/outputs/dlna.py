@@ -17,11 +17,39 @@ _DLNA_DIRECT_FORMATS = {AudioFormat.FLAC, AudioFormat.MP3, AudioFormat.AAC}
 logger = structlog.get_logger()
 
 
+def _format_duration(ms: int | None) -> str:
+    """Format milliseconds as DLNA duration string (H:MM:SS.mmm)."""
+    if not ms or ms <= 0:
+        return ""
+    total_s, remainder_ms = divmod(ms, 1000)
+    hours, remainder_s = divmod(total_s, 3600)
+    minutes, seconds = divmod(remainder_s, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}.{remainder_ms:03d}"
+
+
 def _build_didl_lite(track: Track, stream_url: str, mime_type: str) -> str:
     """Build DIDL-Lite XML metadata for DLNA."""
     title = xml_escape(track.title or "Unknown")
     artist = xml_escape(track.artist_name or "Unknown Artist")
     album = xml_escape(track.album_title or "Unknown Album")
+
+    # Build res attributes
+    res_attrs = f'protocolInfo="http-get:*:{mime_type}:*"'
+    duration = _format_duration(track.duration_ms)
+    if duration:
+        res_attrs += f' duration="{duration}"'
+    if track.sample_rate:
+        res_attrs += f' sampleFrequency="{track.sample_rate}"'
+    if track.bit_depth:
+        res_attrs += f' bitsPerSample="{track.bit_depth}"'
+    if track.channels:
+        res_attrs += f' nrAudioChannels="{track.channels}"'
+
+    # Album art
+    art_tag = ""
+    if track.cover_path:
+        art_url = xml_escape(track.cover_path)
+        art_tag = f'<upnp:albumArtURI>{art_url}</upnp:albumArtURI>'
 
     return (
         '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
@@ -32,8 +60,9 @@ def _build_didl_lite(track: Track, stream_url: str, mime_type: str) -> str:
         f'<dc:creator>{artist}</dc:creator>'
         f'<upnp:artist>{artist}</upnp:artist>'
         f'<upnp:album>{album}</upnp:album>'
+        f'{art_tag}'
         f'<upnp:class>object.item.audioItem.musicTrack</upnp:class>'
-        f'<res protocolInfo="http-get:*:{mime_type}:*">{xml_escape(stream_url)}</res>'
+        f'<res {res_attrs}>{xml_escape(stream_url)}</res>'
         '</item></DIDL-Lite>'
     )
 
@@ -85,8 +114,9 @@ class DlnaOutput(OutputTarget):
                 metadata = _build_didl_lite(track, track.file_path, mime)
 
                 dmr = self._device
+                title = track.title or "Unknown"
                 await asyncio.wait_for(
-                    dmr.async_set_transport_uri(track.file_path, metadata), timeout=10
+                    dmr.async_set_transport_uri(track.file_path, title, meta_data=metadata), timeout=10
                 )
                 await asyncio.wait_for(dmr.async_play(), timeout=10)
 
@@ -103,9 +133,10 @@ class DlnaOutput(OutputTarget):
             mime = mime_type_for_format(stream_info.format)
             metadata = _build_didl_lite(track, stream_url, mime) if track else ""
 
+            title = track.title if track else "Unknown"
             dmr = self._device
             await asyncio.wait_for(
-                dmr.async_set_transport_uri(stream_url, metadata), timeout=10
+                dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
             )
             await asyncio.wait_for(dmr.async_play(), timeout=10)
 
@@ -170,7 +201,7 @@ class DlnaOutput(OutputTarget):
             if self.supports_direct_url(track):
                 mime = mime_type_for_format(AudioFormat(track.format))
                 metadata = _build_didl_lite(track, track.file_path, mime)
-                await self._device.async_set_next_transport_uri(track.file_path, metadata)
+                await self._device.async_set_next_transport_uri(track.file_path, track.title or "Unknown", meta_data=metadata)
                 logger.info("dlna_next_track_set_direct", track=track.title)
                 return True
 
@@ -179,7 +210,7 @@ class DlnaOutput(OutputTarget):
             mime = mime_type_for_format(stream_info.format)
             metadata = _build_didl_lite(track, stream_url, mime)
 
-            await self._device.async_set_next_transport_uri(stream_url, metadata)
+            await self._device.async_set_next_transport_uri(stream_url, track.title or "Unknown", meta_data=metadata)
             logger.info("dlna_next_track_set", track=track.title)
             return True
         except Exception:
