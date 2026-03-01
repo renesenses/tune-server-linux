@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Optional
 
 import structlog
 
 from tune_server.audio.buffer import AsyncRingBuffer
 from tune_server.config import settings
+from tune_server.models import AudioFormat
 
 logger = structlog.get_logger()
 
-# 4KB chunks for PCM audio
-CHUNK_SIZE = 4096
+# 32KB chunks — larger buffers reduce context-switch overhead for hi-res streams
+CHUNK_SIZE = 32768
 
 
 class FFmpegDecoder:
-    """Decode audio files to raw PCM via FFmpeg subprocess."""
+    """Decode/transcode audio files via FFmpeg subprocess.
+
+    When output_format is None (default), outputs raw PCM.
+    When output_format is set (e.g. FLAC), FFmpeg encodes to that format.
+    """
 
     def __init__(
         self,
@@ -22,13 +28,15 @@ class FFmpegDecoder:
         sample_rate: int = 44100,
         bit_depth: int = 16,
         channels: int = 2,
+        output_format: Optional[AudioFormat] = None,
     ) -> None:
         self._file_path = file_path
         self._sample_rate = sample_rate
         self._bit_depth = bit_depth
         self._channels = channels
+        self._output_format = output_format
         self._process: asyncio.subprocess.Process | None = None
-        self._buffer = AsyncRingBuffer(max_chunks=128)
+        self._buffer = AsyncRingBuffer(max_chunks=512)
         self._read_task: asyncio.Task | None = None
 
     @property
@@ -43,21 +51,40 @@ class FFmpegDecoder:
         else:
             return "s32le"
 
-    async def start(self, seek_ms: int = 0) -> None:
+    def _build_cmd(self, seek_ms: int = 0) -> list[str]:
         cmd = [settings.ffmpeg_path, "-hide_banner", "-loglevel", "error"]
 
         if seek_ms > 0:
             seconds = seek_ms / 1000.0
             cmd.extend(["-ss", f"{seconds:.3f}"])
 
-        cmd.extend([
-            "-i", self._file_path,
-            "-f", self._pcm_format(),
-            "-ar", str(self._sample_rate),
-            "-ac", str(self._channels),
-            "-acodec", f"pcm_{self._pcm_format()}",
-            "pipe:1",
-        ])
+        cmd.extend(["-i", self._file_path])
+
+        if self._output_format == AudioFormat.FLAC:
+            # Transcode to FLAC — lossless, low latency
+            cmd.extend([
+                "-f", "flac",
+                "-ar", str(self._sample_rate),
+                "-ac", str(self._channels),
+                "-sample_fmt", "s32" if self._bit_depth > 24 else f"s{self._bit_depth}",
+                "-compression_level", "0",  # fastest encoding
+                "pipe:1",
+            ])
+        else:
+            # Raw PCM output
+            pcm = self._pcm_format()
+            cmd.extend([
+                "-f", pcm,
+                "-ar", str(self._sample_rate),
+                "-ac", str(self._channels),
+                "-acodec", f"pcm_{pcm}",
+                "pipe:1",
+            ])
+
+        return cmd
+
+    async def start(self, seek_ms: int = 0) -> None:
+        cmd = self._build_cmd(seek_ms)
 
         logger.debug("ffmpeg_decode_start", file=self._file_path, cmd=" ".join(cmd))
 

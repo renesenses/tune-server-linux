@@ -12,7 +12,18 @@ from tune_server.models import AudioFormat, AudioStreamInfo
 
 logger = structlog.get_logger()
 
-CHUNK_SIZE = 4096
+CHUNK_SIZE = 32768  # 32KB — matches decoder chunk size
+
+# 44.1 kHz family rates, preferred for DSD conversion (avoids SRC artefacts)
+_441_FAMILY = [352800, 176400, 88200, 44100]
+
+
+def _best_dsd_rate(max_rate: int) -> int:
+    """Pick the highest 44.1kHz-family rate that fits within max_rate."""
+    for rate in _441_FAMILY:
+        if rate <= max_rate:
+            return rate
+    return 44100
 
 
 class AudioPipeline:
@@ -26,7 +37,7 @@ class AudioPipeline:
     def __init__(self, target_capabilities: AudioCapabilities) -> None:
         self._capabilities = target_capabilities
         self._decoder: FFmpegDecoder | None = None
-        self._output_buffer = AsyncRingBuffer(max_chunks=256)
+        self._output_buffer = AsyncRingBuffer(max_chunks=512)
         self._pipeline_task: asyncio.Task | None = None
         self._passthrough = False
         self._stream_info: AudioStreamInfo | None = None
@@ -82,38 +93,54 @@ class AudioPipeline:
                 self._passthrough_loop(file_path)
             )
         else:
-            # Decode to PCM
-            out_rate = min(sample_rate, self._capabilities.max_sample_rate)
-            out_depth = min(bit_depth, self._capabilities.max_bit_depth)
-            # DSD is 1-bit; FFmpeg decodes to minimum 16-bit PCM
+            # --- Compute output parameters ---
+            is_dsd = source_format == AudioFormat.DSD
+
+            if is_dsd:
+                # DSD: use 44.1kHz-family rate to avoid sample-rate conversion artefacts
+                out_rate = _best_dsd_rate(self._capabilities.max_sample_rate)
+                # DSD is 1-bit; always decode to 24-bit for maximum dynamic range
+                out_depth = min(24, self._capabilities.max_bit_depth)
+            else:
+                out_rate = min(sample_rate, self._capabilities.max_sample_rate)
+                out_depth = min(bit_depth, self._capabilities.max_bit_depth)
+
+            # Ensure minimum 16-bit (DSD is 1-bit, FFmpeg outputs min s16le)
             if out_depth < 16:
                 out_depth = 16
+
+            # Pick the best output format the target supports (FLAC > WAV > ...)
+            out_format = choose_output_format(source_format, self._capabilities)
+            # Only use encoded formats (FLAC) for transcoding; fall back to WAV for raw PCM
+            use_encoded = out_format == AudioFormat.FLAC
 
             logger.info(
                 "pipeline_decode",
                 source_format=source_format,
                 source_rate=sample_rate,
+                output_format=out_format,
                 output_rate=out_rate,
                 output_depth=out_depth,
             )
 
             self._stream_info = AudioStreamInfo(
-                format=AudioFormat.WAV,
+                format=out_format if use_encoded else AudioFormat.WAV,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
                 channels=channels,
             )
 
-            # Decoder: source file → raw PCM
+            # Decoder: source file → FLAC or raw PCM
             self._decoder = FFmpegDecoder(
                 file_path=file_path,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
                 channels=channels,
+                output_format=out_format if use_encoded else None,
             )
             await self._decoder.start(seek_ms=seek_ms)
 
-            # Pipe decoder PCM output directly to output buffer
+            # Pipe decoder output directly to output buffer
             self._pipeline_task = asyncio.create_task(self._decode_loop())
 
         return self._stream_info
@@ -136,7 +163,7 @@ class AudioPipeline:
             self._output_buffer.close()
 
     async def _decode_loop(self) -> None:
-        """Pipe raw PCM from decoder directly to output buffer."""
+        """Pipe decoded audio from decoder to output buffer."""
         try:
             while True:
                 chunk = await self._decoder.buffer.get()
