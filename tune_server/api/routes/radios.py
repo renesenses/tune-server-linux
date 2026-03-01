@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from tune_server.api.deps import deps
 from tune_server.event_bus import Event, EventType
+from tune_server.library.artwork import save_artwork
 from tune_server.models import (
     AudioFormat,
     RadioImportResult,
@@ -103,6 +106,38 @@ async def update_radio(radio_id: int, update: RadioStationUpdate):
             source="api",
         ))
     return updated
+
+
+@router.post("/{radio_id}/artwork", response_model=RadioStation)
+async def upload_radio_artwork(radio_id: int, file: UploadFile):
+    if not deps.radio_repo:
+        raise HTTPException(status_code=503, detail="Radio repository not available")
+    station = await deps.radio_repo.get(radio_id)
+    if not station:
+        raise HTTPException(status_code=404, detail="Radio station not found")
+
+    content_type = file.content_type or ""
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    image_data = await file.read()
+    if not image_data:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    cover_path = await asyncio.to_thread(
+        save_artwork, f"upload:radio:{radio_id}", image_data, True,
+    )
+    if not cover_path:
+        raise HTTPException(status_code=500, detail="Failed to save artwork")
+
+    await deps.radio_repo.update(radio_id, logo_url=cover_path)
+    if deps.event_bus:
+        deps.event_bus.emit_nowait(Event(
+            type=EventType.RADIO_UPDATED,
+            data={"id": radio_id},
+            source="api",
+        ))
+    return await deps.radio_repo.get(radio_id)
 
 
 @router.delete("/{radio_id}", status_code=204)
