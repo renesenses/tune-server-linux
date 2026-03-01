@@ -142,6 +142,21 @@ DSD_MIME_TYPES = {
 }
 
 
+# Known DSD-capable device name/model patterns (case-insensitive)
+# These devices support native DSF/DFF but often don't report it via GetProtocolInfo
+_DSD_CAPABLE_PATTERNS = [
+    "dmp-a",      # Eversolo DMP-A8, DMP-A6
+    "eversolo",
+    "heos",       # Denon/Marantz HEOS
+    "oppo",       # Oppo UDP/BDP
+    "cambridge",  # Cambridge Audio
+    "naim",       # Naim streamers
+    "linn",       # Linn DS/DSM
+    "lumin",      # Lumin streamers
+    "auralic",    # Auralic Aries
+]
+
+
 def detect_dsd_from_sink_protocols(sink_protocols: list[str]) -> bool:
     """Check if any DLNA sink protocol entry indicates DSD support."""
     for entry in sink_protocols:
@@ -153,6 +168,12 @@ def detect_dsd_from_sink_protocols(sink_protocols: list[str]) -> bool:
         if "dsf" in lower or "dff" in lower:
             return True
     return False
+
+
+def detect_dsd_from_device_info(name: str, model: str) -> bool:
+    """Heuristic: check device name/model against known DSD-capable devices."""
+    combined = f"{name} {model}".lower()
+    return any(pattern in combined for pattern in _DSD_CAPABLE_PATTERNS)
 
 
 def dsd_mime_from_extension(file_path: str) -> str:

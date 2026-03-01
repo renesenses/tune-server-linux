@@ -90,10 +90,15 @@ class SsdpDiscovery:
 
                             # Query sink protocol info for format detection
                             sink_protocols: list[str] = []
+                            has_cm = False
                             try:
-                                if dmr.has_get_protocol_info:
+                                has_cm = dmr.has_get_protocol_info
+                                if has_cm:
                                     await dmr.async_get_protocol_info()
                                     sink_protocols = dmr.sink_protocol_info or []
+                                    if sink_protocols:
+                                        logger.debug("ssdp_sink_protocols", name=name, count=len(sink_protocols),
+                                                     sample=sink_protocols[:5])
                             except Exception:
                                 logger.debug("ssdp_protocol_info_error", name=name)
 
@@ -108,6 +113,7 @@ class SsdpDiscovery:
                                     "dlna": True,
                                     "model": device.model_name or "",
                                     "sink_protocols": sink_protocols,
+                                    "device_name": device.friendly_name or "",
                                 },
                             )
 

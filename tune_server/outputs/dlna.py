@@ -9,6 +9,7 @@ import structlog
 from tune_server.audio.formats import (
     DLNA_CAPABILITIES,
     AudioCapabilities,
+    detect_dsd_from_device_info,
     detect_dsd_from_sink_protocols,
     dsd_mime_from_extension,
     mime_type_for_format,
@@ -101,6 +102,8 @@ class DlnaOutput(OutputTarget):
         streamer: HttpAudioStreamer,
         server_ip: str,
         sink_protocols: list[str] | None = None,
+        device_name: str = "",
+        device_model: str = "",
     ) -> None:
         self._device = device
         self._streamer = streamer
@@ -109,8 +112,14 @@ class DlnaOutput(OutputTarget):
         self._direct_url: bool = False
         self._available = True
         self._volume: float = 0.5
-        self._supports_native_dsd = detect_dsd_from_sink_protocols(sink_protocols or [])
+        # DSD detection: protocol info first, then device name/model heuristic
+        self._supports_native_dsd = (
+            detect_dsd_from_sink_protocols(sink_protocols or [])
+            or detect_dsd_from_device_info(device_name, device_model)
+        )
         self._capabilities = self._build_capabilities()
+        if self._supports_native_dsd:
+            logger.info("dlna_dsd_support_detected", device=self.name)
 
     def _build_capabilities(self) -> AudioCapabilities:
         formats = {AudioFormat.FLAC, AudioFormat.WAV, AudioFormat.MP3, AudioFormat.AAC}
