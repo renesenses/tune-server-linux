@@ -5,7 +5,7 @@ from typing import Optional
 import structlog
 
 from tune_server.db.engine import Database
-from tune_server.models import Album, Artist, Playlist, SearchResult, Track
+from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track
 
 logger = structlog.get_logger()
 
@@ -709,6 +709,84 @@ class PlaylistRepo:
                 (playlist_id, track_id, i),
             )
         await self._db.commit()
+
+
+def _row_to_radio_station(row) -> RadioStation:
+    return RadioStation(
+        id=row["id"],
+        name=row["name"],
+        stream_url=row["stream_url"],
+        logo_url=row["logo_url"],
+        genre=row["genre"],
+        tags=row["tags"],
+        codec=row["codec"],
+        country=row["country"],
+        homepage_url=row["homepage_url"],
+        favorite=bool(row["favorite"]),
+    )
+
+
+class RadioStationRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def create(self, station: RadioStationCreate) -> int:
+        cursor = await self._db.execute(
+            """INSERT INTO radio_stations (name, stream_url, logo_url, genre, tags, codec, country, homepage_url, favorite)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (station.name, station.stream_url, station.logo_url, station.genre,
+             station.tags, station.codec, station.country, station.homepage_url,
+             int(station.favorite)),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get(self, station_id: int) -> Optional[RadioStation]:
+        row = await self._db.fetchone("SELECT * FROM radio_stations WHERE id = ?", (station_id,))
+        return _row_to_radio_station(row) if row else None
+
+    async def get_by_url(self, stream_url: str) -> Optional[RadioStation]:
+        row = await self._db.fetchone("SELECT * FROM radio_stations WHERE stream_url = ?", (stream_url,))
+        return _row_to_radio_station(row) if row else None
+
+    async def list(
+        self, limit: int = 100, offset: int = 0,
+        genre: Optional[str] = None, favorite: Optional[bool] = None,
+    ) -> list[RadioStation]:
+        conditions = []
+        params: list = []
+        if genre:
+            conditions.append("genre = ?")
+            params.append(genre)
+        if favorite is not None:
+            conditions.append("favorite = ?")
+            params.append(int(favorite))
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.extend([limit, offset])
+        rows = await self._db.fetchall(
+            f"SELECT * FROM radio_stations{where} ORDER BY favorite DESC, name LIMIT ? OFFSET ?",
+            tuple(params),
+        )
+        return [_row_to_radio_station(r) for r in rows]
+
+    async def update(self, station_id: int, **kwargs) -> None:
+        if "favorite" in kwargs and isinstance(kwargs["favorite"], bool):
+            kwargs["favorite"] = int(kwargs["favorite"])
+        sets = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values()) + [station_id]
+        await self._db.execute(
+            f"UPDATE radio_stations SET {sets}, updated_at=CURRENT_TIMESTAMP WHERE id = ?",
+            tuple(values),
+        )
+        await self._db.commit()
+
+    async def delete(self, station_id: int) -> None:
+        await self._db.execute("DELETE FROM radio_stations WHERE id = ?", (station_id,))
+        await self._db.commit()
+
+    async def count(self) -> int:
+        row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM radio_stations")
+        return row["cnt"]
 
 
 async def full_text_search(db: Database, query: str, limit: int = 50) -> SearchResult:
