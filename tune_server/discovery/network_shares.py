@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import platform
 import subprocess
 
 import structlog
@@ -9,6 +10,8 @@ from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.models import NetworkShare, ShareProtocol
 
 logger = structlog.get_logger()
+
+_IS_MACOS = platform.system() == "Darwin"
 
 SMB_SERVICE = "_smb._tcp.local."
 NFS_SERVICE = "_nfs._tcp.local."
@@ -174,7 +177,53 @@ class NetworkShareDiscovery:
 
     @staticmethod
     async def _list_smb_shares(host: str) -> list[str]:
-        """List SMB shares on a host using smbclient -N -L."""
+        """List SMB shares on a host using smbutil (macOS) or smbclient (Linux)."""
+        if _IS_MACOS:
+            return await NetworkShareDiscovery._list_smb_shares_smbutil(host)
+        return await NetworkShareDiscovery._list_smb_shares_smbclient(host)
+
+    @staticmethod
+    async def _list_smb_shares_smbutil(host: str) -> list[str]:
+        """List SMB shares using macOS smbutil view."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "smbutil", "view", f"//guest@{host}",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            output = stdout.decode(errors="replace")
+
+            shares = []
+            in_share_section = False
+            for line in output.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("Share") and "Type" in stripped:
+                    in_share_section = True
+                    continue
+                if stripped.startswith("---"):
+                    continue
+                if in_share_section:
+                    if not stripped:
+                        continue
+                    # "shares listed" summary line
+                    if "listed" in stripped:
+                        break
+                    parts = stripped.split()
+                    if len(parts) >= 2:
+                        name = parts[0]
+                        stype = parts[1]
+                        # Skip IPC$ and Pipe types
+                        if stype == "Disk" and not name.endswith("$"):
+                            shares.append(name)
+            return shares
+
+        except (FileNotFoundError, asyncio.TimeoutError):
+            return []
+
+    @staticmethod
+    async def _list_smb_shares_smbclient(host: str) -> list[str]:
+        """List SMB shares using smbclient -N -L (Linux)."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 "smbclient", "-N", "-L", f"//{host}",

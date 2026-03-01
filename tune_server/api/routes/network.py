@@ -4,12 +4,14 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query
 
 from tune_server.api.deps import deps
+from tune_server.discovery.network_shares import NetworkShareDiscovery
 from tune_server.models import (
     DiscoveredMediaServer,
     MediaServerBrowseResult,
     MountInfo,
     MountRequest,
     NetworkShare,
+    ShareProtocol,
 )
 
 logger = structlog.get_logger()
@@ -38,6 +40,19 @@ async def list_host_shares(share_id: str):
 
     shares = await dm.network_shares.enumerate_host_shares(share_id)
     return {"share_id": share_id, "shares": shares}
+
+
+@router.get("/scan-host")
+async def scan_host(
+    host: str = Query(..., description="IP or hostname to scan"),
+    protocol: ShareProtocol = Query(ShareProtocol.SMB),
+):
+    """Scan a specific host for available shares/exports (no mDNS discovery needed)."""
+    if protocol == ShareProtocol.SMB:
+        shares = await NetworkShareDiscovery._list_smb_shares(host)
+    else:
+        shares = await NetworkShareDiscovery._list_nfs_exports(host)
+    return {"host": host, "protocol": protocol.value, "shares": shares}
 
 
 # --- DLNA Media Servers ---
