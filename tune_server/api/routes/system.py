@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from pathlib import Path
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
 
 from tune_server.api.deps import deps
 from tune_server.config import settings
@@ -47,17 +50,27 @@ async def get_config():
 
 
 @router.post("/scan", status_code=202)
-async def trigger_scan():
+async def trigger_scan(path: Optional[str] = Query(None, description="Scan a single directory instead of all music_dirs")):
     if not deps.scanner:
         raise HTTPException(status_code=503, detail="Scanner not available")
 
     if deps.scanner.is_scanning:
         raise HTTPException(status_code=409, detail="Scan already in progress")
 
+    if path:
+        resolved = str(Path(path).resolve())
+        # Verify the path is a configured music_dir
+        resolved_dirs = [str(Path(d).resolve()) for d in settings.music_dirs]
+        if resolved not in resolved_dirs:
+            raise HTTPException(status_code=400, detail="Path is not a configured music directory")
+        scan_dirs = [resolved]
+    else:
+        scan_dirs = settings.music_dirs
+
     # Run scan in background
-    task = asyncio.create_task(deps.scanner.scan(settings.music_dirs))
+    task = asyncio.create_task(deps.scanner.scan(scan_dirs))
     task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
-    return {"status": "scan_started", "music_dirs": settings.music_dirs}
+    return {"status": "scan_started", "music_dirs": scan_dirs}
 
 
 @router.get("/scan/status", response_model=ScanStatusResponse)

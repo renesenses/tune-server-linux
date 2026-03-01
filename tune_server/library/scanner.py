@@ -98,9 +98,15 @@ class LibraryScanner:
                         ))
 
             # Re-fetch AFTER scan to avoid deleting watcher-added files
+            # Only remove tracks whose paths fall under the scanned directories
             async with self._lock:
                 current_paths = await self._track_repo.get_all_paths()
-                removed_paths = current_paths - found_paths
+                scanned_roots = [str(Path(d).resolve()) for d in music_dirs]
+                candidate_paths = {
+                    p for p in current_paths
+                    if any(p.startswith(root + "/") or p.startswith(root + "\\") for root in scanned_roots)
+                }
+                removed_paths = candidate_paths - found_paths
                 for path_str in removed_paths:
                     await self._track_repo.delete_by_path(path_str)
                     stats["removed"] += 1
