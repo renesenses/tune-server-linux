@@ -18,6 +18,10 @@ override_dh_auto_install:
 	cp -r tune_server/* $(DESTDIR)/opt/tune-server/tune_server/
 	install -m 644 pyproject.toml $(DESTDIR)/opt/tune-server/pyproject.toml
 
+	# Install web client
+	install -d $(DESTDIR)/opt/tune-server/web
+	cp -r web/* $(DESTDIR)/opt/tune-server/web/
+
 	# Install .env.example as default config
 	install -m 640 .env.example $(DESTDIR)/opt/tune-server/.env
 
