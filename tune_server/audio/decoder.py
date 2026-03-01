@@ -62,11 +62,13 @@ class FFmpegDecoder:
 
         if self._output_format == AudioFormat.FLAC:
             # Transcode to FLAC — lossless, low latency
+            # FLAC encoder only supports s16 and s32; use s32 for >16-bit
+            sample_fmt = "s16" if self._bit_depth <= 16 else "s32"
             cmd.extend([
                 "-f", "flac",
                 "-ar", str(self._sample_rate),
                 "-ac", str(self._channels),
-                "-sample_fmt", "s32" if self._bit_depth > 24 else f"s{self._bit_depth}",
+                "-sample_fmt", sample_fmt,
                 "-compression_level", "0",  # fastest encoding
                 "pipe:1",
             ])
