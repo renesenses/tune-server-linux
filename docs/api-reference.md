@@ -184,6 +184,99 @@ Library statistics (track, album, artist counts).
 }
 ```
 
+### GET /library/stats/completeness
+
+Metadata completeness statistics — useful for identifying gaps in the library.
+
+**Response:**
+```json
+{
+    "total_albums": 838,
+    "albums_without_cover": 42,
+    "albums_without_genre": 156,
+    "albums_without_year": 23,
+    "total_artists": 402,
+    "artists_without_image": 380
+}
+```
+
+### POST /library/albums/merge-duplicates
+
+Detect and merge duplicate albums (same title + artist). Tracks from duplicates are reassigned to the primary album.
+
+**Response:**
+```json
+{"merged": 12}
+```
+
+### POST /library/albums/{album_id}/artwork
+
+Upload album artwork (multipart file upload).
+
+**Request:** `multipart/form-data` with `file` field (image/jpeg, image/png, image/webp)
+
+**Response:** `Album` (with updated `cover_path`)
+
+**Errors:**
+- `400` — File is not an image or is empty
+- `404` — Album not found
+
+### POST /library/albums/{album_id}/artwork/rescan
+
+Rescan artwork for a single album: tries extracting from embedded track art first, then falls back to MusicBrainz.
+
+**Response:**
+```json
+{"status": "found", "cover_path": "artwork_cache/abc123.jpg"}
+```
+
+or `{"status": "not_found", "cover_path": null}`
+
+### POST /library/artwork/rescan
+
+Batch rescan artwork for all albums without cover art. Runs in the background.
+
+**Response:** `{"status": "started"}` or `{"status": "already_running"}`
+
+**Events emitted:** `LIBRARY_ARTWORK_PROGRESS`, `LIBRARY_ARTWORK_COMPLETED`
+
+### GET /library/browse
+
+List configured music directories with track counts.
+
+**Response:**
+```json
+{
+    "roots": [
+        {"name": "Music", "path": "/home/user/Music", "track_count": 7491},
+        {"name": "NAS", "path": "/mnt/nas/music", "track_count": 3200}
+    ]
+}
+```
+
+### GET /library/browse/dir
+
+Browse a directory: returns subdirectories and tracks.
+
+**Query Parameters:**
+- `path` (string, required) — Absolute path to browse (must be under a configured music directory)
+
+**Response:**
+```json
+{
+    "path": "/home/user/Music/Rock",
+    "parent": "/home/user/Music",
+    "music_root": "/home/user/Music",
+    "directories": [
+        {"name": "Pink Floyd", "path": "/home/user/Music/Rock/Pink Floyd", "track_count": 42}
+    ],
+    "tracks": [Track, ...]
+}
+```
+
+**Errors:**
+- `403` — Path is not under a configured music directory
+
 ---
 
 ## Federated Search
@@ -375,9 +468,21 @@ List all discovered network audio devices.
 ]
 ```
 
+### GET /devices/audio
+
+List local audio output devices (USB DACs, soundcards, etc. via sounddevice).
+
+**Response:**
+```json
+[
+    {"id": 0, "name": "Built-in Audio", "channels": 2, "default": true},
+    {"id": 3, "name": "Topping D50s", "channels": 2, "default": false}
+]
+```
+
 ### GET /devices/{device_id}
 
-Get details for a specific device.
+Get details for a specific discovered network device.
 
 **Response:** `DiscoveredDevice`
 
@@ -415,6 +520,17 @@ Create a new zone.
 ### GET /zones/{zone_id}
 
 Get zone details.
+
+**Response:** `Zone`
+
+### PUT /zones/{zone_id}
+
+Rename a zone.
+
+**Request Body:**
+```json
+{"name": "Studio"}
+```
 
 **Response:** `Zone`
 
@@ -544,13 +660,7 @@ Seek to position.
 
 **Response:** `Zone`
 
-### GET /zones/{zone_id}/volume
-
-Get zone volume.
-
-**Response:** `{"volume": 0.7}`
-
-### PUT /zones/{zone_id}/volume
+### POST /zones/{zone_id}/volume
 
 Set volume.
 
@@ -561,45 +671,27 @@ Set volume.
 
 **Response:** `Zone`
 
-### GET /zones/{zone_id}/shuffle
+### POST /zones/{zone_id}/shuffle
 
-Get shuffle state.
+Toggle shuffle mode.
 
-**Response:** `{"shuffle": true}`
-
-### PUT /zones/{zone_id}/shuffle
-
-Set shuffle mode.
-
-**Request Body:**
-```json
-{"enabled": true}
-```
+**Query Parameters:**
+- `enabled` (bool, default true)
 
 **Response:** `{"shuffle": true}`
 
-### GET /zones/{zone_id}/repeat
-
-Get repeat mode.
-
-**Response:** `{"repeat": "all"}`
-
-### PUT /zones/{zone_id}/repeat
+### POST /zones/{zone_id}/repeat
 
 Set repeat mode.
 
-**Request Body:**
-```json
-{"mode": "all"}
-```
-
-Modes: `off`, `one`, `all`
+**Query Parameters:**
+- `mode` (string, default "off") — `off`, `one`, `all`
 
 **Response:** `{"repeat": "all"}`
 
-### GET /zones/{zone_id}/state
+### GET /zones/{zone_id}/status
 
-Get current playback state.
+Get current zone state (playback state, current track, position, queue length).
 
 **Response:** `Zone`
 
@@ -616,9 +708,9 @@ Get the current play queue.
 }
 ```
 
-### POST /zones/{zone_id}/queue
+### POST /zones/{zone_id}/queue/add
 
-Add tracks to the queue.
+Add tracks to the queue. Supports local tracks, albums, and streaming service tracks.
 
 **Request Body:**
 ```json
@@ -628,17 +720,25 @@ Add tracks to the queue.
 }
 ```
 
+or for streaming:
+```json
+{
+    "source": "tidal",
+    "source_id": "12345678"
+}
+```
+
 - `position`: insert position (null = append at end)
 
-**Response:** Queue state
+**Response:** `{"queue_length": 14}`
 
-### DELETE /zones/{zone_id}/queue/{position}
+### DELETE /zones/{zone_id}/queue/{index}
 
-Remove a track from the queue by position.
+Remove a track from the queue by index. If the removed track is currently playing, the next track starts automatically.
 
-**Response:** Queue state
+**Response:** `{"queue_length": 11}`
 
-### PUT /zones/{zone_id}/queue/move
+### POST /zones/{zone_id}/queue/move
 
 Reorder a track in the queue.
 
@@ -650,7 +750,7 @@ Reorder a track in the queue.
 }
 ```
 
-**Response:** Queue state
+**Response:** `{"queue_length": 12}`
 
 ### POST /zones/{zone_id}/queue/jump
 
@@ -664,6 +764,12 @@ Jump to a specific queue position.
 ```
 
 **Response:** `Zone`
+
+### POST /zones/{zone_id}/queue/clear
+
+Clear the entire queue and stop playback.
+
+**Response:** `{"queue_length": 0}`
 
 ---
 
@@ -710,6 +816,34 @@ Initiate authentication for a streaming service. The flow varies by service (OAu
 
 **Response:** Service-specific auth response (may include device code URL for OAuth flows)
 
+### POST /streaming/{service_name}/disconnect
+
+Disconnect from a streaming service (clears stored auth tokens).
+
+**Response:** `{"disconnected": true}`
+
+### GET /streaming/{service_name}/featured/sections
+
+Get available featured content sections (e.g., "new-releases", "editor-picks").
+
+**Response:**
+```json
+[
+    {"id": "new-releases", "title": "New Releases"},
+    {"id": "editor-picks", "title": "Editor's Picks"},
+    {"id": "best-sellers", "title": "Best Sellers"}
+]
+```
+
+### GET /streaming/{service_name}/featured/{section}
+
+Get featured albums for a specific section.
+
+**Query Parameters:**
+- `limit` (int, default 20, max 100)
+
+**Response:** `Album[]`
+
 ### GET /streaming/{service_name}/search
 
 Search a specific streaming service catalog.
@@ -755,6 +889,106 @@ Get all albums by an artist from a streaming service.
 Get all tracks by an artist from a streaming service.
 
 **Response:** `Track[]`
+
+---
+
+## Network
+
+### GET /network/shares
+
+List discovered SMB/NFS shares on the local network (via mDNS).
+
+**Response:** `NetworkShare[]`
+
+### GET /network/shares/{share_id}/list
+
+Enumerate available shares/exports on a discovered host.
+
+**Response:**
+```json
+{
+    "share_id": "192.168.1.10",
+    "shares": ["music", "media", "backup"]
+}
+```
+
+### GET /network/scan-host
+
+Scan a specific host for available shares (without relying on mDNS discovery).
+
+**Query Parameters:**
+- `host` (string, required) — IP or hostname to scan
+- `protocol` (string, default "smb") — `smb` or `nfs`
+
+**Response:**
+```json
+{
+    "host": "192.168.1.10",
+    "protocol": "smb",
+    "shares": ["music", "media"]
+}
+```
+
+### GET /network/media-servers
+
+List discovered DLNA MediaServer devices on the network.
+
+**Response:** `DiscoveredMediaServer[]`
+
+### GET /network/media-servers/{server_id}/browse
+
+Browse a DLNA MediaServer's ContentDirectory.
+
+**Query Parameters:**
+- `object_id` (string, default "0") — ContentDirectory object ID ("0" = root)
+- `start` (int, default 0) — Starting index for pagination
+- `count` (int, default 100, max 500) — Number of items to return
+
+**Response:** `MediaServerBrowseResult` (containers and items with metadata)
+
+### GET /network/media-servers/{server_id}/item/{item_id}/stream-url
+
+Get the direct stream URL for a specific item on a DLNA MediaServer.
+
+**Response:**
+```json
+{"stream_url": "http://192.168.1.10:8200/MediaItems/123.flac"}
+```
+
+### GET /network/mounts
+
+List all configured network mounts.
+
+**Response:** `MountInfo[]`
+
+### POST /network/mounts
+
+Mount a network share (SMB or NFS) to a local directory.
+
+**Request Body:**
+```json
+{
+    "host": "192.168.1.10",
+    "share": "music",
+    "protocol": "smb",
+    "username": "user",
+    "password": "pass"
+}
+```
+
+**Response:** `MountInfo`
+
+### DELETE /network/mounts/{mount_id}
+
+Unmount and remove a network share.
+
+**Response:** 204 No Content
+
+### POST /network/mounts/{mount_id}/remount
+
+Re-mount an existing network share (e.g., after network reconnection).
+
+**Response:** `MountInfo`
 
 ---
 

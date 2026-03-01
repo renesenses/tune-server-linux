@@ -4,17 +4,20 @@ A multi-room music server for local libraries and streaming services, with DLNA/
 
 ## Features
 
-- **Library Management** — Scan local music folders, extract metadata (mutagen), full-text search (FTS5)
+- **Library Management** — Scan local music folders, extract metadata (mutagen), full-text search (FTS5), browse by directory
+- **Metadata Editing** — Edit track/album/artist metadata, upload artwork, MusicBrainz enrichment, duplicate album merging
 - **Multiple Outputs** — DLNA/UPnP renderers, AirPlay devices, local soundcard
 - **Multi-Room** — Group zones for synchronized playback
-- **Streaming Services** — Tidal, Qobuz, YouTube Music, and Amazon Music integration
+- **Streaming Services** — Tidal, Qobuz, YouTube Music, and Amazon Music integration with featured content browsing
 - **Federated Search** — Search across local library and all streaming services simultaneously
 - **Playlists** — Full CRUD with track management and real-time sync events
-- **Bit-Perfect Playback** — Passthrough when the output supports the source format natively
+- **Bit-Perfect Playback** — Passthrough when the output supports the source format; direct URL passthrough for DLNA + streaming services
 - **Gapless Playback** — Seamless track transitions with pre-buffering
 - **Device Discovery** — Automatic SSDP (DLNA) and mDNS (AirPlay) scanning
+- **Network Shares** — Discover, mount, and scan SMB/NFS network shares; browse DLNA MediaServers
+- **Web Client** — Embedded Svelte SPA served from the same port as the API
 - **Real-Time Events** — WebSocket push with subscribe/unsubscribe filtering (fnmatch patterns)
-- **Background Enrichment** — MusicBrainz metadata lookup
+- **Background Enrichment** — MusicBrainz metadata and artwork lookup
 - **Security** — Optional API key authentication, configurable CORS origins
 
 ## Architecture
@@ -303,6 +306,53 @@ curl "localhost:8888/api/v1/streaming/youtube/search?q=radiohead&limit=10"
 
 # Browse service catalog
 curl localhost:8888/api/v1/streaming/tidal/albums/12345/tracks
+
+# Featured content
+curl localhost:8888/api/v1/streaming/qobuz/featured/sections
+curl "localhost:8888/api/v1/streaming/qobuz/featured/new-releases?limit=20"
+
+# Disconnect a service
+curl -X POST localhost:8888/api/v1/streaming/tidal/disconnect
+```
+
+### Network
+
+```bash
+# Discover network shares (SMB/NFS)
+curl localhost:8888/api/v1/network/shares
+
+# Scan a specific host
+curl "localhost:8888/api/v1/network/scan-host?host=192.168.1.10&protocol=smb"
+
+# Mount a share
+curl -X POST localhost:8888/api/v1/network/mounts \
+  -H 'Content-Type: application/json' \
+  -d '{"host": "192.168.1.10", "share": "music", "protocol": "smb"}'
+
+# Browse DLNA media servers
+curl localhost:8888/api/v1/network/media-servers
+curl "localhost:8888/api/v1/network/media-servers/<server-id>/browse?object_id=0"
+```
+
+### Library Management
+
+```bash
+# Browse by directory
+curl localhost:8888/api/v1/library/browse
+curl "localhost:8888/api/v1/library/browse/dir?path=/home/user/Music/Rock"
+
+# Metadata completeness stats
+curl localhost:8888/api/v1/library/stats/completeness
+
+# Upload album artwork
+curl -X POST localhost:8888/api/v1/library/albums/236/artwork \
+  -F "file=@cover.jpg"
+
+# Rescan artwork for all albums without cover
+curl -X POST localhost:8888/api/v1/library/artwork/rescan
+
+# Merge duplicate albums
+curl -X POST localhost:8888/api/v1/library/albums/merge-duplicates
 ```
 
 ### Multi-Room
@@ -391,10 +441,14 @@ tune_server/
 
 ## Documentation
 
-- [API Reference](docs/api-reference.md) — Full endpoint documentation
-- [Architecture](docs/architecture.md) — System design and component diagrams
+- [API Reference](docs/api-reference.md) — Full endpoint documentation (85+ endpoints)
+- [Architecture](docs/architecture.md) — System design, component diagrams, data flows
+- [Audio Pipeline](docs/audio-pipeline.md) — Decode, passthrough, and direct URL streaming
 - [Event Bus](docs/event-bus.md) — 28 event types and pub/sub system
 - [Database](docs/database.md) — Schema, FTS5, repository pattern
+- [Device Discovery](docs/discovery.md) — SSDP (DLNA) and mDNS (AirPlay) scanning
+- [Outputs](docs/outputs.md) — DLNA, AirPlay, and local output targets
+- [Multi-Room](docs/multi-room.md) — Zone grouping and synchronized playback
 - [Linux Deployment](docs/linux.md) — Audio, mDNS, firewall, troubleshooting
 - [Project History](docs/project/index.md) — Development phases and decisions
 

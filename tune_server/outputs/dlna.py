@@ -7,9 +7,12 @@ from xml.sax.saxutils import escape as xml_escape
 import structlog
 
 from tune_server.audio.formats import DLNA_CAPABILITIES, AudioCapabilities, mime_type_for_format
-from tune_server.models import AudioStreamInfo, Track
+from tune_server.models import AudioFormat, AudioStreamInfo, Track
 from tune_server.outputs.base import OutputTarget
 from tune_server.outputs.http_streamer import HttpAudioStreamer
+
+# Formats that DLNA renderers can typically fetch and decode directly from a URL
+_DLNA_DIRECT_FORMATS = {AudioFormat.FLAC, AudioFormat.MP3, AudioFormat.AAC}
 
 logger = structlog.get_logger()
 
@@ -48,6 +51,7 @@ class DlnaOutput(OutputTarget):
         self._streamer = streamer
         self._server_ip = server_ip
         self._stream_id: str | None = None
+        self._direct_url: bool = False
         self._available = True
         self._volume: float = 0.5
 
@@ -63,9 +67,35 @@ class DlnaOutput(OutputTarget):
     def is_available(self) -> bool:
         return self._available
 
+    def supports_direct_url(self, track: Track) -> bool:
+        if not track or not track.file_path:
+            return False
+        if not (track.file_path.startswith("http://") or track.file_path.startswith("https://")):
+            return False
+        fmt = AudioFormat(track.format) if track.format else None
+        return fmt in _DLNA_DIRECT_FORMATS
+
     async def start(self, stream_info: AudioStreamInfo, track: Optional[Track] = None) -> None:
+        self._direct_url = False
+
         try:
-            # Create stream session
+            # Direct URL passthrough: let the DLNA renderer fetch from the CDN
+            if track and self.supports_direct_url(track):
+                mime = mime_type_for_format(AudioFormat(track.format))
+                metadata = _build_didl_lite(track, track.file_path, mime)
+
+                dmr = self._device
+                await asyncio.wait_for(
+                    dmr.async_set_transport_uri(track.file_path, metadata), timeout=10
+                )
+                await asyncio.wait_for(dmr.async_play(), timeout=10)
+
+                self._direct_url = True
+                self._available = True
+                logger.info("dlna_direct_url_playback", device=self.name, url=track.file_path[:80])
+                return
+
+            # Standard flow: stream via local HTTP server
             file_path = track.file_path if track else None
             self._stream_id = self._streamer.create_session(stream_info, file_path)
             stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
@@ -73,7 +103,6 @@ class DlnaOutput(OutputTarget):
             mime = mime_type_for_format(stream_info.format)
             metadata = _build_didl_lite(track, stream_url, mime) if track else ""
 
-            # Set transport URI and play
             dmr = self._device
             await asyncio.wait_for(
                 dmr.async_set_transport_uri(stream_url, metadata), timeout=10
@@ -87,6 +116,8 @@ class DlnaOutput(OutputTarget):
             self._available = False
 
     async def write(self, data: bytes) -> None:
+        if self._direct_url:
+            return  # Renderer pulls directly from CDN
         # For DLNA, the renderer pulls data via HTTP
         # We push chunks to the stream session
         if self._stream_id:
@@ -119,7 +150,9 @@ class DlnaOutput(OutputTarget):
 
     async def stop(self) -> None:
         await self._dmr_call("async_stop")
-        if self._stream_id:
+        if self._direct_url:
+            self._direct_url = False
+        elif self._stream_id:
             self._streamer.remove_session(self._stream_id)
             self._stream_id = None
 
@@ -133,6 +166,14 @@ class DlnaOutput(OutputTarget):
     async def set_next_track(self, stream_info: AudioStreamInfo, track: Track) -> bool:
         """Use SetNextAVTransportURI for gapless playback."""
         try:
+            # Direct URL for next track too if applicable
+            if self.supports_direct_url(track):
+                mime = mime_type_for_format(AudioFormat(track.format))
+                metadata = _build_didl_lite(track, track.file_path, mime)
+                await self._device.async_set_next_transport_uri(track.file_path, metadata)
+                logger.info("dlna_next_track_set_direct", track=track.title)
+                return True
+
             stream_id = self._streamer.create_session(stream_info, track.file_path)
             stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
             mime = mime_type_for_format(stream_info.format)

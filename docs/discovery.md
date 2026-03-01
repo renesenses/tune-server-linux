@@ -139,6 +139,57 @@ curl localhost:8888/api/v1/devices
 ]
 ```
 
+## Network Share Discovery (SMB/NFS)
+
+In addition to audio renderers, the server discovers network shares that may contain music libraries.
+
+### Protocol
+
+1. mDNS scans for SMB (`_smb._tcp`) and NFS services
+2. For each discovered host, available shares/exports are enumerated
+3. Shares can be mounted via the `/network/mounts` API
+
+### Mount Management
+
+Mounted shares are added to `TUNE_MUSIC_DIRS` and scanned by the library scanner. The mount manager:
+- Persists mount configurations in SQLite
+- Uses `sudo mount`/`umount` on Linux (requires sudoers configuration)
+- Supports remounting after network reconnection
+
+### API
+
+```bash
+# Discover network shares
+curl localhost:8888/api/v1/network/shares
+
+# Scan a specific host
+curl "localhost:8888/api/v1/network/scan-host?host=192.168.1.10&protocol=smb"
+
+# Mount a share
+curl -X POST localhost:8888/api/v1/network/mounts \
+  -H 'Content-Type: application/json' \
+  -d '{"host": "192.168.1.10", "share": "music", "protocol": "smb"}'
+
+# List mounts
+curl localhost:8888/api/v1/network/mounts
+```
+
+## DLNA Media Server Discovery
+
+The server also discovers DLNA MediaServer devices (distinct from MediaRenderer devices used for playback).
+
+### Protocol
+
+Uses SSDP with search target `urn:schemas-upnp-org:device:MediaServer:1`.
+
+### Browsing
+
+MediaServers expose a ContentDirectory service that can be browsed hierarchically. The API provides:
+
+- `GET /network/media-servers` — list discovered servers
+- `GET /network/media-servers/{id}/browse` — browse ContentDirectory
+- `GET /network/media-servers/{id}/item/{item_id}/stream-url` — get stream URL for playback
+
 ## Startup Sequence
 
 ```mermaid

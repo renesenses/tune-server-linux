@@ -4,16 +4,16 @@
 
 | Metric | Value |
 |--------|-------|
-| Source modules | 64 Python files |
-| Test files | 33 Python files |
-| Source LOC | ~8,200 |
+| Source modules | 70+ Python files |
+| Test files | 33+ Python files |
+| Source LOC | ~9,500 |
 | Test LOC | ~8,100 |
-| Total tests | 572 |
-| API endpoints | 60+ |
+| Total tests | 572+ |
+| API endpoints | 85+ |
 | Event types | 28 |
 | Streaming services | 4 (Tidal, Qobuz, YouTube Music, Amazon Music) |
 | Database tables | 8 + 3 FTS virtual tables |
-| Git commits | 17 |
+| Git commits | 30+ |
 
 ## Development Timeline
 
@@ -35,6 +35,10 @@ gantt
     YouTube, Amazon, Shutdown   :p5, after p4, 1d
     section Phase 6
     Federated Search & WS       :p6, after p5, 1d
+    section Phase 7
+    Network, Metadata & Browse  :p7, after p6, 5d
+    section Phase 8
+    Streaming fixes & Docs      :p8, after p7, 2d
 ```
 
 | Phase | Date | Objective | Key Commits | Tests Added |
@@ -45,6 +49,8 @@ gantt
 | [Phase 4](phase4.md) | 13 fév. 2026 | Playback robustness, queue persistence | `cf734f6` | ~60 |
 | [Phase 5](phase5.md) | 13 fév. 2026 | YouTube/Amazon Music, typed responses, graceful shutdown | `aa5e64b` | ~70 |
 | [Phase 6](phase6.md) | 13 fév. 2026 | Federated search, WebSocket filtering, playlist sync | `93bcae1` → `c5f2133` | ~70 |
+| Phase 7 | 14-28 fév. 2026 | Network shares, metadata editing, directory browsing, DLNA MediaServers, web client | multiple | — |
+| Phase 8 | 1 mars 2026 | DLNA direct URL passthrough (Qobuz/Tidal fix), documentation update | — | — |
 
 ## Features by Phase
 
@@ -92,6 +98,25 @@ gantt
 - System config and scan status endpoints
 - Thread safety fixes, race condition patches, null guards
 
+### Phase 7 — Network, Metadata & Directory Browsing
+- Network share discovery (SMB/NFS via mDNS) with mount management
+- DLNA MediaServer browsing (ContentDirectory)
+- Library browse-by-directory endpoints
+- Metadata editing (PUT/DELETE on tracks, albums, artists)
+- Album artwork upload, rescan, batch rescan
+- Metadata completeness stats endpoint
+- Duplicate album merging
+- Streaming service featured content sections
+- Streaming service disconnect endpoint
+- Embedded web client (Svelte SPA) served from API port
+- Debian package bundling with web client
+
+### Phase 8 — Streaming Audio Fix & Documentation
+- DLNA direct URL passthrough for streaming services (FLAC/MP3/AAC)
+  - Fixes 24-bit WAV noise on DLNA renderers by letting them fetch FLAC directly from CDN
+  - No pipeline, no FFmpeg process — renderer pulls from streaming service URL
+- Comprehensive documentation update (85+ endpoints, architecture diagrams)
+
 ## Architecture Overview
 
 ```mermaid
@@ -103,7 +128,7 @@ graph LR
     end
 
     subgraph Server["Tune Server"]
-        API["REST API<br>60+ endpoints"]
+        API["REST API<br>85+ endpoints"]
         WS["WebSocket<br>28 event types"]
         BUS["Event Bus"]
         LIB["Library"]

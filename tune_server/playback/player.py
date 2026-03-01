@@ -10,7 +10,7 @@ from tune_server.config import settings
 from tune_server.audio.formats import AudioCapabilities, LOCAL_CAPABILITIES
 from tune_server.audio.pipeline import AudioPipeline
 from tune_server.event_bus import Event, EventBus, EventType
-from tune_server.models import AudioFormat, PlaybackState, Source, Track
+from tune_server.models import AudioFormat, AudioStreamInfo, PlaybackState, Source, Track
 from tune_server.outputs.base import OutputTarget
 from tune_server.playback.gapless import GaplessHandler
 from tune_server.playback.queue import PlayQueue
@@ -138,6 +138,42 @@ class Player:
                 await self._advance_track()
                 return
 
+        # Check if output can handle URL directly (e.g., DLNA renderer fetching from CDN)
+        if self._output.supports_direct_url(track) and seek_ms == 0:
+            try:
+                source_format = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+                stream_info = AudioStreamInfo(
+                    format=source_format,
+                    sample_rate=track.sample_rate or 44100,
+                    bit_depth=track.bit_depth or 16,
+                    channels=track.channels or 2,
+                )
+                await self._output.start(stream_info, track)
+            except Exception:
+                logger.exception("output_start_error", zone_id=self._zone_id)
+                await self._emit_playback_error("output_error", f"Failed to start output for '{track.title}'", track)
+                self._state = PlaybackState.STOPPED
+                return
+
+            # No pipeline needed — renderer fetches directly
+            self._state = PlaybackState.PLAYING
+            self._position_ms = 0
+            self._position_start_time = time.monotonic()
+
+            await self._event_bus.emit(Event(
+                type=EventType.PLAYBACK_STARTED,
+                data={
+                    "zone_id": self._zone_id,
+                    "track_id": track.id,
+                    "track_title": track.title,
+                },
+                source="player",
+            ))
+
+            # Monitor track end for auto-advance
+            self._playback_task = asyncio.create_task(self._direct_url_monitor(track))
+            return
+
         self._state = PlaybackState.BUFFERING
 
         capabilities = self._output.capabilities
@@ -233,6 +269,30 @@ class Player:
         except Exception:
             logger.exception("playback_loop_error", zone_id=self._zone_id)
             await self._emit_playback_error("playback_loop_error", "Unexpected error during playback", self._queue.current)
+
+    async def _direct_url_monitor(self, track: Track) -> None:
+        """Monitor direct URL playback and auto-advance when track finishes."""
+        try:
+            duration_ms = track.duration_ms or 0
+            if not duration_ms:
+                # No duration info — cannot auto-advance, wait for user action or stop
+                while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+                    await asyncio.sleep(2)
+                return
+
+            while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
+                await asyncio.sleep(1)
+                if self._state == PlaybackState.PAUSED:
+                    continue
+                if self.position_ms >= duration_ms:
+                    break
+
+            if self._state == PlaybackState.PLAYING:
+                await self._advance_track()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("direct_url_monitor_error", zone_id=self._zone_id)
 
     async def _try_gapless_transition(self) -> bool:
         """Attempt gapless transition to preloaded next track. Returns True if successful."""

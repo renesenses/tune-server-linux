@@ -63,6 +63,10 @@ class OutputTarget(ABC):
         """Clean up resources."""
         ...
 
+    def supports_direct_url(self, track: Track) -> bool:
+        """Whether this output can fetch audio directly from a URL, skipping the local pipeline."""
+        return False
+
     async def set_next_track(self, stream_info: AudioStreamInfo, track: Track) -> bool:
         """For gapless: set the next track (DLNA SetNextAVTransportURI). Returns True if supported."""
         return False

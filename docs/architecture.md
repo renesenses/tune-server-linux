@@ -233,6 +233,88 @@ graph TD
     PLOOP -.->|"buffer"| SD
 ```
 
+## Network Discovery & Shares
+
+```mermaid
+graph TD
+    subgraph DM["Discovery Manager"]
+        SSDP["SSDP Discovery<br>(30s cycle)"]
+        MDNS["mDNS Discovery<br>(10s cycle)"]
+        NS["Network Share Discovery<br>(SMB/NFS via mDNS)"]
+        MS["Media Server Discovery<br>(DLNA MediaServers)"]
+        REG["Unified Device Registry"]
+
+        SSDP --> REG
+        MDNS --> REG
+    end
+
+    subgraph Network["Network Services"]
+        SMB["SMB Shares"]
+        NFS["NFS Exports"]
+        DLNA_MS["DLNA MediaServers"]
+    end
+
+    NS --> SMB
+    NS --> NFS
+    MS --> DLNA_MS
+
+    subgraph Mounts["Mount Manager"]
+        MOUNT["mount/umount<br>(sudo on Linux)"]
+        PERSIST["Mount persistence<br>(SQLite)"]
+    end
+
+    SMB --> MOUNT
+    NFS --> MOUNT
+```
+
+Network shares discovered via mDNS can be mounted to local directories and added to `TUNE_MUSIC_DIRS` for library scanning. The mount manager handles `mount`/`umount` system calls (via `sudo` on Linux, with sudoers configuration).
+
+DLNA MediaServers are browsable via the `/network/media-servers` API — their ContentDirectory can be navigated and individual items can be streamed.
+
+## Metadata Management
+
+The library supports full metadata editing and artwork management:
+
+- **Metadata editing**: PUT endpoints for tracks, albums, and artists update fields in SQLite
+- **Artwork pipeline**: embedded art extraction → MusicBrainz fallback → manual upload
+- **Duplicate detection**: album merge-duplicates endpoint identifies same title+artist albums and consolidates tracks
+- **Completeness stats**: tracks albums/artists missing cover art, genre, year, or images
+
+## DLNA Direct URL Passthrough
+
+For streaming service tracks (Qobuz, Tidal) played on DLNA renderers, the server can bypass the local audio pipeline entirely:
+
+```mermaid
+sequenceDiagram
+    participant P as Player
+    participant DO as DlnaOutput
+    participant DMR as DLNA Renderer
+    participant CDN as Streaming CDN
+
+    P->>DO: start(stream_info, track)
+    Note over DO: track.file_path is HTTPS URL<br>format is FLAC → direct passthrough
+    DO->>DMR: SetTransportURI(CDN URL, DIDL-Lite)
+    DO->>DMR: Play()
+    DMR->>CDN: GET (FLAC stream)
+    CDN-->>DMR: FLAC audio data
+    Note over DMR: Native FLAC decoding<br>bit-perfect playback
+```
+
+This avoids the decode→PCM→WAV pipeline that can cause audio artifacts with 24-bit content, since WAV PCM format code 1 is only specified for up to 16-bit audio.
+
+Supported direct formats: FLAC, MP3, AAC. Falls back to the standard pipeline for local files, unsupported formats, or non-DLNA outputs.
+
+## Web Client
+
+The server can serve a built Svelte SPA (Single Page Application) when `TUNE_WEB_DIR` is configured:
+
+- Static assets with Vite content-hashed filenames are served with long cache headers
+- All non-API, non-asset routes fall back to `index.html` (SPA routing)
+- Both API and UI are served from the same `:8888` port
+- The web client connects via WebSocket for real-time playback state updates
+
+Build and embed: `TUNE_WEB_DIR=/path/to/tune-web-client/dist python -m tune_server`
+
 ## Error Handling Strategy
 
 | Scenario | Behavior |
