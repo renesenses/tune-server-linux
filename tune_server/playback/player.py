@@ -8,6 +8,8 @@ import structlog
 
 from tune_server.config import settings
 from tune_server.audio.formats import AudioCapabilities, LOCAL_CAPABILITIES
+from pathlib import Path
+
 from tune_server.audio.pipeline import AudioPipeline
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.models import AudioFormat, AudioStreamInfo, PlaybackState, Source, Track
@@ -139,14 +141,26 @@ class Player:
                 return
 
         # Check if output can handle URL directly (e.g., DLNA renderer fetching from CDN)
-        if self._output.supports_direct_url(track) and seek_ms == 0:
+        # or if output handles native DSD passthrough (renderer pulls DSF via HTTP)
+        source_format = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+        _native_dsd = (
+            source_format == AudioFormat.DSD
+            and getattr(self._output, "supports_native_dsd", False)
+            and track.file_path
+            and not track.file_path.startswith("http")
+        )
+        if (self._output.supports_direct_url(track) or _native_dsd) and seek_ms == 0:
             try:
-                source_format = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+                file_size = None
+                if _native_dsd and track.file_path:
+                    p = Path(track.file_path)
+                    file_size = p.stat().st_size if p.exists() else None
                 stream_info = AudioStreamInfo(
                     format=source_format,
                     sample_rate=track.sample_rate or 44100,
                     bit_depth=track.bit_depth or 16,
                     channels=track.channels or 2,
+                    file_size=file_size,
                 )
                 await self._output.start(stream_info, track)
             except Exception:
@@ -172,6 +186,8 @@ class Player:
 
             # Monitor track end for auto-advance
             self._playback_task = asyncio.create_task(self._direct_url_monitor(track))
+            # Preload next track for gapless (SetNextAVTransportURI)
+            await self._preload_next()
             return
 
         self._state = PlaybackState.BUFFERING
@@ -466,11 +482,14 @@ class Player:
             await self._gapless.cancel()
 
         if self._playback_task:
-            self._playback_task.cancel()
-            try:
-                await self._playback_task
-            except asyncio.CancelledError:
-                pass
+            # Don't cancel ourselves when called from within the playback task
+            # (e.g. _direct_url_monitor → _advance_track → _start_track → here)
+            if self._playback_task is not asyncio.current_task():
+                self._playback_task.cancel()
+                try:
+                    await self._playback_task
+                except asyncio.CancelledError:
+                    pass
             self._playback_task = None
 
         if self._pipeline:

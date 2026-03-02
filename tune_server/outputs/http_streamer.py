@@ -245,7 +245,7 @@ class HttpAudioStreamer:
                         f.seek(start)
                         remaining = length
                         while remaining > 0:
-                            chunk_size = min(8192, remaining)
+                            chunk_size = min(65536, remaining)
                             chunk = f.read(chunk_size)
                             if not chunk:
                                 break
@@ -273,7 +273,7 @@ class HttpAudioStreamer:
         try:
             with open(file_path, "rb") as f:
                 while True:
-                    chunk = f.read(8192)
+                    chunk = f.read(65536)
                     if not chunk:
                         break
                     await response.write(chunk)
