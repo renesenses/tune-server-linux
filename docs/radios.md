@@ -7,22 +7,22 @@ Utilisable pour recréer les radios en cas de reset de la base de données.
 
 Flux Radio France : Icecast AAC 192 kbps (meilleure qualité disponible).
 
-| # | Nom | Genre | URL de streaming | Logo source |
-|---|-----|-------|-----------------|-------------|
-| 1 | FIP | Éclectique | `https://icecast.radiofrance.fr/fip-hifi.aac` | Wikimedia: FIP_logo_2021.svg |
-| 2 | FIP Jazz | Jazz | `https://icecast.radiofrance.fr/fipjazz-hifi.aac` | (logo FIP) |
-| 3 | FIP Electro | Electro | `https://icecast.radiofrance.fr/fipelectro-hifi.aac` | (logo FIP) |
-| 4 | FIP Monde | World | `https://icecast.radiofrance.fr/fipworld-hifi.aac` | (logo FIP) |
-| 5 | FIP Rock | Rock | `https://icecast.radiofrance.fr/fiprock-hifi.aac` | (logo FIP) |
-| 6 | FIP Groove | Groove | `https://icecast.radiofrance.fr/fipgroove-hifi.aac` | (logo FIP) |
-| 7 | FIP Pop | Pop | `https://icecast.radiofrance.fr/fippop-hifi.aac` | (logo FIP) |
-| 8 | FIP Reggae | Reggae | `https://icecast.radiofrance.fr/fipreggae-hifi.aac` | (logo FIP) |
-| 9 | FIP Nouveautés | Nouveautés | `https://icecast.radiofrance.fr/fipnouveautes-hifi.aac` | (logo FIP) |
-| 10 | FIP Metal | Metal | `https://icecast.radiofrance.fr/fipmetal-hifi.aac` | (logo FIP) |
-| 11 | France Inter | Généraliste | `https://icecast.radiofrance.fr/franceinter-hifi.aac` | Wikimedia: France_Inter_logo_2021.svg |
-| 12 | France Culture | Culture | `https://icecast.radiofrance.fr/franceculture-hifi.aac` | Wikimedia: France_Culture_logo_2021.svg |
-| 13 | France Musique | Classique | `https://icecast.radiofrance.fr/francemusique-hifi.aac` | Wikimedia: France_Musique_logo_2021.svg |
-| 14 | Radio Classique | Classique | `https://radioclassique.ice.infomaniak.ch/radioclassique-high.mp3` | Wikimedia: Logo_Radio_Classique.svg |
+| # | Nom | Genre | URL de streaming | Logo |
+|---|-----|-------|-----------------|------|
+| 1 | FIP | Éclectique | `https://icecast.radiofrance.fr/fip-hifi.aac` | `radio-logos/fip.png` |
+| 2 | FIP Jazz | Jazz | `https://icecast.radiofrance.fr/fipjazz-hifi.aac` | `radio-logos/fip-jazz.jpeg` |
+| 3 | FIP Electro | Electro | `https://icecast.radiofrance.fr/fipelectro-hifi.aac` | `radio-logos/fip-electro.jpeg` |
+| 4 | FIP Monde | World | `https://icecast.radiofrance.fr/fipworld-hifi.aac` | `radio-logos/fip-monde.jpeg` |
+| 5 | FIP Rock | Rock | `https://icecast.radiofrance.fr/fiprock-hifi.aac` | `radio-logos/fip-rock.jpeg` |
+| 6 | FIP Groove | Groove | `https://icecast.radiofrance.fr/fipgroove-hifi.aac` | `radio-logos/fip-groove.jpeg` |
+| 7 | FIP Pop | Pop | `https://icecast.radiofrance.fr/fippop-hifi.aac` | `radio-logos/fip-pop.jpeg` |
+| 8 | FIP Reggae | Reggae | `https://icecast.radiofrance.fr/fipreggae-hifi.aac` | `radio-logos/fip-reggae.jpeg` |
+| 9 | FIP Nouveautés | Nouveautés | `https://icecast.radiofrance.fr/fipnouveautes-hifi.aac` | `radio-logos/fip-nouveau.jpeg` |
+| 10 | FIP Metal | Metal | `https://icecast.radiofrance.fr/fipmetal-hifi.aac` | `radio-logos/fip-metal.jpeg` |
+| 11 | France Inter | Généraliste | `https://icecast.radiofrance.fr/franceinter-hifi.aac` | `radio-logos/france_inter.png` |
+| 12 | France Culture | Culture | `https://icecast.radiofrance.fr/franceculture-hifi.aac` | `radio-logos/france_culture.png` |
+| 13 | France Musique | Classique | `https://icecast.radiofrance.fr/francemusique-hifi.aac` | `radio-logos/france_musique.png` |
+| 14 | Radio Classique | Classique | `https://radioclassique.ice.infomaniak.ch/radioclassique-high.mp3` | `radio-logos/radio_classique.png` |
 
 Toutes les stations sont marquées comme favorites.
 
@@ -39,22 +39,13 @@ Toutes les stations sont marquées comme favorites.
 
 Base URL : `https://icecast.radiofrance.fr/`
 
-## Sources des logos (Wikimedia Commons, 500x500 PNG)
+## Logos
 
-Téléchargement via l'API Wikipedia (les téléchargements directs Wikimedia sont bloqués) :
+Tous les logos sont dans `docs/radio-logos/`.
 
-```bash
-# Récupérer l'URL du thumbnail via l'API
-curl -s "https://en.wikipedia.org/w/api.php?action=query&titles=File:FIP_logo_2021.svg&prop=imageinfo&iiprop=url&iiurlwidth=500&format=json"
-```
-
-| Fichier Wikimedia | Utilisé pour |
-|-------------------|-------------|
-| `FIP_logo_2021.svg` | FIP + toutes les thématiques FIP |
-| `France_Inter_logo_2021.svg` | France Inter |
-| `France_Culture_logo_2021.svg` | France Culture |
-| `France_Musique_logo_2021.svg` | France Musique |
-| `Logo_Radio_Classique.svg` | Radio Classique |
+- **FIP thématiques** : visuels distinctifs avec typographie bold et couleurs vives (exportés depuis Roon)
+- **FIP, France Inter, France Culture, France Musique** : logos officiels 500x500 PNG (Wikimedia Commons 2021)
+- **Radio Classique** : logo officiel 500x500 PNG (Wikimedia Commons)
 
 ## Recréation rapide (curl)
 
