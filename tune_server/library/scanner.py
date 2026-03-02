@@ -20,21 +20,25 @@ logger = structlog.get_logger()
 AUDIO_HASH_SAMPLE_SIZE = 64 * 1024  # 64KB sample for audio hash
 
 
-def compute_audio_hash(file_path: str) -> str:
+def compute_audio_hash(file_path: str) -> str | None:
     """Compute MD5 hash of a 64KB audio sample from the middle of the file.
 
     Skips metadata (typically at start/end) by reading from 25% into the file.
+    Returns None if file cannot be read.
     """
-    path = Path(file_path)
-    file_size = path.stat().st_size
-    offset = file_size // 4  # Start at 25% to skip metadata headers
+    try:
+        path = Path(file_path)
+        file_size = path.stat().st_size
+        offset = file_size // 4  # Start at 25% to skip metadata headers
 
-    md5 = hashlib.md5()
-    with open(file_path, "rb") as f:
-        f.seek(offset)
-        data = f.read(AUDIO_HASH_SAMPLE_SIZE)
-        md5.update(data)
-    return md5.hexdigest()
+        md5 = hashlib.md5()
+        with open(file_path, "rb") as f:
+            f.seek(offset)
+            data = f.read(AUDIO_HASH_SAMPLE_SIZE)
+            md5.update(data)
+        return md5.hexdigest()
+    except (PermissionError, OSError):
+        return None
 
 
 class LibraryScanner:
@@ -78,10 +82,19 @@ class LibraryScanner:
 
                 logger.info("scanning_directory", path=music_dir)
 
-                for file_path in dir_path.rglob("*"):
+                try:
+                    file_list = list(dir_path.rglob("*"))
+                except PermissionError:
+                    logger.warning("scan_dir_permission_error", path=music_dir)
+                    file_list = []
+
+                for file_path in file_list:
                     if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
                         continue
-                    if not file_path.is_file():
+                    try:
+                        if not file_path.is_file():
+                            continue
+                    except PermissionError:
                         continue
 
                     path_str = str(file_path)
@@ -200,6 +213,8 @@ class LibraryScanner:
 
         # Compute audio content hash for dedup
         audio_hash = await asyncio.to_thread(compute_audio_hash, file_path)
+        if audio_hash is None:
+            return False  # Cannot read file
 
         # Skip if identical audio content already exists in the library
         existing = await self._track_repo.find_by_audio_hash(audio_hash)
@@ -225,7 +240,8 @@ class LibraryScanner:
         # Store file mtime and audio hash
         mtime = Path(file_path).stat().st_mtime
         await self._track_repo.update_mtime(file_path, mtime)
-        await self._track_repo.update_audio_hash(file_path, audio_hash)
+        if audio_hash:
+            await self._track_repo.update_audio_hash(file_path, audio_hash)
 
         # Update album track count
         await self._album_repo.update_track_count(album.id)
