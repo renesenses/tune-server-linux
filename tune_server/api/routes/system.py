@@ -59,10 +59,9 @@ async def trigger_scan(path: Optional[str] = Query(None, description="Scan a sin
 
     if path:
         resolved = str(Path(path).resolve())
-        # Verify the path is a configured music_dir
         resolved_dirs = [str(Path(d).resolve()) for d in settings.music_dirs]
-        if resolved not in resolved_dirs:
-            raise HTTPException(status_code=400, detail="Path is not a configured music directory")
+        if not any(resolved == d or resolved.startswith(d + "/") for d in resolved_dirs):
+            raise HTTPException(status_code=400, detail="Path is not under a configured music directory")
         scan_dirs = [resolved]
     else:
         scan_dirs = settings.music_dirs
