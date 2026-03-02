@@ -278,6 +278,11 @@ class TuneServer:
             deps.streaming_services["spotify"] = SpotifyService()
             logger.info("spotify_service_enabled")
 
+        if settings.deezer_enabled:
+            from tune_server.streaming.deezer import DeezerService
+            deps.streaming_services["deezer"] = DeezerService()
+            logger.info("deezer_service_enabled")
+
     async def _restore_streaming_auth(self) -> None:
         """Restore streaming service auth tokens from DB."""
         for name, service in list(deps.streaming_services.items()):

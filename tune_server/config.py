@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     spotify_client_id: Optional[str] = None
     spotify_redirect_uri: str = "http://localhost:8888/api/v1/streaming/spotify/callback"
 
+    # Deezer
+    deezer_enabled: bool = False
+    deezer_app_id: Optional[str] = None
+    deezer_app_secret: Optional[str] = None
+    deezer_redirect_uri: str = "http://localhost:8888/api/v1/streaming/deezer/callback"
+
     # Discovery
     discovery_enabled: bool = True
     ssdp_enabled: bool = True

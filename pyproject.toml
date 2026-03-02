@@ -29,6 +29,7 @@ dependencies = [
     "structlog>=24.1",
     "python-multipart>=0.0.6",
     "spotipy>=2.24.0",
+    "deezer-python>=7.0.0",
 ]
 
 [project.optional-dependencies]

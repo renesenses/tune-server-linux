@@ -46,6 +46,7 @@ async def get_config():
         youtube_enabled=settings.youtube_enabled,
         amazon_music_enabled=settings.amazon_music_enabled,
         spotify_enabled=settings.spotify_enabled,
+        deezer_enabled=settings.deezer_enabled,
         discovery_enabled=settings.discovery_enabled,
     )
 
