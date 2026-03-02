@@ -104,6 +104,17 @@ class LibraryScanner:
                     try:
                         async with self._lock:
                             if path_str in existing_paths:
+                                # Backfill audio_hash for existing tracks
+                                existing_track = await self._track_repo.get_by_path(path_str)
+                                if existing_track and not getattr(existing_track, '_audio_hash_set', False):
+                                    row = await self._db.fetchone(
+                                        "SELECT audio_hash FROM tracks WHERE file_path = ?", (path_str,)
+                                    )
+                                    if row and not row["audio_hash"]:
+                                        h = await asyncio.to_thread(compute_audio_hash, path_str)
+                                        if h:
+                                            await self._track_repo.update_audio_hash(path_str, h)
+
                                 # Check if file was modified since last scan
                                 file_mtime = file_path.stat().st_mtime
                                 stored_mtime = await self._track_repo.get_mtime(path_str)
