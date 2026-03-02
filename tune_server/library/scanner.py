@@ -111,6 +111,11 @@ class LibraryScanner:
                     await self._track_repo.delete_by_path(path_str)
                     stats["removed"] += 1
 
+            # Remove duplicate tracks (same album + disc + track from different mount points)
+            deduped = await self._track_repo.deduplicate()
+            if deduped:
+                logger.info("deduplicated_tracks", count=deduped)
+
             # Clean up orphan albums (no tracks)
             orphans = await self._album_repo.delete_orphans()
             if orphans:
@@ -171,6 +176,11 @@ class LibraryScanner:
             if cover_path:
                 album.cover_path = cover_path
                 await self._album_repo.update(album)
+
+        # Skip duplicate: same album + disc + track number already exists
+        # (happens when same files are accessible from multiple mount points)
+        if await self._track_repo.exists_in_album(album.id, metadata.disc_number, metadata.track_number):
+            return False
 
         # Create track
         track = Track(

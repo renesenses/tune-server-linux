@@ -386,10 +386,11 @@ class TidalService(StreamingService):
         if not await self._ensure_authenticated():
             return []
         try:
+            import tidalapi
             playlists = await asyncio.wait_for(
-                asyncio.to_thread(self._session.user.playlists), timeout=30
+                asyncio.to_thread(self._session.user.playlist_and_favorite_playlists), timeout=60
             )
-            return [self._map_playlist(p) for p in playlists]
+            return [self._map_playlist(p) for p in playlists if isinstance(p, tidalapi.Playlist)]
         except Exception:
             logger.exception("tidal_user_playlists_error")
             return []
@@ -402,7 +403,7 @@ class TidalService(StreamingService):
                 asyncio.to_thread(self._session.playlist, playlist_id), timeout=30
             )
             tidal_tracks = await asyncio.wait_for(
-                asyncio.to_thread(playlist.tracks), timeout=30
+                asyncio.to_thread(playlist.tracks), timeout=60
             )
             return [self._map_track(t) for t in tidal_tracks]
         except Exception:

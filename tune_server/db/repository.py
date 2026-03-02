@@ -378,6 +378,35 @@ class TrackRepo:
         await self._db.execute("DELETE FROM tracks WHERE file_path = ?", (file_path,))
         await self._db.commit()
 
+    async def deduplicate(self) -> int:
+        """Remove duplicate tracks (same album + disc + track_number), keeping the lowest id."""
+        cursor = await self._db.execute(
+            """DELETE FROM tracks WHERE id NOT IN (
+                SELECT MIN(id) FROM tracks
+                WHERE album_id IS NOT NULL
+                GROUP BY album_id, disc_number, track_number
+            ) AND id IN (
+                SELECT t.id FROM tracks t
+                JOIN (
+                    SELECT album_id, disc_number, track_number
+                    FROM tracks WHERE album_id IS NOT NULL
+                    GROUP BY album_id, disc_number, track_number
+                    HAVING COUNT(*) > 1
+                ) d ON t.album_id = d.album_id
+                    AND t.disc_number = d.disc_number
+                    AND t.track_number = d.track_number
+            )""",
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
+    async def exists_in_album(self, album_id: int, disc_number: int, track_number: int) -> bool:
+        row = await self._db.fetchone(
+            "SELECT 1 FROM tracks WHERE album_id = ? AND disc_number = ? AND track_number = ?",
+            (album_id, disc_number, track_number),
+        )
+        return row is not None
+
     async def get_mtime(self, file_path: str) -> Optional[float]:
         row = await self._db.fetchone(
             "SELECT file_mtime FROM tracks WHERE file_path = ?", (file_path,)
