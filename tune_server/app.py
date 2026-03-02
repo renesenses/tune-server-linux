@@ -273,6 +273,11 @@ class TuneServer:
             deps.streaming_services["amazon"] = AmazonMusicService()
             logger.info("amazon_service_enabled")
 
+        if settings.spotify_enabled:
+            from tune_server.streaming.spotify import SpotifyService
+            deps.streaming_services["spotify"] = SpotifyService()
+            logger.info("spotify_service_enabled")
+
     async def _restore_streaming_auth(self) -> None:
         """Restore streaming service auth tokens from DB."""
         for name, service in list(deps.streaming_services.items()):

@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     amazon_music_region: str = "us"
     amazon_music_quality: str = "HD"  # SD, HD, ULTRA_HD
 
+    # Spotify
+    spotify_enabled: bool = False
+    spotify_client_id: Optional[str] = None
+    spotify_redirect_uri: str = "http://localhost:8888/api/v1/streaming/spotify/callback"
+
     # Discovery
     discovery_enabled: bool = True
     ssdp_enabled: bool = True

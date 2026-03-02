@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import RedirectResponse
 
 from tune_server.api.deps import deps
 from tune_server.models import (
@@ -153,3 +154,15 @@ async def get_user_playlists(service_name: str):
 async def get_playlist_tracks(service_name: str, playlist_id: str):
     service = _get_service(service_name)
     return await service.get_playlist_tracks(playlist_id)
+
+
+@router.get("/spotify/callback")
+async def spotify_callback(code: str):
+    """OAuth PKCE callback for Spotify. Spotify redirects here with ?code=..."""
+    service = deps.streaming_services.get("spotify")
+    if not service:
+        raise HTTPException(status_code=503, detail="Spotify not configured")
+    from tune_server.streaming.spotify import SpotifyService
+    if isinstance(service, SpotifyService):
+        await service.complete_auth(code, deps.db)
+    return RedirectResponse("/")

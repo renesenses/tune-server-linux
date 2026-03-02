@@ -12,6 +12,7 @@ class Source(str, Enum):
     QOBUZ = "qobuz"
     YOUTUBE = "youtube"
     AMAZON = "amazon"
+    SPOTIFY = "spotify"
     RADIO = "radio"
 
 
@@ -350,6 +351,7 @@ class SystemConfigResponse(BaseModel):
     qobuz_enabled: bool
     youtube_enabled: bool = False
     amazon_music_enabled: bool = False
+    spotify_enabled: bool = False
     discovery_enabled: bool
 
 
