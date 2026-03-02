@@ -80,6 +80,69 @@ class Database:
             except Exception:
                 pass
 
+    def list_backups(self) -> list[dict]:
+        """List available backups, newest first."""
+        db_file = Path(self._db_path)
+        backup_dir = db_file.parent / "backups"
+        if not backup_dir.exists():
+            return []
+        backups = sorted(backup_dir.glob(f"{db_file.stem}_*{db_file.suffix}"), reverse=True)
+        result = []
+        for b in backups:
+            stat = b.stat()
+            result.append({
+                "filename": b.name,
+                "size": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+        return result
+
+    def create_backup(self) -> dict | None:
+        """Manually create a backup. Returns backup info or None on error."""
+        self._backup_database()
+        backups = self.list_backups()
+        return backups[0] if backups else None
+
+    async def restore_backup(self, filename: str) -> bool:
+        """Restore database from a backup file. Closes and reopens connection."""
+        db_file = Path(self._db_path)
+        backup_dir = db_file.parent / "backups"
+        backup_path = backup_dir / filename
+
+        if not backup_path.exists():
+            return False
+
+        # Validate filename to prevent path traversal
+        if backup_path.parent.resolve() != backup_dir.resolve():
+            return False
+
+        try:
+            # Close current connection
+            if self._db:
+                await self._db.close()
+                self._db = None
+
+            # Copy backup over current DB (remove WAL/SHM first for clean state)
+            for suffix in ("-wal", "-shm"):
+                wal = db_file.with_name(db_file.name + suffix)
+                if wal.exists():
+                    wal.unlink()
+
+            shutil.copy2(str(backup_path), str(db_file))
+            logger.info("database_restored", backup=filename)
+
+            # Reconnect
+            await self.connect()
+            return True
+        except Exception:
+            logger.exception("database_restore_error", backup=filename)
+            # Try to reconnect anyway
+            try:
+                await self.connect()
+            except Exception:
+                pass
+            return False
+
     async def _init_schema(self) -> None:
         schema_sql = _SCHEMA_PATH.read_text()
         await self._db.executescript(schema_sql)

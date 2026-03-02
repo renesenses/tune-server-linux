@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from tune_server.api.deps import deps
 from tune_server.config import settings
-from tune_server.models import ScanStatusResponse, SystemConfigResponse, SystemHealthResponse, SystemStatsResponse
+from tune_server.models import BackupInfo, ScanStatusResponse, SystemConfigResponse, SystemHealthResponse, SystemStatsResponse
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -90,3 +90,30 @@ async def system_stats():
         zones=len(zones),
         devices=len(devices),
     )
+
+
+@router.get("/backups", response_model=list[BackupInfo])
+async def list_backups():
+    if not deps.db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    return deps.db.list_backups()
+
+
+@router.post("/backups", response_model=BackupInfo)
+async def create_backup():
+    if not deps.db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    backup = deps.db.create_backup()
+    if not backup:
+        raise HTTPException(status_code=500, detail="Backup failed")
+    return backup
+
+
+@router.post("/backups/{filename}/restore")
+async def restore_backup(filename: str):
+    if not deps.db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    success = await deps.db.restore_backup(filename)
+    if not success:
+        raise HTTPException(status_code=404, detail="Backup not found or restore failed")
+    return {"restored": True, "filename": filename}

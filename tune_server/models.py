@@ -357,6 +357,12 @@ class ScanStatusResponse(BaseModel):
     scanning: bool
 
 
+class BackupInfo(BaseModel):
+    filename: str
+    size: int
+    created_at: str
+
+
 class FeaturedSection(BaseModel):
     id: str
     name: str
