@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from pydantic import Field
@@ -110,3 +111,24 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def persist_env_var(key: str, value: str, env_file: str = ".env") -> None:
+    """Update or add a key=value in the .env file."""
+    path = Path(env_file)
+    lines: list[str] = []
+    found = False
+
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if re.match(rf"^{re.escape(key)}\s*=", line):
+                lines.append(f"{key}={value}")
+                found = True
+            else:
+                lines.append(line)
+
+    if not found:
+        lines.append(f"{key}={value}")
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")

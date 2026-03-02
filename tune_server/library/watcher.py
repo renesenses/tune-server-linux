@@ -43,6 +43,11 @@ class FileSystemWatcher:
             self._task = None
             logger.info("filesystem_watcher_stopped")
 
+    async def update_dirs(self, music_dirs: list[str]) -> None:
+        await self.stop()
+        self._music_dirs = music_dirs
+        await self.start()
+
     async def _watch(self) -> None:
         try:
             from watchfiles import awatch, Change

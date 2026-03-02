@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from pathlib import Path
 from typing import Optional
@@ -8,8 +9,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from tune_server.api.deps import deps
-from tune_server.config import settings
-from tune_server.models import BackupInfo, ScanStatusResponse, SystemConfigResponse, SystemHealthResponse, SystemStatsResponse
+from tune_server.config import persist_env_var, settings
+from tune_server.models import BackupInfo, MusicDirRequest, MusicDirsResponse, ScanStatusResponse, SystemConfigResponse, SystemHealthResponse, SystemStatsResponse
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -103,6 +104,54 @@ async def list_backups():
     if not deps.db:
         raise HTTPException(status_code=503, detail="Database not available")
     return deps.db.list_backups()
+
+
+@router.post("/music-dirs", response_model=MusicDirsResponse)
+async def add_music_dir(body: MusicDirRequest):
+    resolved = str(Path(body.path).resolve())
+
+    if not Path(resolved).is_dir():
+        raise HTTPException(status_code=400, detail="Path does not exist or is not a directory")
+
+    current = [str(Path(d).resolve()) for d in settings.music_dirs]
+    if resolved in current:
+        raise HTTPException(status_code=409, detail="Directory already configured")
+
+    settings.music_dirs.append(resolved)
+    persist_env_var("TUNE_MUSIC_DIRS", json.dumps(settings.music_dirs))
+
+    # Restart filesystem watcher
+    if deps.watcher:
+        await deps.watcher.update_dirs(settings.music_dirs)
+
+    # Trigger scan of the new directory
+    if deps.scanner and not deps.scanner.is_scanning:
+        task = asyncio.create_task(deps.scanner.scan([resolved]))
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    return MusicDirsResponse(music_dirs=settings.music_dirs)
+
+
+@router.delete("/music-dirs", response_model=MusicDirsResponse)
+async def remove_music_dir(body: MusicDirRequest):
+    resolved = str(Path(body.path).resolve())
+    current = [str(Path(d).resolve()) for d in settings.music_dirs]
+
+    if resolved not in current:
+        raise HTTPException(status_code=404, detail="Directory not found in configuration")
+
+    if len(settings.music_dirs) <= 1:
+        raise HTTPException(status_code=400, detail="Cannot remove the last music directory")
+
+    idx = current.index(resolved)
+    settings.music_dirs.pop(idx)
+    persist_env_var("TUNE_MUSIC_DIRS", json.dumps(settings.music_dirs))
+
+    # Restart filesystem watcher
+    if deps.watcher:
+        await deps.watcher.update_dirs(settings.music_dirs)
+
+    return MusicDirsResponse(music_dirs=settings.music_dirs)
 
 
 @router.post("/backups", response_model=BackupInfo)

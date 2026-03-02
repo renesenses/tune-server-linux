@@ -365,6 +365,14 @@ class SystemConfigResponse(BaseModel):
     sync_dlna_default_buffer_s: float = 3.0
 
 
+class MusicDirRequest(BaseModel):
+    path: str
+
+
+class MusicDirsResponse(BaseModel):
+    music_dirs: list[str]
+
+
 class ScanStatusResponse(BaseModel):
     scanning: bool
 

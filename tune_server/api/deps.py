@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from tune_server.discovery.manager import DiscoveryManager
     from tune_server.event_bus import EventBus
     from tune_server.library.scanner import LibraryScanner
+    from tune_server.library.watcher import FileSystemWatcher
     from tune_server.network.mount_manager import MountManager
     from tune_server.streaming.base import StreamingService
     from tune_server.zones.group import GroupManager
@@ -26,6 +27,7 @@ class AppDeps:
         self.discovery_manager: DiscoveryManager | None = None
         self.mount_manager: MountManager | None = None
         self.streaming_services: dict[str, StreamingService] = {}
+        self.watcher: FileSystemWatcher | None = None
         self.stream_url_resolver: object | None = None  # StreamUrlResolver callable
 
         # Repos (set after DB init)

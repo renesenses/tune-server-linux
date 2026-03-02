@@ -176,6 +176,7 @@ class TuneServer:
                 settings.music_dirs, self._scanner, self._db, self._event_bus
             )
             await self._watcher.start()
+            deps.watcher = self._watcher
 
         # Metadata enricher
         self._enricher = MetadataEnricher(self._db)
