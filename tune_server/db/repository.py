@@ -413,11 +413,13 @@ class TrackRepo:
             return []
         placeholders = ",".join("?" * len(track_ids))
         rows = await self._db.fetchall(
-            f"""{self._SELECT} WHERE t.id IN ({placeholders})
-                ORDER BY t.title""",
+            f"""{self._SELECT} WHERE t.id IN ({placeholders})""",
             tuple(track_ids),
         )
-        return [_row_to_track(r) for r in rows]
+        # Preserve caller's ordering (e.g. album track_number order)
+        by_id = {r["id"]: r for r in rows}
+        ordered = [by_id[tid] for tid in track_ids if tid in by_id]
+        return [_row_to_track(r) for r in ordered]
 
     async def list_by_directory(self, directory: str) -> list[Track]:
         """Return tracks directly in a directory (not in subdirectories)."""
