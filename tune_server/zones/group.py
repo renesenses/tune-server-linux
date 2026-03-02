@@ -6,11 +6,15 @@ from typing import Optional
 
 import structlog
 
+from tune_server.config import settings
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.models import OutputType, PlaybackState, Track
 from tune_server.zones.zone import ZoneInstance
 
 logger = structlog.get_logger()
+
+# Module-level cache: device_name -> measured latency in seconds
+_dlna_latency_cache: dict[str, float] = {}
 
 
 class ZoneGroup:
@@ -49,9 +53,6 @@ class ZoneGroup:
     def zone_ids(self) -> list[int]:
         return [z.zone_id for z in self.all_zones]
 
-    # Extra delay after DLNA connects to account for device internal buffering
-    DLNA_INTERNAL_BUFFER_S = 3.0
-
     async def play(self, tracks: list[Track], start_position: int = 0) -> None:
         """Play on all zones in the group, waiting for DLNA to actually start."""
         network_zones = [z for z in self.all_zones if z.output_type in (OutputType.DLNA, OutputType.AIRPLAY)]
@@ -74,8 +75,22 @@ class ZoneGroup:
             try:
                 await asyncio.wait_for(session.client_connected.wait(), timeout=5.0)
                 logger.info("dlna_renderer_connected")
-                # Small extra delay for device internal buffering
-                await asyncio.sleep(self.DLNA_INTERNAL_BUFFER_S)
+
+                # Use cached latency if available, otherwise default buffer
+                device_name = dlna_output.name
+                cached_latency = _dlna_latency_cache.get(device_name)
+                if cached_latency is not None:
+                    buffer_s = cached_latency
+                    logger.info("dlna_using_cached_latency", device=device_name, latency_s=round(buffer_s, 2))
+                else:
+                    buffer_s = settings.sync_dlna_default_buffer_s
+                    # Fire-and-forget: measure actual latency for next time
+                    if hasattr(dlna_output, 'measure_latency'):
+                        asyncio.create_task(
+                            self._measure_and_cache_latency(dlna_output)
+                        )
+
+                await asyncio.sleep(buffer_s)
             except asyncio.TimeoutError:
                 logger.warning("dlna_connect_timeout_fallback")
         else:
@@ -86,6 +101,17 @@ class ZoneGroup:
             await zone.player.play(tracks=tracks, start_position=start_position)
 
         self._last_play_time = asyncio.get_running_loop().time()
+
+    @staticmethod
+    async def _measure_and_cache_latency(dlna_output) -> None:
+        """Background task: measure DLNA latency and cache it."""
+        try:
+            latency = await dlna_output.measure_latency()
+            if latency is not None:
+                _dlna_latency_cache[dlna_output.name] = latency
+                logger.info("dlna_latency_cached", device=dlna_output.name, latency_s=round(latency, 2))
+        except Exception:
+            logger.debug("dlna_latency_measure_failed", device=dlna_output.name)
 
     async def pause(self) -> None:
         for zone in self.all_zones:

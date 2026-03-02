@@ -124,6 +124,7 @@ class Zone(BaseModel):
     output_device_id: Optional[str] = None
     volume: float = Field(default=0.5, ge=0.0, le=1.0)
     group_id: Optional[str] = None
+    sync_delay_ms: int = 0
     state: PlaybackState = PlaybackState.STOPPED
     current_track: Optional[Track] = None
     position_ms: int = 0
@@ -238,10 +239,12 @@ class ZoneCreateRequest(BaseModel):
     name: str
     output_type: OutputType = OutputType.LOCAL
     output_device_id: Optional[str] = None
+    sync_delay_ms: int = 0
 
 
 class ZoneUpdateRequest(BaseModel):
     name: Optional[str] = None
+    sync_delay_ms: Optional[int] = None
 
 
 class ZoneGroupRequest(BaseModel):

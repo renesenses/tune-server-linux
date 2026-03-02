@@ -21,6 +21,7 @@ async def create_zone(request: ZoneCreateRequest):
             name=request.name,
             output_type=request.output_type,
             output_device_id=request.output_device_id,
+            sync_delay_ms=request.sync_delay_ms,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -40,11 +41,30 @@ async def update_zone(zone_id: int, request: ZoneUpdateRequest):
     zone = deps.zone_manager.get_zone(zone_id)
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
-    if request.name is not None:
-        try:
-            zone = await deps.zone_manager.rename_zone(zone_id, request.name)
-        except KeyError:
-            raise HTTPException(status_code=404, detail="Zone not found")
+    try:
+        zone = await deps.zone_manager.update_zone(
+            zone_id,
+            name=request.name,
+            sync_delay_ms=request.sync_delay_ms,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    return zone.to_model()
+
+
+@router.patch("/{zone_id}", response_model=Zone)
+async def patch_zone(zone_id: int, request: ZoneUpdateRequest):
+    zone = deps.zone_manager.get_zone(zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    try:
+        zone = await deps.zone_manager.update_zone(
+            zone_id,
+            name=request.name,
+            sync_delay_ms=request.sync_delay_ms,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Zone not found")
     return zone.to_model()
 
 

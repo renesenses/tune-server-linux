@@ -134,6 +134,18 @@ class AirPlayOutput(OutputTarget):
         audio = self._atv.audio
         await self._remote_call("set_volume", audio.set_volume(volume * 100))
 
+    async def get_position_ms(self) -> int:
+        """Query the AirPlay device's current playback position."""
+        try:
+            playing = await asyncio.wait_for(self._atv.metadata.playing(), timeout=5)
+            if playing and playing.position is not None:
+                return int(playing.position * 1000)
+        except asyncio.TimeoutError:
+            logger.debug("airplay_position_timeout", device=self._device_name)
+        except Exception:
+            logger.debug("airplay_position_error", device=self._device_name)
+        return -1
+
     async def close(self) -> None:
         await self.stop()
         try:

@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS zones (
     output_device_id TEXT,
     volume REAL DEFAULT 0.5,
     group_id TEXT,
+    sync_delay_ms INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

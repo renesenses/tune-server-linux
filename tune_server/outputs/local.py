@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import struct
+import time
 from typing import Optional
 
 import numpy as np
@@ -25,6 +26,8 @@ class LocalOutput(OutputTarget):
         self._volume: float = 1.0
         self._paused = False
         self._available = True
+        self._start_time: float = 0.0
+        self._elapsed_before_pause: float = 0.0
 
     @property
     def name(self) -> str:
@@ -42,6 +45,8 @@ class LocalOutput(OutputTarget):
         await self.stop()
         self._stream_info = stream_info
         self._paused = False
+        self._start_time = time.monotonic()
+        self._elapsed_before_pause = 0.0
 
         dtype_map = {
             8: "int8",
@@ -113,12 +118,15 @@ class LocalOutput(OutputTarget):
         pass
 
     async def pause(self) -> None:
+        if not self._paused:
+            self._elapsed_before_pause += time.monotonic() - self._start_time
         self._paused = True
         if self._stream:
             self._stream.stop()
 
     async def resume(self) -> None:
         self._paused = False
+        self._start_time = time.monotonic()
         if self._stream:
             self._stream.start()
 
@@ -133,6 +141,15 @@ class LocalOutput(OutputTarget):
 
     async def set_volume(self, volume: float) -> None:
         self._volume = max(0.0, min(1.0, volume))
+
+    async def get_position_ms(self) -> int:
+        """Return elapsed playback time in milliseconds."""
+        if self._paused:
+            return int(self._elapsed_before_pause * 1000)
+        if self._start_time > 0:
+            elapsed = self._elapsed_before_pause + (time.monotonic() - self._start_time)
+            return int(elapsed * 1000)
+        return -1
 
     async def close(self) -> None:
         await self.stop()

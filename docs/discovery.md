@@ -201,6 +201,64 @@ MediaServers expose a ContentDirectory service that can be browsed hierarchicall
 - `GET /network/media-servers/{id}/browse` — browse ContentDirectory
 - `GET /network/media-servers/{id}/item/{item_id}/stream-url` — get stream URL for playback
 
+## Browsing DLNA Media Servers
+
+DLNA MediaServers expose their music libraries via the ContentDirectory service. You can browse them hierarchically through the API.
+
+### Step-by-Step Guide
+
+```bash
+# 1. List discovered media servers
+curl localhost:8888/api/v1/network/media-servers
+# → [{"id": "uuid:...", "name": "MinimServer", "host": "192.168.1.10", ...}]
+
+# 2. Browse root of a server (object_id "0")
+curl "localhost:8888/api/v1/network/media-servers/<server_id>/browse?object_id=0"
+# Returns containers (folders) and items (tracks)
+
+# 3. Browse into a container
+curl "localhost:8888/api/v1/network/media-servers/<server_id>/browse?object_id=64"
+
+# 4. Get a stream URL for a specific item
+curl "localhost:8888/api/v1/network/media-servers/<server_id>/item/123/stream-url"
+# → {"stream_url": "http://192.168.1.10:8200/MediaItems/123.flac"}
+
+# 5. Play the stream URL on a zone
+curl -X POST localhost:8888/api/v1/zones/1/play \
+  -H 'Content-Type: application/json' \
+  -d '{"source": "local", "source_id": "http://192.168.1.10:8200/MediaItems/123.flac"}'
+```
+
+### ContentDirectory Structure
+
+Most DLNA servers organize content hierarchically:
+
+```
+Root (0)
+├── Music
+│   ├── By Artist
+│   │   ├── Pink Floyd
+│   │   │   ├── The Dark Side of the Moon
+│   │   │   │   ├── Speak to Me.flac
+│   │   │   │   └── ...
+│   ├── By Album
+│   ├── By Genre
+│   └── All Music
+├── Playlists
+└── ...
+```
+
+### Pagination
+
+For large libraries, use `start` and `count` parameters:
+
+```bash
+# Get items 100-199
+curl "localhost:8888/api/v1/network/media-servers/<id>/browse?object_id=0&start=100&count=100"
+```
+
+The response includes `total_matches` and `number_returned` for pagination tracking.
+
 ## Startup Sequence
 
 ```mermaid

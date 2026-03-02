@@ -40,6 +40,7 @@ class ZoneInstance:
         if zone_repo:
             self._player.set_volume_change_callback(self.save_volume)
         self._group_id: str | None = None
+        self._sync_delay_ms: int = 0
 
     @property
     def zone_id(self) -> int:
@@ -74,6 +75,14 @@ class ZoneInstance:
         self._group_id = value
 
     @property
+    def sync_delay_ms(self) -> int:
+        return self._sync_delay_ms
+
+    @sync_delay_ms.setter
+    def sync_delay_ms(self, value: int) -> None:
+        self._sync_delay_ms = value
+
+    @property
     def state(self) -> PlaybackState:
         return self._player.state
 
@@ -92,6 +101,7 @@ class ZoneInstance:
             output_type=self._output_type,
             volume=self._player.volume,
             group_id=self._group_id,
+            sync_delay_ms=self._sync_delay_ms,
             state=self._player.state,
             current_track=self._player.current_track,
             position_ms=self._player.position_ms,

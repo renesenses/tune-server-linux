@@ -156,6 +156,7 @@ class Database:
             "ALTER TABLE tracks ADD COLUMN file_mtime REAL",
             "ALTER TABLE zones ADD COLUMN queue_json TEXT",
             "ALTER TABLE tracks ADD COLUMN audio_hash TEXT",
+            "ALTER TABLE zones ADD COLUMN sync_delay_ms INTEGER DEFAULT 0",
         ]
         for sql in migrations:
             try:

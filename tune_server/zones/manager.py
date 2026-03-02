@@ -54,6 +54,7 @@ class ZoneManager:
                         zone_repo=self._zone_repo,
                     )
                     zone.group_id = row.get("group_id")
+                    zone.sync_delay_ms = row.get("sync_delay_ms", 0) or 0
                     if self._stream_url_resolver:
                         zone.player.set_stream_url_resolver(self._stream_url_resolver)
 
@@ -80,6 +81,7 @@ class ZoneManager:
         name: str,
         output_type: OutputType,
         output_device_id: str | None = None,
+        sync_delay_ms: int = 0,
     ) -> ZoneInstance:
         # Create output FIRST — only persist to DB if it succeeds
         output = await self._create_output(output_type, output_device_id)
@@ -88,6 +90,8 @@ class ZoneManager:
 
         # Persist to DB
         zone_id = await self._zone_repo.create(name, output_type.value, output_device_id)
+        if sync_delay_ms:
+            await self._zone_repo.update(zone_id, sync_delay_ms=sync_delay_ms)
 
         zone = ZoneInstance(
             zone_id=zone_id,
@@ -98,6 +102,7 @@ class ZoneManager:
             queue_repo=self._queue_repo,
             zone_repo=self._zone_repo,
         )
+        zone.sync_delay_ms = sync_delay_ms
         if self._stream_url_resolver:
             zone.player.set_stream_url_resolver(self._stream_url_resolver)
         self._zones[zone_id] = zone
@@ -112,17 +117,40 @@ class ZoneManager:
         return zone
 
     async def rename_zone(self, zone_id: int, name: str) -> ZoneInstance:
+        return await self.update_zone(zone_id, name=name)
+
+    async def update_zone(
+        self,
+        zone_id: int,
+        name: str | None = None,
+        sync_delay_ms: int | None = None,
+    ) -> ZoneInstance:
         zone = self._zones.get(zone_id)
         if not zone:
             raise KeyError(f"Zone {zone_id} not found")
-        zone.name = name
-        await self._zone_repo.update(zone_id, name=name)
-        await self._event_bus.emit(Event(
-            type=EventType.ZONE_UPDATED,
-            data={"zone_id": zone_id, "name": name},
-            source="zone_manager",
-        ))
-        logger.info("zone_renamed", id=zone_id, name=name)
+
+        db_updates: dict = {}
+        event_data: dict = {"zone_id": zone_id}
+
+        if name is not None:
+            zone.name = name
+            db_updates["name"] = name
+            event_data["name"] = name
+
+        if sync_delay_ms is not None:
+            zone.sync_delay_ms = sync_delay_ms
+            db_updates["sync_delay_ms"] = sync_delay_ms
+            event_data["sync_delay_ms"] = sync_delay_ms
+
+        if db_updates:
+            await self._zone_repo.update(zone_id, **db_updates)
+            await self._event_bus.emit(Event(
+                type=EventType.ZONE_UPDATED,
+                data=event_data,
+                source="zone_manager",
+            ))
+
+        logger.info("zone_updated", id=zone_id, **db_updates)
         return zone
 
     async def delete_zone(self, zone_id: int) -> None:

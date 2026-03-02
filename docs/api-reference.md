@@ -277,6 +277,55 @@ Browse a directory: returns subdirectories and tracks.
 **Errors:**
 - `403` — Path is not under a configured music directory
 
+### Workflows
+
+#### Merge Duplicate Albums
+
+When importing from multiple sources or after rescanning, duplicate albums may appear (same title + artist).
+
+```bash
+# 1. Check how many duplicates exist
+curl localhost:8888/api/v1/library/stats/completeness
+
+# 2. Merge them (reassigns tracks from duplicates to the primary album)
+curl -X POST localhost:8888/api/v1/library/albums/merge-duplicates
+# → {"merged": 12}
+
+# 3. Verify
+curl localhost:8888/api/v1/library/stats
+```
+
+#### Check Library Completeness
+
+Identify metadata gaps to improve browsing experience:
+
+```bash
+curl localhost:8888/api/v1/library/stats/completeness
+```
+
+Focus areas:
+- `albums_without_cover` → use `POST /library/artwork/rescan` to batch-fetch from MusicBrainz
+- `albums_without_genre` → update via `PUT /library/albums/{id}` or re-tag source files
+- `artists_without_image` → manual upload or future artist image fetching
+
+#### Backup and Restore
+
+```bash
+# Create a manual backup
+curl -X POST localhost:8888/api/v1/system/backup
+# → {"filename": "tune_server_20260302_143000.db", "size": 1234567, "created_at": "..."}
+
+# List available backups
+curl localhost:8888/api/v1/system/backups
+
+# Restore from a backup (caution: replaces current DB)
+curl -X POST localhost:8888/api/v1/system/restore \
+  -H 'Content-Type: application/json' \
+  -d '{"filename": "tune_server_20260302_143000.db"}'
+```
+
+Automatic backups are created before every schema migration. The server keeps the last 5 backups.
+
 ---
 
 ## Federated Search
@@ -505,12 +554,14 @@ Create a new zone.
 {
     "name": "Living Room",
     "output_type": "dlna",
-    "output_device_id": "uuid:..."
+    "output_device_id": "uuid:...",
+    "sync_delay_ms": 0
 }
 ```
 
 - `output_type`: `"local"`, `"dlna"`, or `"airplay"`
 - `output_device_id`: required for `dlna` and `airplay`
+- `sync_delay_ms`: per-zone sync offset in ms (default 0, can be negative)
 
 **Response:** `Zone` (201 Created)
 
@@ -525,11 +576,24 @@ Get zone details.
 
 ### PUT /zones/{zone_id}
 
-Rename a zone.
+Update a zone (name, sync offset).
 
 **Request Body:**
 ```json
-{"name": "Studio"}
+{"name": "Studio", "sync_delay_ms": 500}
+```
+
+All fields are optional.
+
+**Response:** `Zone`
+
+### PATCH /zones/{zone_id}
+
+Partial update (same as PUT, for convenience).
+
+**Request Body:**
+```json
+{"sync_delay_ms": -200}
 ```
 
 **Response:** `Zone`
@@ -1316,6 +1380,7 @@ See [Event Bus](event-bus.md) for the full list of 28 event types.
     "output_device_id": "uuid:9C41535E-...",
     "volume": 0.5,
     "group_id": "e73f13c7",
+    "sync_delay_ms": 0,
     "state": "playing",
     "current_track": {Track},
     "position_ms": 42000,

@@ -317,3 +317,41 @@ class DlnaOutput(OutputTarget):
         if self._stream_id:
             return self._streamer.get_session(self._stream_id)
         return None
+
+    async def get_position_ms(self) -> int:
+        """Query the renderer's current playback position via GetPositionInfo."""
+        try:
+            dmr = self._device
+            await asyncio.wait_for(dmr.async_update(do_ping=False), timeout=5)
+            pos = dmr.media_position
+            if pos is not None and pos >= 0:
+                return int(pos * 1000)
+        except asyncio.TimeoutError:
+            logger.debug("dlna_position_timeout", device=self.name)
+        except Exception:
+            logger.debug("dlna_position_error", device=self.name)
+        return -1
+
+    async def measure_latency(self) -> float | None:
+        """Measure actual DLNA startup latency by polling GetPositionInfo after start().
+
+        Returns the time in seconds from start() to first media_position > 0,
+        or None if timeout (10s).
+        """
+        import time as _time
+        start = _time.monotonic()
+        deadline = start + 10.0
+        dmr = self._device
+        while _time.monotonic() < deadline:
+            try:
+                await asyncio.wait_for(dmr.async_update(do_ping=False), timeout=2)
+                pos = dmr.media_position
+                if pos is not None and pos > 0:
+                    latency = _time.monotonic() - start
+                    logger.info("dlna_latency_measured", device=self.name, latency_s=round(latency, 2))
+                    return latency
+            except Exception:
+                pass
+            await asyncio.sleep(0.2)
+        logger.warning("dlna_latency_timeout", device=self.name)
+        return None
