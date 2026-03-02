@@ -54,13 +54,13 @@ def extract_cover_art(file_path: str) -> Optional[bytes]:
             if covr:
                 return bytes(covr[0])
 
-        # Try generic approach: look for embedded pictures directory
+        # Try generic approach: look for cover image files in folder
         folder = Path(file_path).parent
-        for name in ("cover.jpg", "cover.png", "folder.jpg", "folder.png",
-                      "front.jpg", "front.png", "album.jpg", "album.png"):
-            art_path = folder / name
-            if art_path.exists():
-                return art_path.read_bytes()
+        _cover_names = {"cover", "folder", "front", "album", "artwork", "thumb"}
+        _cover_exts = {".jpg", ".jpeg", ".png", ".webp"}
+        for child in folder.iterdir():
+            if child.is_file() and child.stem.lower() in _cover_names and child.suffix.lower() in _cover_exts:
+                return child.read_bytes()
 
     except Exception:
         logger.exception("cover_art_extraction_error", path=file_path)
@@ -105,6 +105,43 @@ def get_album_artwork(file_path: str) -> Optional[str]:
         return save_artwork(file_path, image_data)
 
     return None
+
+
+def copy_cover_to_album_folder(cover_cache_path: str, track_file_path: str) -> Optional[str]:
+    """Copy a cover image as cover.jpg into the album's music folder.
+
+    Returns the destination path on success, None otherwise.
+    """
+    try:
+        src = Path(cover_cache_path)
+        if not src.is_absolute():
+            # artwork_cache paths are relative to cwd — resolve via cache dir
+            cache_dir = _get_cache_dir()
+            candidate = cache_dir / src.name
+            if candidate.exists():
+                src = candidate
+            else:
+                src = src.resolve()
+        if not src.exists():
+            return None
+
+        dest_dir = Path(track_file_path).parent
+        if not dest_dir.exists():
+            return None
+
+        dest = dest_dir / "cover.jpg"
+        if dest.exists():
+            return str(dest)  # already there
+
+        img = Image.open(src)
+        img = img.convert("RGB")
+        img.save(dest, "JPEG", quality=92)
+        logger.info("cover_copied_to_folder", dest=str(dest))
+        return str(dest)
+
+    except Exception:
+        logger.exception("copy_cover_to_folder_error", src=cover_cache_path, track=track_file_path)
+        return None
 
 
 def _musicbrainz_rate_limit() -> None:

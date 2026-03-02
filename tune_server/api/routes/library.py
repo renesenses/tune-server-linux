@@ -12,7 +12,7 @@ from tune_server.api.deps import deps
 from tune_server.config import settings
 from tune_server.db.repository import full_text_search
 from tune_server.event_bus import Event, EventType
-from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork, save_artwork
+from tune_server.library.artwork import copy_cover_to_album_folder, fetch_cover_from_musicbrainz, get_album_artwork, save_artwork
 from tune_server.models import (
     Album,
     AlbumUpdateRequest,
@@ -47,7 +47,7 @@ async def get_track(track_id: int):
 
 
 @router.get("/albums", response_model=list[Album])
-async def list_albums(limit: int = Query(100, le=500), offset: int = Query(0, ge=0)):
+async def list_albums(limit: int = Query(100, le=5000), offset: int = Query(0, ge=0)):
     return await deps.album_repo.list(limit=limit, offset=offset)
 
 
@@ -203,6 +203,12 @@ async def upload_album_artwork(album_id: int, file: UploadFile):
 
     album.cover_path = cover_path
     await deps.album_repo.update(album)
+
+    # Copy cover.jpg to album folder
+    tracks = await deps.track_repo.list_by_album(album_id)
+    if tracks and tracks[0].file_path:
+        await asyncio.to_thread(copy_cover_to_album_folder, cover_path, tracks[0].file_path)
+
     return await deps.album_repo.get(album_id)
 
 
@@ -233,6 +239,11 @@ async def rescan_album_artwork(album_id: int):
     if cover_path:
         album.cover_path = cover_path
         await deps.album_repo.update(album)
+
+        # Copy cover.jpg to album folder
+        if tracks and tracks[0].file_path:
+            await asyncio.to_thread(copy_cover_to_album_folder, cover_path, tracks[0].file_path)
+
         return {"status": "found", "cover_path": cover_path}
 
     return {"status": "not_found", "cover_path": None}
@@ -272,6 +283,10 @@ async def _rescan_artwork_task() -> None:
                 album.cover_path = cover_path
                 await deps.album_repo.update(album)
                 found += 1
+
+                # Copy cover.jpg to album folder
+                if tracks and tracks[0].file_path:
+                    await asyncio.to_thread(copy_cover_to_album_folder, cover_path, tracks[0].file_path)
 
             # Emit progress every album
             await deps.event_bus.emit(Event(
