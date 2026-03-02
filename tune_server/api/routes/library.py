@@ -34,7 +34,7 @@ router = APIRouter(prefix="/library", tags=["library"])
 
 
 @router.get("/tracks", response_model=list[Track])
-async def list_tracks(limit: int = Query(100, le=500), offset: int = Query(0, ge=0)):
+async def list_tracks(limit: int = Query(100, le=5000), offset: int = Query(0, ge=0)):
     return await deps.track_repo.list(limit=limit, offset=offset)
 
 

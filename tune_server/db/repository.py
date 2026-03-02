@@ -54,6 +54,7 @@ def _row_to_track(row) -> Track:
         sample_rate=row["sample_rate"],
         bit_depth=row["bit_depth"],
         channels=row["channels"],
+        cover_path=row["cover_path"] if "cover_path" in row.keys() else None,
         source=row["source"],
         source_id=row["source_id"],
     )
@@ -171,10 +172,13 @@ class AlbumRepo:
 
     async def list_by_artist(self, artist_id: int) -> list[Album]:
         rows = await self._db.fetchall(
-            """SELECT al.*, ar.name as artist_name
-               FROM albums al LEFT JOIN artists ar ON al.artist_id = ar.id
-               WHERE al.artist_id = ? ORDER BY al.year""",
-            (artist_id,),
+            """SELECT DISTINCT al.*, ar.name as artist_name
+               FROM albums al
+               LEFT JOIN artists ar ON al.artist_id = ar.id
+               WHERE al.artist_id = ?
+                  OR al.id IN (SELECT DISTINCT album_id FROM tracks WHERE artist_id = ?)
+               ORDER BY al.year""",
+            (artist_id, artist_id),
         )
         return [_row_to_album(r) for r in rows]
 
@@ -305,7 +309,8 @@ class TrackRepo:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    _SELECT = """SELECT t.*, al.title as album_title, ar.name as artist_name
+    _SELECT = """SELECT t.*, al.title as album_title, ar.name as artist_name,
+                        al.cover_path as cover_path
                  FROM tracks t
                  LEFT JOIN albums al ON t.album_id = al.id
                  LEFT JOIN artists ar ON t.artist_id = ar.id"""
