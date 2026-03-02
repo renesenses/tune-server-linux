@@ -10,7 +10,7 @@ The event bus is the central communication backbone. Components publish events w
 - **Delivery**: In-order, per-subscriber
 - **Async**: Events are dispatched via `asyncio.create_task` (non-blocking emit)
 - **Thread-safe**: No, single event loop only (by design)
-- **Total event types**: 28
+- **Total event types**: 40
 
 ## Event Types
 
@@ -26,6 +26,8 @@ The event bus is the central communication backbone. Components publish events w
 | `LIBRARY_TRACK_ADDED` | `library.track.added` | scanner | New track discovered |
 | `LIBRARY_TRACK_UPDATED` | `library.track.updated` | scanner | Track metadata changed |
 | `LIBRARY_TRACK_REMOVED` | `library.track.removed` | scanner | Track file deleted |
+| `LIBRARY_ARTWORK_PROGRESS` | `library.artwork.progress` | scanner | Artwork extraction progress update |
+| `LIBRARY_ARTWORK_COMPLETED` | `library.artwork.completed` | scanner | Artwork extraction finished |
 | **Playback** | | | |
 | `PLAYBACK_STARTED` | `playback.started` | player | Track begins playing |
 | `PLAYBACK_PAUSED` | `playback.paused` | player | Playback paused |
@@ -51,6 +53,17 @@ The event bus is the central communication backbone. Components publish events w
 | `DEVICE_DISCOVERED` | `device.discovered` | ssdp/mdns | New network device found |
 | `DEVICE_LOST` | `device.lost` | ssdp | Device no longer responding |
 | `DEVICE_UPDATED` | `device.updated` | ssdp/mdns | Device info changed |
+| **Network** | | | |
+| `NETWORK_SHARE_DISCOVERED` | `network.share.discovered` | smb/nfs | Network share found |
+| `NETWORK_SHARE_LOST` | `network.share.lost` | smb/nfs | Network share no longer available |
+| `NETWORK_MOUNT_ADDED` | `network.mount.added` | mount_manager | Share mounted as library source |
+| `NETWORK_MOUNT_REMOVED` | `network.mount.removed` | mount_manager | Mount removed |
+| `MEDIA_SERVER_DISCOVERED` | `network.media_server.discovered` | ssdp | UPnP/DLNA media server found |
+| `MEDIA_SERVER_LOST` | `network.media_server.lost` | ssdp | UPnP/DLNA media server gone |
+| **Radio** | | | |
+| `RADIO_CREATED` | `radio.created` | api | New radio station created |
+| `RADIO_UPDATED` | `radio.updated` | api | Radio station metadata changed |
+| `RADIO_DELETED` | `radio.deleted` | api | Radio station deleted |
 
 ## Event Structure
 
@@ -118,7 +131,7 @@ The WebSocket manager subscribes to all events and forwards them to connected cl
 
 ```mermaid
 flowchart LR
-    BUS["Event Bus<br>(28 types)"] --> WSM["WebSocket Manager"]
+    BUS["Event Bus<br>(40 types)"] --> WSM["WebSocket Manager"]
     WSM --> FILTER{"fnmatch<br>filter"}
     FILTER -->|"playback.*"| C1["Client 1<br>(playback only)"]
     FILTER -->|"*"| C2["Client 2<br>(all events)"]
@@ -157,6 +170,8 @@ flowchart LR
 | `zone.*` | `zone.created`, `zone.deleted`, `zone.updated`, `zone.grouped`, ... |
 | `library.scan.*` | `library.scan.started`, `library.scan.progress`, `library.scan.completed` |
 | `device.*` | `device.discovered`, `device.lost`, `device.updated` |
+| `network.*` | `network.share.discovered`, `network.mount.added`, `network.media_server.discovered`, ... |
+| `radio.*` | `radio.created`, `radio.updated`, `radio.deleted` |
 | `playback.position` | Only `playback.position` (exact match) |
 
 ### Heartbeat

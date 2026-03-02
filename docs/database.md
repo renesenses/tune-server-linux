@@ -104,6 +104,8 @@ erDiagram
 | `discogs_id` | TEXT | Discogs artist ID |
 | `bio` | TEXT | Artist biography |
 | `image_path` | TEXT | Path to artist image |
+| `created_at` | TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP | Last modification time |
 
 ### albums
 
@@ -119,6 +121,8 @@ erDiagram
 | `cover_path` | TEXT | Path to cover art file |
 | `source` | TEXT | `local`, `tidal`, `qobuz`, `youtube`, or `amazon` (default `local`) |
 | `source_id` | TEXT | External service album ID |
+| `created_at` | TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP | Last modification time |
 
 ### tracks
 
@@ -137,8 +141,11 @@ erDiagram
 | `bit_depth` | INTEGER | Bits per sample |
 | `channels` | INTEGER | Number of audio channels (default 2) |
 | `file_mtime` | REAL | File modification time (for scan optimization) |
+| `audio_hash` | TEXT | Audio content hash for duplicate detection |
 | `source` | TEXT | `local`, `tidal`, `qobuz`, `youtube`, or `amazon` |
 | `source_id` | TEXT | External service track ID |
+| `created_at` | TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP | Last modification time |
 
 ### playlists
 
@@ -204,6 +211,24 @@ erDiagram
 | `service` | TEXT PK | Service name: `tidal`, `qobuz`, `youtube`, `amazon` |
 | `token_data` | TEXT NOT NULL | JSON-encoded credentials and tokens |
 | `updated_at` | TIMESTAMP | Last update time |
+
+### network_mounts
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `host` | TEXT NOT NULL | Network host address |
+| `share_name` | TEXT NOT NULL | Share name on the host |
+| `protocol` | TEXT NOT NULL | Protocol (e.g., `smb`, `nfs`) |
+| `mount_path` | TEXT NOT NULL | Local mount point path |
+| `username` | TEXT | Authentication username |
+| `password` | TEXT | Authentication password |
+| `auto_mount` | INTEGER | Auto-mount on startup (default 1) |
+| `status` | TEXT | Mount status (default `unmounted`) |
+| `created_at` | TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP | Last modification time |
+
+**Unique constraint**: `(host, share_name, protocol)`
 
 ## Full-Text Search (FTS5)
 

@@ -779,14 +779,16 @@ Clear the entire queue and stop playback.
 
 List all registered streaming services and their authentication status.
 
-**Response:**
+**Response:** `dict[str, StreamingServiceStatus]`
 ```json
-[
-    {"name": "tidal", "enabled": true, "authenticated": true},
-    {"name": "qobuz", "enabled": true, "authenticated": false},
-    {"name": "youtube", "enabled": false, "authenticated": false},
-    {"name": "amazon", "enabled": true, "authenticated": true}
-]
+{
+    "tidal": {"enabled": true, "authenticated": true},
+    "qobuz": {"enabled": true, "authenticated": false},
+    "youtube": {"enabled": false, "authenticated": false},
+    "amazon": {"enabled": true, "authenticated": true},
+    "spotify": {"enabled": true, "authenticated": false},
+    "deezer": {"enabled": false, "authenticated": false}
+}
 ```
 
 ### GET /streaming/{service_name}/status
@@ -804,7 +806,7 @@ Get detailed status for a specific streaming service.
 
 ### POST /streaming/{service_name}/auth
 
-Initiate authentication for a streaming service. The flow varies by service (OAuth device flow for Tidal/YouTube/Amazon, API key for Qobuz).
+Initiate authentication for a streaming service. The flow varies by service (OAuth device flow for Tidal/YouTube/Amazon, PKCE OAuth for Spotify, OAuth 2.0 for Deezer, credentials for Qobuz).
 
 **Request Body (Qobuz):**
 ```json
@@ -814,7 +816,7 @@ Initiate authentication for a streaming service. The flow varies by service (OAu
 }
 ```
 
-**Response:** Service-specific auth response (may include device code URL for OAuth flows)
+**Response:** `StreamingAuthResponse` — may include `verification_url` and `user_code` for device code OAuth flows
 
 ### POST /streaming/{service_name}/disconnect
 

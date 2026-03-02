@@ -59,6 +59,7 @@
 | Tidal | OAuth device code | Oui (HiRes) |
 | Qobuz | Username/password | Oui (HiRes) |
 | YouTube Music | Google OAuth device code | Oui (via yt-dlp) |
+| Amazon Music | OAuth device code | Oui (SD/HD/Ultra HD) |
 | Spotify | OAuth PKCE | Non (previews 30s) |
 | Deezer | OAuth 2.0 standard | Non (previews 30s) |
 

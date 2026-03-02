@@ -6,14 +6,14 @@
 |--------|-------|
 | Source modules | 70+ Python files |
 | Test files | 33+ Python files |
-| Source LOC | ~9,500 |
+| Source LOC | ~20,900 |
 | Test LOC | ~8,100 |
 | Total tests | 572+ |
-| API endpoints | 85+ |
-| Event types | 28 |
-| Streaming services | 4 (Tidal, Qobuz, YouTube Music, Amazon Music) |
-| Database tables | 8 + 3 FTS virtual tables |
-| Git commits | 30+ |
+| API endpoints | 106+ |
+| Event types | 40 |
+| Streaming services | 6 (Tidal, Qobuz, YouTube Music, Amazon Music, Spotify, Deezer) |
+| Database tables | 9 + 3 FTS virtual tables |
+| Git commits | 64+ |
 
 ## Development Timeline
 
@@ -128,12 +128,12 @@ graph LR
     end
 
     subgraph Server["Tune Server"]
-        API["REST API<br>85+ endpoints"]
-        WS["WebSocket<br>28 event types"]
+        API["REST API<br>106+ endpoints"]
+        WS["WebSocket<br>40 event types"]
         BUS["Event Bus"]
         LIB["Library"]
         PLAY["Playback"]
-        STREAM["Streaming<br>Tidal / Qobuz<br>YouTube / Amazon"]
+        STREAM["Streaming<br>Tidal / Qobuz / YouTube<br>Amazon / Spotify / Deezer"]
     end
 
     subgraph Outputs

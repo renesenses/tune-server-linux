@@ -37,7 +37,7 @@
 | YouTube Music | Non | Oui (streaming complet via yt-dlp) |
 | Spotify | Non | Oui (navigation, previews 30s) |
 | Deezer | Non | Oui (navigation, previews 30s) |
-| Amazon Music | Non | Prévu |
+| Amazon Music | Non | Oui (streaming complet, OAuth device code) |
 | Radio internet | Oui (Live Radio, TuneIn) | Oui (CRUD, import M3U/PLS) |
 | Recherche fédérée | Oui (Tidal + Qobuz + local) | Oui (tous services + local) |
 
@@ -115,7 +115,7 @@
 
 ### Tune
 - Gratuit et open source
-- Plus de services de streaming (YouTube Music, Spotify, Deezer en plus de Tidal/Qobuz)
+- Plus de services de streaming (6 : Tidal, Qobuz, YouTube Music, Amazon Music, Spotify, Deezer vs 2 pour Roon)
 - DSD/DSF natif passthrough vers renderers compatibles (détection automatique par device)
 - API REST complète et documentée
 - Léger en ressources

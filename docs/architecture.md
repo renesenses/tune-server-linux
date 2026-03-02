@@ -14,7 +14,7 @@
 graph TD
     subgraph Process["Tune Server Process"]
         API["FastAPI REST API :8888<br>+ WebSocket"]
-        BUS["Event Bus<br>(async pub/sub, 28 event types)"]
+        BUS["Event Bus<br>(async pub/sub, 40 event types)"]
         DEPS["App Deps (DI container)"]
 
         API <--> BUS
@@ -33,7 +33,7 @@ graph TD
             LIB["Library Scanner"]
             ZM["Zone Manager"]
             DISC["Discovery Manager"]
-            STREAMING["Streaming Services<br>(Tidal / Qobuz / YouTube / Amazon)"]
+            STREAMING["Streaming Services<br>(Tidal / Qobuz / YouTube / Amazon / Spotify / Deezer)"]
         end
         DEPS --> Core
 
@@ -72,12 +72,16 @@ graph TD
         QOBUZ["Qobuz<br>aiohttp<br>App ID/Secret<br>up to 24/192"]
         YOUTUBE["YouTube Music<br>ytmusicapi + yt-dlp<br>OAuth file<br>best audio"]
         AMAZON["Amazon Music<br>undocumented API<br>OAuth device flow<br>SD/HD/ULTRA_HD"]
+        SPOTIFY["Spotify<br>aiohttp<br>PKCE OAuth<br>OGG/AAC (Free/Premium)"]
+        DEEZER["Deezer<br>aiohttp<br>OAuth<br>FLAC/MP3"]
     end
 
     REGISTRY --> TIDAL
     REGISTRY --> QOBUZ
     REGISTRY --> YOUTUBE
     REGISTRY --> AMAZON
+    REGISTRY --> SPOTIFY
+    REGISTRY --> DEEZER
 
     subgraph Common["Common Interface (StreamingService)"]
         AUTH["authenticate()"]
@@ -108,7 +112,7 @@ flowchart TD
     G --> H["Wait 2s for initial device discovery"]
     H --> I["Initialize zones from DB<br>(restore persisted zones)"]
     I --> I2["Clean up stale zones<br>(unavailable devices)"]
-    I2 --> J["Setup streaming services<br>(Tidal/Qobuz/YouTube/Amazon if enabled)"]
+    I2 --> J["Setup streaming services<br>(Tidal/Qobuz/YouTube/Amazon/Spotify/Deezer if enabled)"]
     J --> J2["Restore streaming auth from DB"]
     J2 --> K["Populate API dependency container"]
     K --> L["Start WebSocket manager<br>(heartbeat interval)"]
@@ -189,6 +193,8 @@ sequenceDiagram
     participant TIDAL as Tidal
     participant YT as YouTube Music
     participant AMZN as Amazon Music
+    participant SPOT as Spotify
+    participant DEEZ as Deezer
 
     C->>API: GET /search?q=radiohead
     par Parallel queries
@@ -196,13 +202,17 @@ sequenceDiagram
         API->>TIDAL: search("radiohead")
         API->>YT: search("radiohead")
         API->>AMZN: search("radiohead")
+        API->>SPOT: search("radiohead")
+        API->>DEEZ: search("radiohead")
     end
     LOCAL-->>API: SearchResult
     TIDAL-->>API: SearchResult
     YT-->>API: SearchResult
     AMZN--xAPI: Error (logged, ignored)
+    SPOT-->>API: SearchResult
+    DEEZ-->>API: SearchResult
     API-->>C: FederatedSearchResult
-    Note over C: local + tidal + youtube results<br>(amazon omitted due to error)
+    Note over C: local + tidal + youtube + spotify + deezer results<br>(amazon omitted due to error)
 ```
 
 ## Thread Model
