@@ -177,9 +177,10 @@ class LibraryScanner:
                 album.cover_path = cover_path
                 await self._album_repo.update(album)
 
-        # Skip duplicate: same album + disc + track number already exists
+        # Skip duplicate: same album + disc + track number + format already exists
         # (happens when same files are accessible from multiple mount points)
-        if await self._track_repo.exists_in_album(album.id, metadata.disc_number, metadata.track_number):
+        # Different formats (e.g. FLAC vs DSD) are kept as separate tracks
+        if await self._track_repo.exists_in_album(album.id, metadata.disc_number, metadata.track_number, metadata.format):
             return False
 
         # Create track
