@@ -8,7 +8,7 @@ A multi-room music server for local libraries and streaming services, with DLNA/
 - **Metadata Editing** — Edit track/album/artist metadata, upload artwork, MusicBrainz enrichment, duplicate album merging
 - **Multiple Outputs** — DLNA/UPnP renderers, AirPlay devices, local soundcard
 - **Multi-Room** — Group zones for synchronized playback
-- **Streaming Services** — Tidal, Qobuz, YouTube Music, and Amazon Music integration with featured content browsing
+- **Streaming Services** — Tidal, Qobuz, YouTube Music, Amazon Music, Spotify, and Deezer integration with featured content browsing
 - **Federated Search** — Search across local library and all streaming services simultaneously
 - **Playlists** — Full CRUD with track management and real-time sync events
 - **Internet Radio** — CRUD management of Icecast/Shoutcast stations, M3U/PLS import, cover upload, genre filtering and favorites
@@ -26,31 +26,51 @@ A multi-room music server for local libraries and streaming services, with DLNA/
 
 ```mermaid
 graph TD
-    API["REST API (FastAPI :8888)<br>+ WebSocket (/ws)"]
-    BUS["Core Engine<br>(Event Bus, 28 event types)"]
-    LIB["Library Scanner"]
-    AUDIO["Audio Pipeline"]
-    ZONE["Zone Manager"]
-    DISC["Discovery<br>(SSDP / mDNS)"]
-    STREAM["Streaming<br>(Tidal / Qobuz / YouTube / Amazon)"]
-    DB["SQLite (FTS5)"]
-    FFMPEG["FFmpeg"]
-    DLNA["DLNA Output"]
-    AIRPLAY["AirPlay Output (pyatv)"]
-    LOCAL["Local Output (sounddevice)"]
-    HTTP["HTTP Streamer (:8080)"]
+    subgraph Clients["Clients"]
+        WEB["Web UI (Svelte 5)"]
+        CLI["curl / scripts"]
+    end
 
+    subgraph Server["Tune Server Process"]
+        API["REST API :8888<br>(106 endpoints)<br>+ WebSocket"]
+        BUS["Event Bus<br>(40 event types)"]
+
+        subgraph Core
+            LIB["Library<br>Scanner"]
+            ZONE["Zone<br>Manager"]
+            AUDIO["Audio<br>Pipeline"]
+            DISC["Discovery<br>SSDP / mDNS"]
+        end
+
+        subgraph Streaming["Streaming Services"]
+            TIDAL["Tidal<br>(HiRes FLAC)"]
+            QOBUZ["Qobuz<br>(HiRes FLAC)"]
+            YT["YouTube Music<br>(yt-dlp)"]
+            AMZN["Amazon Music<br>(HD/Ultra HD)"]
+            SPOT["Spotify<br>(previews)"]
+            DEEZ["Deezer<br>(previews)"]
+        end
+    end
+
+    subgraph Storage
+        DB[("SQLite<br>FTS5")]
+        FS[("Music Files<br>+ SMB/NFS")]
+    end
+
+    subgraph Outputs["Audio Outputs"]
+        DLNA["DLNA/UPnP<br>Renderers"]
+        AIRPLAY["AirPlay<br>(pyatv)"]
+        LOCAL["Local<br>(sounddevice)"]
+        HTTP["HTTP Streamer<br>:8080"]
+    end
+
+    WEB & CLI --> API
     API <--> BUS
-    BUS --- LIB
-    BUS --- AUDIO
-    BUS --- ZONE
-    BUS --- DISC
-    BUS --- STREAM
-    LIB --- DB
-    AUDIO --- FFMPEG
-    ZONE --- DLNA
-    ZONE --- AIRPLAY
-    ZONE --- LOCAL
+    BUS --- Core
+    BUS --- Streaming
+    LIB --- DB & FS
+    AUDIO --- FFMPEG["FFmpeg"]
+    ZONE --> DLNA & AIRPLAY & LOCAL
     DLNA --> HTTP
 ```
 
@@ -186,10 +206,18 @@ cp .env.example .env
 | `TUNE_QOBUZ_APP_ID` | `None` | Qobuz application ID |
 | `TUNE_QOBUZ_APP_SECRET` | `None` | Qobuz application secret |
 | `TUNE_YOUTUBE_ENABLED` | `false` | Enable YouTube Music integration |
-| `TUNE_YOUTUBE_OAUTH_JSON` | `None` | Path to YouTube OAuth credentials |
+| `TUNE_YOUTUBE_CLIENT_ID` | `None` | Google OAuth client ID (TVs and Limited Input devices) |
+| `TUNE_YOUTUBE_CLIENT_SECRET` | `None` | Google OAuth client secret |
 | `TUNE_AMAZON_MUSIC_ENABLED` | `false` | Enable Amazon Music integration |
 | `TUNE_AMAZON_MUSIC_REGION` | `us` | Amazon Music region |
 | `TUNE_AMAZON_MUSIC_QUALITY` | `HD` | Amazon quality: `SD`, `HD`, `ULTRA_HD` |
+| `TUNE_SPOTIFY_ENABLED` | `false` | Enable Spotify integration |
+| `TUNE_SPOTIFY_CLIENT_ID` | `None` | Spotify app client ID |
+| `TUNE_SPOTIFY_REDIRECT_URI` | `http://localhost:8888/api/v1/streaming/spotify/callback` | Spotify OAuth redirect URI |
+| `TUNE_DEEZER_ENABLED` | `false` | Enable Deezer integration |
+| `TUNE_DEEZER_APP_ID` | `None` | Deezer app ID |
+| `TUNE_DEEZER_APP_SECRET` | `None` | Deezer app secret |
+| `TUNE_DEEZER_REDIRECT_URI` | `http://localhost:8888/api/v1/streaming/deezer/callback` | Deezer OAuth redirect URI |
 | **Discovery** | | |
 | `TUNE_DISCOVERY_ENABLED` | `true` | Enable network device discovery |
 | `TUNE_SSDP_ENABLED` | `true` | Enable SSDP (DLNA renderer discovery) |
@@ -357,6 +385,24 @@ curl localhost:8888/api/v1/zones/1/queue
 
 ### Streaming Services
 
+```mermaid
+graph LR
+    subgraph Full["Full Streaming (HiRes)"]
+        TIDAL["Tidal<br>OAuth Device Code"]
+        QOBUZ["Qobuz<br>Email / Password"]
+        YT["YouTube Music<br>Google OAuth Device Code"]
+        AMZN["Amazon Music<br>OAuth Device Code"]
+    end
+
+    subgraph Preview["Navigation + Previews (30s)"]
+        SPOT["Spotify<br>OAuth PKCE"]
+        DEEZ["Deezer<br>OAuth 2.0"]
+    end
+
+    TIDAL & QOBUZ & YT & AMZN --> PLAY["Stream complet<br>FLAC / HiRes"]
+    SPOT & DEEZ --> PREV["Preview MP3<br>30 secondes"]
+```
+
 ```bash
 # List available services with auth status
 curl localhost:8888/api/v1/streaming/services
@@ -496,12 +542,28 @@ curl localhost:8888/api/v1/system/scan/status
 
 ## Audio Pipeline
 
-The server uses a smart pipeline strategy:
+```mermaid
+flowchart LR
+    SRC["Source<br>(file / stream URL)"]
+    CHECK{"Output supports<br>source format?"}
+    PASS["Passthrough<br>(bit-perfect)"]
+    DSD{"DSD/DSF<br>source?"}
+    DSDPASS["DSD Native<br>Passthrough"]
+    DSDPCM["DSD → PCM<br>176.4kHz / 24-bit"]
+    DECODE["FFmpeg Decode<br>→ PCM"]
+    OUT["Output<br>(DLNA / AirPlay / Local)"]
 
-1. **Passthrough** — If the output supports the source format (e.g., DLNA playing AAC), the original file bytes are served directly. Bit-perfect, zero processing.
-2. **Decode** — If the output requires PCM (e.g., local soundcard), FFmpeg decodes the source to raw PCM at the appropriate sample rate and bit depth.
+    SRC --> CHECK
+    CHECK -->|Yes| PASS --> OUT
+    CHECK -->|No| DSD
+    DSD -->|"Yes + DSD renderer"| DSDPASS --> OUT
+    DSD -->|"Yes + PCM only"| DSDPCM --> OUT
+    DSD -->|No| DECODE --> OUT
+```
 
-The server never upsamples. If the output's maximum sample rate is lower than the source, it downsamples using FFmpeg's soxr resampler.
+- **Passthrough** — Output supports the source format (e.g., DLNA playing FLAC): original bytes served directly. Bit-perfect, zero processing.
+- **DSD Native** — DSF/DFF files sent bit-perfect to DSD-capable DLNA renderers (auto-detected). Fallback: PCM 176.4kHz/24-bit.
+- **Decode** — FFmpeg decodes to PCM at the appropriate sample rate and bit depth. Never upsamples.
 
 ## Project Structure
 
@@ -509,7 +571,7 @@ The server never upsamples. If the output's maximum sample rate is lower than th
 tune_server/
 ├── app.py              # Bootstrap, wires all components
 ├── config.py           # Pydantic Settings
-├── event_bus.py        # Async pub/sub (28 event types)
+├── event_bus.py        # Async pub/sub (40 event types)
 ├── models.py           # Pydantic models
 ├── db/                 # SQLite + FTS5
 ├── library/            # Scanner, metadata, artwork, watcher
@@ -518,23 +580,30 @@ tune_server/
 ├── zones/              # Zone manager, grouping, sync engine
 ├── outputs/            # DLNA, AirPlay, local, HTTP streamer
 ├── discovery/          # SSDP, mDNS, device registry
-├── streaming/          # Tidal, Qobuz, YouTube, Amazon
+├── streaming/          # Tidal, Qobuz, YouTube, Amazon, Spotify, Deezer
 ├── api/                # FastAPI routes, WebSocket, deps
 └── utils/              # Network, audio helpers
 ```
 
 ## Documentation
 
-- [API Reference](docs/api-reference.md) — Full endpoint documentation (85+ endpoints)
+- [API Reference](docs/api-reference.md) — Full endpoint documentation (106+ endpoints)
 - [Architecture](docs/architecture.md) — System design, component diagrams, data flows
 - [Audio Pipeline](docs/audio-pipeline.md) — Decode, passthrough, and direct URL streaming
-- [Event Bus](docs/event-bus.md) — 28 event types and pub/sub system
+- [Event Bus](docs/event-bus.md) — 40 event types and pub/sub system
 - [Database](docs/database.md) — Schema, FTS5, repository pattern
 - [Device Discovery](docs/discovery.md) — SSDP (DLNA) and mDNS (AirPlay) scanning
 - [Outputs](docs/outputs.md) — DLNA, AirPlay, and local output targets
 - [Multi-Room](docs/multi-room.md) — Zone grouping and synchronized playback
+- [Tidal Setup](docs/tidal-setup.md) — OAuth device code, quality levels
+- [Qobuz Setup](docs/qobuz-setup.md) — App ID/Secret authentication, Hi-Res FLAC
+- [YouTube Music Setup](docs/youtube-music-setup.md) — Google OAuth, device code flow
+- [Amazon Music Setup](docs/amazon-music-setup.md) — OAuth device code, regions, quality
+- [Spotify Setup](docs/spotify-setup.md) — OAuth PKCE, Free vs Premium
+- [Deezer Setup](docs/deezer-setup.md) — OAuth 2.0, app ID/secret
 - [Linux Deployment](docs/linux.md) — Audio, mDNS, firewall, troubleshooting
 - [Project History](docs/project/index.md) — Development phases and decisions
+- [Roon vs Tune](docs/roon-vs-tune.md) — Feature comparison
 
 ## Dependencies
 
@@ -553,6 +622,8 @@ tune_server/
 | pydantic-settings | Configuration |
 | ytmusicapi | YouTube Music catalog browsing |
 | yt-dlp | YouTube audio URL extraction |
+| tidalapi | Tidal streaming |
+| deezer-python | Deezer catalog browsing |
 
 ## License
 
