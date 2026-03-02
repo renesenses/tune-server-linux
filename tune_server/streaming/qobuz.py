@@ -9,7 +9,7 @@ import aiohttp
 import structlog
 
 from tune_server.config import settings
-from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, Track
+from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, StreamingPlaylist, Track
 from tune_server.streaming.base import StreamingService
 from tune_server.streaming.cache import StreamUrlCache
 
@@ -213,6 +213,40 @@ class QobuzService(StreamingService):
         except Exception:
             logger.exception("qobuz_get_featured_error", section=section)
             return []
+
+    async def get_user_playlists(self) -> list[StreamingPlaylist]:
+        try:
+            data = await self._api_get("playlist/getUserPlaylists")
+            items = data.get("playlists", {}).get("items", [])
+            return [self._map_playlist(p) for p in items]
+        except Exception:
+            logger.exception("qobuz_user_playlists_error")
+            return []
+
+    async def get_playlist_tracks(self, playlist_id: str) -> list[Track]:
+        try:
+            data = await self._api_get("playlist/get", {
+                "playlist_id": playlist_id,
+                "extra": "tracks",
+            })
+            items = data.get("tracks", {}).get("items", [])
+            return [self._map_track(t) for t in items]
+        except Exception:
+            logger.exception("qobuz_playlist_tracks_error", playlist_id=playlist_id)
+            return []
+
+    def _map_playlist(self, p: dict) -> StreamingPlaylist:
+        image = p.get("images300", [])
+        cover_path = image[0] if image else None
+        return StreamingPlaylist(
+            source_id=str(p.get("id", "")),
+            name=p.get("name", "Unknown"),
+            description=p.get("description"),
+            track_count=p.get("tracks_count", 0),
+            duration_ms=int(p.get("duration", 0)) * 1000,
+            cover_path=cover_path,
+            source=Source.QOBUZ,
+        )
 
     async def save_auth(self, db: Database) -> None:
         if not self._user_auth_token:

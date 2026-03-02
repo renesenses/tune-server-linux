@@ -203,6 +203,16 @@ class RadioImportResult(BaseModel):
 # --- API request/response models ---
 
 
+class StreamingPlaylist(BaseModel):
+    source_id: str
+    name: str
+    description: Optional[str] = None
+    track_count: int = 0
+    duration_ms: int = 0
+    cover_path: Optional[str] = None
+    source: Source
+
+
 class PlayRequest(BaseModel):
     track_id: Optional[int] = None
     track_ids: Optional[list[int]] = None
@@ -210,6 +220,7 @@ class PlayRequest(BaseModel):
     playlist_id: Optional[int] = None
     source: Optional[Source] = None
     source_id: Optional[str] = None
+    streaming_playlist_id: Optional[str] = None
 
 
 class QueueAddRequest(BaseModel):

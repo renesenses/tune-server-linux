@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 import structlog
 
 from tune_server.config import settings
-from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, Track
+from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, StreamingPlaylist, Track
 from tune_server.streaming.base import StreamingService
 from tune_server.streaming.cache import StreamUrlCache
 
@@ -381,6 +381,49 @@ class TidalService(StreamingService):
         except Exception:
             logger.exception("tidal_featured_error", section=section)
             return []
+
+    async def get_user_playlists(self) -> list[StreamingPlaylist]:
+        if not await self._ensure_authenticated():
+            return []
+        try:
+            playlists = await asyncio.wait_for(
+                asyncio.to_thread(self._session.user.playlists), timeout=30
+            )
+            return [self._map_playlist(p) for p in playlists]
+        except Exception:
+            logger.exception("tidal_user_playlists_error")
+            return []
+
+    async def get_playlist_tracks(self, playlist_id: str) -> list[Track]:
+        if not await self._ensure_authenticated():
+            return []
+        try:
+            playlist = await asyncio.wait_for(
+                asyncio.to_thread(self._session.playlist, playlist_id), timeout=30
+            )
+            tidal_tracks = await asyncio.wait_for(
+                asyncio.to_thread(playlist.tracks), timeout=30
+            )
+            return [self._map_track(t) for t in tidal_tracks]
+        except Exception:
+            logger.exception("tidal_playlist_tracks_error", playlist_id=playlist_id)
+            return []
+
+    def _map_playlist(self, p) -> StreamingPlaylist:
+        cover_path = None
+        try:
+            cover_path = p.image(640)
+        except Exception:
+            pass
+        return StreamingPlaylist(
+            source_id=str(p.id),
+            name=p.name or "Unknown",
+            description=getattr(p, "description", None),
+            track_count=getattr(p, "num_tracks", 0) or 0,
+            duration_ms=int(getattr(p, "duration", 0) or 0) * 1000,
+            cover_path=cover_path,
+            source=Source.TIDAL,
+        )
 
     async def disconnect(self, db: Database) -> None:
         self._session = None

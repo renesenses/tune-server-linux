@@ -10,6 +10,7 @@ from tune_server.models import (
     SearchResult,
     StreamingAuthRequest,
     StreamingAuthResponse,
+    StreamingPlaylist,
     StreamingServiceStatus,
     Track,
 )
@@ -140,3 +141,15 @@ async def get_artist_albums(service_name: str, artist_id: str):
 async def get_artist_tracks(service_name: str, artist_id: str):
     service = _get_service(service_name)
     return await service.get_artist_tracks(artist_id)
+
+
+@router.get("/{service_name}/playlists", response_model=list[StreamingPlaylist])
+async def get_user_playlists(service_name: str):
+    service = _get_service(service_name)
+    return await service.get_user_playlists()
+
+
+@router.get("/{service_name}/playlists/{playlist_id}/tracks", response_model=list[Track])
+async def get_playlist_tracks(service_name: str, playlist_id: str):
+    service = _get_service(service_name)
+    return await service.get_playlist_tracks(playlist_id)

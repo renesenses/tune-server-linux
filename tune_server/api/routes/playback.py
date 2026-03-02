@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 
 from tune_server.api.deps import deps
@@ -45,6 +47,21 @@ async def _resolve_tracks(request: PlayRequest) -> list:
 
     elif request.playlist_id and deps.playlist_repo:
         tracks = await deps.playlist_repo.get_tracks(request.playlist_id)
+
+    elif request.source and request.streaming_playlist_id:
+        # Streaming playlist — resolve all tracks + URLs
+        service = deps.streaming_services.get(request.source.value)
+        if service and service.is_authenticated:
+            playlist_tracks = await service.get_playlist_tracks(request.streaming_playlist_id)
+
+            async def resolve(t):
+                url = await service.get_stream_url(t.source_id)
+                if url:
+                    t.file_path = url
+                return t
+
+            resolved = await asyncio.gather(*[resolve(t) for t in playlist_tracks])
+            tracks = [t for t in resolved if t.file_path]
 
     elif request.source and request.source_id:
         # Streaming service track — resolve track metadata AND stream URL
