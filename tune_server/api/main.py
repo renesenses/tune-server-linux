@@ -80,6 +80,9 @@ def create_api_app() -> FastAPI:
 
         @app.get("/{full_path:path}")
         async def serve_spa(full_path: str):
+            # Never intercept API or docs routes
+            if full_path.startswith(("api/", "docs", "openapi.json", "ws")):
+                return JSONResponse(status_code=404, content={"detail": "Not found"})
             # Try static file first
             file_path = web_dir / full_path
             if full_path and file_path.is_file() and file_path.resolve().is_relative_to(web_dir.resolve()):
