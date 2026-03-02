@@ -386,6 +386,7 @@ class StreamingAuthRequest(BaseModel):
 class StreamingAuthResponse(BaseModel):
     authenticated: bool
     verification_url: Optional[str] = None
+    user_code: Optional[str] = None
 
 
 class ZoneGroupResponse(BaseModel):

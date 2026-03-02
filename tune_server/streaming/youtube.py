@@ -2,14 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
+import time
 from typing import TYPE_CHECKING, Optional
 
 import structlog
 
 from tune_server.config import settings
-from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, Track
+from tune_server.models import (
+    Album,
+    Artist,
+    AudioFormat,
+    FeaturedSection,
+    SearchResult,
+    Source,
+    StreamingPlaylist,
+    Track,
+)
 from tune_server.streaming.base import StreamingService
 from tune_server.streaming.cache import StreamUrlCache
 
@@ -24,16 +33,26 @@ YTDLP_TIMEOUT = 30
 # YouTube video IDs are 11 chars: alphanumeric, hyphens, underscores
 _YT_VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 
+# Google/YouTube OAuth endpoints (non-standard grant type used by ytmusicapi)
+OAUTH_CODE_URL = "https://www.youtube.com/o/oauth2/device/code"
+OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+OAUTH_SCOPE = "https://www.googleapis.com/auth/youtube"
+DEVICE_GRANT_TYPE = "http://oauth.net/grant_type/device/1.0"
+
 
 class YouTubeService(StreamingService):
     """YouTube Music streaming service integration using ytmusicapi and yt-dlp."""
 
     def __init__(self) -> None:
         self._ytmusic = None
-        self._oauth_json_path: str | None = settings.youtube_oauth_json
+        self._oauth_credentials = None  # ytmusicapi OAuthCredentials
+        self._token_data: dict | None = None
+        self._verification_url: str | None = None
+        self._user_code: str | None = None
         self._url_cache = StreamUrlCache(ttl_seconds=settings.youtube_url_cache_ttl)
         self._lock = asyncio.Lock()  # Serialize access to _ytmusic (not thread-safe)
-        self._featured_cache: dict[str, list] = {}  # section_id -> list of items
+        self._featured_cache: dict[str, list] = {}
+        self._poll_task: asyncio.Task | None = None
 
     @property
     def name(self) -> str:
@@ -43,34 +62,178 @@ class YouTubeService(StreamingService):
     def is_authenticated(self) -> bool:
         return self._ytmusic is not None
 
+    @property
+    def verification_url(self) -> str | None:
+        return self._verification_url
+
+    @property
+    def user_code(self) -> str | None:
+        return self._user_code
+
     async def authenticate(self, **kwargs) -> bool:
+        db = kwargs.get("db")
+
+        # Legacy: load from oauth.json file path
+        oauth_json = kwargs.get("oauth_json") or settings.youtube_oauth_json
+        if oauth_json:
+            return await self._auth_from_file(oauth_json, db)
+
+        # Device code OAuth flow (requires client_id + client_secret)
+        if not settings.youtube_client_id or not settings.youtube_client_secret:
+            logger.warning("youtube_auth_no_credentials",
+                           hint="Set TUNE_YOUTUBE_CLIENT_ID and TUNE_YOUTUBE_CLIENT_SECRET")
+            return False
+
         try:
-            from ytmusicapi import YTMusic
+            import aiohttp
 
-            oauth_json = kwargs.get("oauth_json") or self._oauth_json_path
+            async with aiohttp.ClientSession() as session:
+                async with session.post(OAUTH_CODE_URL, data={
+                    "client_id": settings.youtube_client_id,
+                    "scope": OAUTH_SCOPE,
+                }) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        logger.warning("youtube_device_code_error", status=resp.status, body=text)
+                        return False
+                    code_data = await resp.json()
 
-            async with self._lock:
-                if oauth_json:
-                    # Load from existing OAuth JSON file
-                    self._ytmusic = await asyncio.to_thread(YTMusic, oauth_json)
-                    self._oauth_json_path = oauth_json
-                    logger.info("youtube_authenticated", method="oauth_file")
-                    return True
+            device_code = code_data.get("device_code")
+            user_code = code_data.get("user_code")
+            verification_url = code_data.get("verification_url", "https://www.google.com/device")
+            interval = code_data.get("interval", 5)
 
-                # Interactive OAuth device flow — generates oauth.json
-                logger.info("youtube_auth_starting_oauth_flow")
-                oauth_path = await asyncio.to_thread(YTMusic.setup_oauth, filepath="youtube_oauth.json")
-                self._ytmusic = await asyncio.to_thread(YTMusic, oauth_path)
-                self._oauth_json_path = oauth_path
-                logger.info("youtube_authenticated", method="oauth_setup")
-                return True
+            self._verification_url = verification_url
+            self._user_code = user_code
+
+            logger.info("youtube_auth_started",
+                        verification_url=verification_url,
+                        user_code=user_code)
+
+            # Start background polling for token
+            self._poll_task = asyncio.create_task(
+                self._poll_device_auth(device_code, interval, db)
+            )
+
+            return False  # waiting for user authorization
 
         except ImportError:
-            logger.warning("ytmusicapi_not_installed")
+            logger.warning("aiohttp_not_installed")
             return False
         except Exception:
             logger.exception("youtube_auth_error")
             return False
+
+    async def _auth_from_file(self, oauth_json: str, db: Database | None = None) -> bool:
+        """Legacy auth: load from an existing oauth.json file."""
+        try:
+            from ytmusicapi import YTMusic
+
+            async with self._lock:
+                self._ytmusic = await asyncio.to_thread(YTMusic, oauth_json)
+            logger.info("youtube_authenticated", method="oauth_file")
+
+            if db:
+                # Read file content and store in DB for portability
+                with open(oauth_json) as f:
+                    self._token_data = json.load(f)
+                await self.save_auth(db)
+
+            return True
+        except ImportError:
+            logger.warning("ytmusicapi_not_installed")
+            return False
+        except Exception:
+            logger.exception("youtube_auth_file_error")
+            return False
+
+    async def _poll_device_auth(self, device_code: str, interval: int, db: Database | None) -> None:
+        """Background task: poll Google token endpoint until user authorizes."""
+        try:
+            import aiohttp
+
+            poll_interval = interval
+            max_attempts = 360  # 30 min at 5s intervals
+
+            for _ in range(max_attempts):
+                await asyncio.sleep(poll_interval)
+
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(OAUTH_TOKEN_URL, data={
+                            "client_id": settings.youtube_client_id,
+                            "client_secret": settings.youtube_client_secret,
+                            "code": device_code,
+                            "grant_type": DEVICE_GRANT_TYPE,
+                        }) as resp:
+                            data = await resp.json()
+                except Exception:
+                    logger.exception("youtube_poll_request_error")
+                    continue
+
+                if "access_token" in data:
+                    # Success!
+                    token_data = {
+                        "scope": data.get("scope", OAUTH_SCOPE),
+                        "token_type": data.get("token_type", "Bearer"),
+                        "access_token": data["access_token"],
+                        "refresh_token": data["refresh_token"],
+                        "expires_at": int(time.time()) + data.get("expires_in", 3600),
+                        "expires_in": data.get("expires_in", 3600),
+                    }
+                    self._token_data = token_data
+                    await self._init_client_from_tokens(token_data)
+
+                    self._verification_url = None
+                    self._user_code = None
+
+                    logger.info("youtube_authenticated", method="device_code")
+
+                    if db:
+                        await self.save_auth(db)
+                    return
+
+                error = data.get("error")
+                if error == "authorization_pending":
+                    continue
+                elif error == "slow_down":
+                    poll_interval += 5
+                    continue
+                else:
+                    # access_denied, expired_token, or other error
+                    logger.warning("youtube_device_auth_failed", error=error)
+                    self._verification_url = None
+                    self._user_code = None
+                    return
+
+            # Timeout
+            logger.warning("youtube_device_auth_timeout")
+            self._verification_url = None
+            self._user_code = None
+
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("youtube_poll_error")
+            self._verification_url = None
+            self._user_code = None
+
+    async def _init_client_from_tokens(self, token_data: dict) -> None:
+        """Create YTMusic instance from token dict + OAuthCredentials."""
+        from ytmusicapi import YTMusic
+        from ytmusicapi.auth.oauth.credentials import OAuthCredentials
+
+        self._oauth_credentials = OAuthCredentials(
+            client_id=settings.youtube_client_id,
+            client_secret=settings.youtube_client_secret,
+        )
+
+        async with self._lock:
+            self._ytmusic = await asyncio.to_thread(
+                YTMusic,
+                auth=token_data,
+                oauth_credentials=self._oauth_credentials,
+            )
 
     async def search(self, query: str, limit: int = 50) -> SearchResult:
         if not self._ytmusic:
@@ -128,6 +291,7 @@ class YouTubeService(StreamingService):
         try:
             async with self._lock:
                 album = await asyncio.to_thread(self._ytmusic.get_album, album_id)
+            cover = _best_thumbnail(album.get("thumbnails", []))
             tracks = []
             for i, t in enumerate(album.get("tracks", []), start=1):
                 tracks.append(Track(
@@ -140,6 +304,7 @@ class YouTubeService(StreamingService):
                     sample_rate=48000,
                     bit_depth=16,
                     channels=2,
+                    cover_path=cover,
                     source=Source.YOUTUBE,
                     source_id=t.get("videoId", ""),
                 ))
@@ -154,8 +319,10 @@ class YouTubeService(StreamingService):
         try:
             async with self._lock:
                 ar = await asyncio.to_thread(self._ytmusic.get_artist, artist_id)
+            image_path = _best_thumbnail(ar.get("thumbnails", []))
             return Artist(
                 name=ar.get("name", "Unknown"),
+                image_path=image_path,
             )
         except Exception:
             logger.exception("youtube_get_artist_error", artist_id=artist_id)
@@ -174,6 +341,7 @@ class YouTubeService(StreamingService):
                     title=a.get("title", "Unknown"),
                     artist_name=ar.get("name", "Unknown"),
                     year=_safe_int(a.get("year")),
+                    cover_path=_best_thumbnail(a.get("thumbnails", [])),
                     source=Source.YOUTUBE,
                     source_id=a.get("browseId", ""),
                 )
@@ -200,6 +368,7 @@ class YouTubeService(StreamingService):
                     sample_rate=48000,
                     bit_depth=16,
                     channels=2,
+                    cover_path=_best_thumbnail(t.get("thumbnails", [])),
                     source=Source.YOUTUBE,
                     source_id=t.get("videoId", ""),
                 )
@@ -243,8 +412,7 @@ class YouTubeService(StreamingService):
             browse_id = item.get("browseId", "")
             if not browse_id:
                 continue
-            thumbnails = item.get("thumbnails", [])
-            cover = thumbnails[-1]["url"] if thumbnails else None
+            cover = _best_thumbnail(item.get("thumbnails", []))
             albums.append(Album(
                 title=item.get("title", ""),
                 artist_name=", ".join(
@@ -277,6 +445,60 @@ class YouTubeService(StreamingService):
             logger.exception("youtube_stream_url_error", track_id=track_id)
             return None
 
+    async def get_user_playlists(self) -> list[StreamingPlaylist]:
+        if not self._ytmusic:
+            return []
+        try:
+            async with self._lock:
+                raw = await asyncio.to_thread(self._ytmusic.get_library_playlists, limit=50)
+            return [
+                StreamingPlaylist(
+                    source_id=p.get("playlistId", ""),
+                    name=p.get("title", "Unknown"),
+                    description=p.get("description"),
+                    track_count=_safe_int(p.get("count")) or 0,
+                    duration_ms=0,
+                    cover_path=_best_thumbnail(p.get("thumbnails", [])),
+                    source=Source.YOUTUBE,
+                )
+                for p in raw
+                if p.get("playlistId")
+            ]
+        except Exception:
+            logger.exception("youtube_user_playlists_error")
+            return []
+
+    async def get_playlist_tracks(self, playlist_id: str) -> list[Track]:
+        if not self._ytmusic:
+            return []
+        try:
+            async with self._lock:
+                playlist = await asyncio.to_thread(
+                    self._ytmusic.get_playlist, playlist_id, limit=500
+                )
+            tracks = []
+            for t in playlist.get("tracks", []):
+                video_id = t.get("videoId")
+                if not video_id:
+                    continue
+                tracks.append(Track(
+                    title=t.get("title", "Unknown"),
+                    artist_name=_first_artist_name(t.get("artists", [])),
+                    album_title=(t.get("album") or {}).get("name") if isinstance(t.get("album"), dict) else None,
+                    duration_ms=_parse_duration(t.get("duration", "0:00")),
+                    format=AudioFormat.OPUS,
+                    sample_rate=48000,
+                    bit_depth=16,
+                    channels=2,
+                    cover_path=_best_thumbnail(t.get("thumbnails", [])),
+                    source=Source.YOUTUBE,
+                    source_id=video_id,
+                ))
+            return tracks
+        except Exception:
+            logger.exception("youtube_playlist_tracks_error", playlist_id=playlist_id)
+            return []
+
     @staticmethod
     def _extract_url(track_id: str) -> str | None:
         """Extract audio URL using yt-dlp (runs in thread)."""
@@ -301,14 +523,19 @@ class YouTubeService(StreamingService):
             return info.get("url") if info else None
 
     async def save_auth(self, db: Database) -> None:
-        if not self._oauth_json_path:
+        if not self._token_data:
             return
         try:
-            token_data = json.dumps({"oauth_json_path": self._oauth_json_path})
+            save_data = {**self._token_data}
+            # Include client credentials so restore can recreate OAuthCredentials
+            if settings.youtube_client_id:
+                save_data["client_id"] = settings.youtube_client_id
+                save_data["client_secret"] = settings.youtube_client_secret
+            token_json = json.dumps(save_data)
             await db.execute(
                 "INSERT OR REPLACE INTO streaming_auth (service, token_data, updated_at) "
                 "VALUES (?, ?, CURRENT_TIMESTAMP)",
-                ("youtube", token_data),
+                ("youtube", token_json),
             )
             await db.commit()
             logger.info("youtube_auth_saved")
@@ -323,21 +550,42 @@ class YouTubeService(StreamingService):
                 "SELECT token_data FROM streaming_auth WHERE service = ?", ("youtube",)
             )
             if not row:
-                return False
+                # Fallback: legacy file-based auth
+                return await self._restore_from_file()
 
             data = json.loads(row["token_data"])
-            oauth_path = data.get("oauth_json_path")
-            if not oauth_path:
+
+            # Legacy format: just a file path reference
+            if "oauth_json_path" in data and "access_token" not in data:
+                return await self._restore_from_file(data.get("oauth_json_path"))
+
+            # Token-based auth
+            if "access_token" not in data:
                 return False
 
-            if not os.path.isfile(oauth_path):
-                logger.warning("youtube_oauth_file_not_found", path=oauth_path)
+            client_id = data.pop("client_id", None) or settings.youtube_client_id
+            client_secret = data.pop("client_secret", None) or settings.youtube_client_secret
+
+            if not client_id or not client_secret:
+                logger.warning("youtube_restore_no_credentials")
                 return False
+
+            self._token_data = data
+
+            from ytmusicapi.auth.oauth.credentials import OAuthCredentials
+            self._oauth_credentials = OAuthCredentials(
+                client_id=client_id,
+                client_secret=client_secret,
+            )
 
             async with self._lock:
-                self._ytmusic = await asyncio.to_thread(YTMusic, oauth_path)
-            self._oauth_json_path = oauth_path
-            logger.info("youtube_auth_restored")
+                self._ytmusic = await asyncio.to_thread(
+                    YTMusic,
+                    auth=data,
+                    oauth_credentials=self._oauth_credentials,
+                )
+
+            logger.info("youtube_auth_restored", method="tokens")
             return True
 
         except ImportError:
@@ -345,11 +593,55 @@ class YouTubeService(StreamingService):
             return False
         except Exception:
             logger.exception("youtube_restore_auth_error")
+            self._ytmusic = None
+            self._token_data = None
             return False
 
-    async def close(self) -> None:
+    async def _restore_from_file(self, path: str | None = None) -> bool:
+        """Legacy: restore from oauth.json file."""
+        import os
+        from ytmusicapi import YTMusic
+
+        oauth_path = path or settings.youtube_oauth_json
+        if not oauth_path or not os.path.isfile(oauth_path):
+            return False
+
+        try:
+            async with self._lock:
+                self._ytmusic = await asyncio.to_thread(YTMusic, oauth_path)
+            logger.info("youtube_auth_restored", method="file", path=oauth_path)
+            return True
+        except Exception:
+            logger.exception("youtube_restore_file_error")
+            return False
+
+    async def disconnect(self, db: Database) -> None:
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
         async with self._lock:
             self._ytmusic = None
+        self._oauth_credentials = None
+        self._token_data = None
+        self._verification_url = None
+        self._user_code = None
+        self._url_cache.clear()
+        self._featured_cache = {}
+        try:
+            await db.execute(
+                "DELETE FROM streaming_auth WHERE service = ?", ("youtube",)
+            )
+            await db.commit()
+            logger.info("youtube_disconnected")
+        except Exception:
+            logger.exception("youtube_disconnect_error")
+
+    async def close(self) -> None:
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+        async with self._lock:
+            self._ytmusic = None
+        self._oauth_credentials = None
+        self._token_data = None
         self._url_cache.clear()
         self._featured_cache = {}
 
@@ -358,8 +650,7 @@ class YouTubeService(StreamingService):
     def _map_track_from_search(self, item: dict) -> Track:
         artists = item.get("artists", [])
         album = item.get("album", {}) or {}
-        thumbnails = item.get("thumbnails", [])
-        cover = thumbnails[-1]["url"] if thumbnails else None
+        cover = _best_thumbnail(item.get("thumbnails", []))
         return Track(
             title=item.get("title", "Unknown"),
             artist_name=_first_artist_name(artists),
@@ -376,9 +667,9 @@ class YouTubeService(StreamingService):
 
     def _map_track_from_song(self, song: dict) -> Track:
         details = song.get("videoDetails", {})
-        thumbnail = details.get("thumbnail", {})
-        thumbnails = thumbnail.get("thumbnails", [])
-        cover = thumbnails[-1]["url"] if thumbnails else None
+        cover = _best_thumbnail(
+            details.get("thumbnail", {}).get("thumbnails", [])
+        )
         return Track(
             title=details.get("title", "Unknown"),
             artist_name=details.get("author", "Unknown"),
@@ -398,6 +689,7 @@ class YouTubeService(StreamingService):
             title=item.get("title", "Unknown"),
             artist_name=_first_artist_name(artists),
             year=_safe_int(item.get("year")),
+            cover_path=_best_thumbnail(item.get("thumbnails", [])),
             source=Source.YOUTUBE,
             source_id=item.get("browseId", ""),
         )
@@ -409,6 +701,7 @@ class YouTubeService(StreamingService):
             artist_name=_first_artist_name(artists),
             year=_safe_int(album.get("year")),
             track_count=len(album.get("tracks", [])),
+            cover_path=_best_thumbnail(album.get("thumbnails", [])),
             source=Source.YOUTUBE,
             source_id=album_id,
         )
@@ -416,7 +709,15 @@ class YouTubeService(StreamingService):
     def _map_artist_from_search(self, item: dict) -> Artist:
         return Artist(
             name=item.get("artist", item.get("title", "Unknown")),
+            image_path=_best_thumbnail(item.get("thumbnails", [])),
         )
+
+
+def _best_thumbnail(thumbnails: list) -> str | None:
+    """Return highest-resolution thumbnail URL."""
+    if not thumbnails:
+        return None
+    return thumbnails[-1].get("url")
 
 
 def _first_artist_name(artists: list) -> str:

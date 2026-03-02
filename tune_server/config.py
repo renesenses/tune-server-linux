@@ -67,7 +67,9 @@ class Settings(BaseSettings):
 
     # YouTube Music
     youtube_enabled: bool = False
-    youtube_oauth_json: Optional[str] = None  # Path to oauth.json
+    youtube_client_id: Optional[str] = None
+    youtube_client_secret: Optional[str] = None
+    youtube_oauth_json: Optional[str] = None  # Legacy: path to oauth.json file
     youtube_url_cache_ttl: int = 3600  # seconds (YouTube URLs expire ~6h)
 
     # Amazon Music

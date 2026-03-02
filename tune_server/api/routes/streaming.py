@@ -67,9 +67,10 @@ async def authenticate(
             kwargs["oauth_json"] = request.oauth_json
     success = await service.authenticate(**kwargs, db=deps.db)
     verification_url = getattr(service, "verification_url", None)
+    user_code = getattr(service, "user_code", None)
     if success and deps.db:
         await service.save_auth(deps.db)
-    return StreamingAuthResponse(authenticated=success, verification_url=verification_url)
+    return StreamingAuthResponse(authenticated=success, verification_url=verification_url, user_code=user_code)
 
 
 @router.post("/{service_name}/disconnect")
