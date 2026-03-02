@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import structlog
 
@@ -38,7 +37,7 @@ class AirPlayOutput(OutputTarget):
     def is_available(self) -> bool:
         return self._available
 
-    async def start(self, stream_info: AudioStreamInfo, track: Optional[Track] = None) -> None:
+    async def start(self, stream_info: AudioStreamInfo, track: Track | None = None) -> None:
         if not track or not track.file_path:
             logger.error("airplay_no_file", device=self._device_name)
             return

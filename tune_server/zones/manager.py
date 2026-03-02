@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 import structlog
 
 from tune_server.db.engine import Database
@@ -149,8 +147,7 @@ class ZoneManager:
                 data=event_data,
                 source="zone_manager",
             ))
-
-        logger.info("zone_updated", id=zone_id, **db_updates)
+            logger.info("zone_updated", id=zone_id, **db_updates)
         return zone
 
     async def delete_zone(self, zone_id: int) -> None:
@@ -165,7 +162,7 @@ class ZoneManager:
             source="zone_manager",
         ))
 
-    def get_zone(self, zone_id: int) -> Optional[ZoneInstance]:
+    def get_zone(self, zone_id: int) -> ZoneInstance | None:
         return self._zones.get(zone_id)
 
     def list_zones(self) -> list[ZoneInstance]:
@@ -173,7 +170,7 @@ class ZoneManager:
 
     async def _create_output(
         self, output_type: OutputType, device_id: str | None
-    ) -> Optional[OutputTarget]:
+    ) -> OutputTarget | None:
         # Check registered factories first
         if output_type in self._output_factory:
             return await self._output_factory[output_type](device_id)

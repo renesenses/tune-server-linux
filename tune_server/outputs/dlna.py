@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+import time
 from xml.sax.saxutils import escape as xml_escape
 
 import structlog
@@ -36,7 +36,7 @@ def _format_duration(ms: int | None) -> str:
 
 def _build_didl_lite(
     track: Track, stream_url: str, mime_type: str,
-    stream_info: Optional[AudioStreamInfo] = None,
+    stream_info: AudioStreamInfo | None = None,
 ) -> str:
     """Build DIDL-Lite XML metadata for DLNA.
 
@@ -156,7 +156,7 @@ class DlnaOutput(OutputTarget):
         fmt = AudioFormat(track.format) if track.format else None
         return fmt in _DLNA_DIRECT_FORMATS
 
-    async def start(self, stream_info: AudioStreamInfo, track: Optional[Track] = None) -> None:
+    async def start(self, stream_info: AudioStreamInfo, track: Track | None = None) -> None:
         self._direct_url = False
 
         try:
@@ -338,16 +338,15 @@ class DlnaOutput(OutputTarget):
         Returns the time in seconds from start() to first media_position > 0,
         or None if timeout (10s).
         """
-        import time as _time
-        start = _time.monotonic()
+        start = time.monotonic()
         deadline = start + 10.0
         dmr = self._device
-        while _time.monotonic() < deadline:
+        while time.monotonic() < deadline:
             try:
                 await asyncio.wait_for(dmr.async_update(do_ping=False), timeout=2)
                 pos = dmr.media_position
                 if pos is not None and pos > 0:
-                    latency = _time.monotonic() - start
+                    latency = time.monotonic() - start
                     logger.info("dlna_latency_measured", device=self.name, latency_s=round(latency, 2))
                     return latency
             except Exception:

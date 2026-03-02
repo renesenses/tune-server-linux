@@ -43,6 +43,20 @@ def test_group_id_settable(zone_instance):
     assert zone_instance.group_id is None
 
 
+def test_sync_delay_ms_property(zone_instance):
+    assert zone_instance.sync_delay_ms == 0
+    zone_instance.sync_delay_ms = 250
+    assert zone_instance.sync_delay_ms == 250
+    zone_instance.sync_delay_ms = -100
+    assert zone_instance.sync_delay_ms == -100
+
+
+def test_to_model_includes_sync_delay(zone_instance):
+    zone_instance.sync_delay_ms = 150
+    model = zone_instance.to_model()
+    assert model.sync_delay_ms == 150
+
+
 async def test_cleanup(zone_instance):
     await zone_instance.cleanup()
     # Player stop and output close should have been called

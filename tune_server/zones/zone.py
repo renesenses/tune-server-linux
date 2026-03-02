@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 import structlog
 
@@ -24,8 +23,8 @@ class ZoneInstance:
         output_type: OutputType,
         output: OutputTarget,
         event_bus: EventBus,
-        queue_repo: Optional[PlayQueueRepo] = None,
-        zone_repo: Optional[ZoneRepo] = None,
+        queue_repo: PlayQueueRepo | None = None,
+        zone_repo: ZoneRepo | None = None,
     ) -> None:
         self._zone_id = zone_id
         self._name = name
@@ -87,7 +86,7 @@ class ZoneInstance:
         return self._player.state
 
     @property
-    def current_track(self) -> Optional[Track]:
+    def current_track(self) -> Track | None:
         return self._player.current_track
 
     @property

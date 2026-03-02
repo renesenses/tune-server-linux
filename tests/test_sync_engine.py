@@ -8,7 +8,7 @@ import pytest
 
 from tune_server.models import PlaybackState
 from tune_server.zones.group import GroupManager, ZoneGroup
-from tune_server.zones.sync import CORRECTION_COOLDOWN_S, DRIFT_THRESHOLD_MS, SyncEngine
+from tune_server.zones.sync import SyncEngine
 
 
 def _make_mock_zone(zone_id, state=PlaybackState.PLAYING, position_ms=10000):
@@ -16,6 +16,9 @@ def _make_mock_zone(zone_id, state=PlaybackState.PLAYING, position_ms=10000):
     zone.zone_id = zone_id
     zone.player = AsyncMock()
     zone.player.state = state
+    zone.sync_delay_ms = 0
+    zone.output = AsyncMock()
+    zone.output.get_position_ms = AsyncMock(return_value=position_ms)
     type(zone).position_ms = PropertyMock(return_value=position_ms)
     return zone
 
@@ -62,7 +65,7 @@ async def test_sync_leader_position_zero(gm, event_bus):
 
 async def test_sync_within_threshold(gm, event_bus):
     leader = _make_mock_zone(1, position_ms=10000)
-    follower = _make_mock_zone(2, position_ms=10500)  # 500ms drift < 1000ms threshold
+    follower = _make_mock_zone(2, position_ms=10400)  # 400ms drift < 500ms threshold
     group = _make_group(leader, [follower])
 
     engine = SyncEngine(gm)
@@ -105,6 +108,60 @@ async def test_sync_after_play_cooldown(gm, event_bus):
     engine = SyncEngine(gm)
     await engine._sync_group(group)
     follower.player.seek.assert_not_awaited()
+
+
+async def test_sync_with_positive_offset(gm, event_bus):
+    leader = _make_mock_zone(1, position_ms=10000)
+    follower = _make_mock_zone(2, position_ms=12000)
+    follower.sync_delay_ms = 500
+    group = _make_group(leader, [follower])
+
+    engine = SyncEngine(gm)
+    await engine._sync_group(group)
+    follower.player.seek.assert_awaited_once_with(10500)
+
+
+async def test_sync_with_negative_offset(gm, event_bus):
+    leader = _make_mock_zone(1, position_ms=10000)
+    follower = _make_mock_zone(2, position_ms=12000)
+    follower.sync_delay_ms = -500
+    group = _make_group(leader, [follower])
+
+    engine = SyncEngine(gm)
+    await engine._sync_group(group)
+    follower.player.seek.assert_awaited_once_with(9500)
+
+
+async def test_get_zone_position_ms_from_output(gm):
+    engine = SyncEngine(gm)
+    zone = _make_mock_zone(1, position_ms=3000)
+    zone.output.get_position_ms = AsyncMock(return_value=5000)
+    result = await engine._get_zone_position_ms(zone)
+    assert result == 5000
+
+
+async def test_get_zone_position_ms_fallback(gm):
+    engine = SyncEngine(gm)
+    zone = _make_mock_zone(1, position_ms=3000)
+    zone.output.get_position_ms = AsyncMock(return_value=-1)
+    result = await engine._get_zone_position_ms(zone)
+    assert result == 3000
+
+
+async def test_has_active_groups(gm, event_bus):
+    leader_playing = _make_mock_zone(1, state=PlaybackState.PLAYING)
+    follower = _make_mock_zone(2)
+    group = _make_group(leader_playing, [follower])
+    gm._groups[group.group_id] = group
+
+    engine = SyncEngine(gm)
+    assert engine._has_active_groups() is True
+
+    gm._groups.clear()
+    leader_stopped = _make_mock_zone(3, state=PlaybackState.STOPPED)
+    group2 = _make_group(leader_stopped, [follower])
+    gm._groups[group2.group_id] = group2
+    assert engine._has_active_groups() is False
 
 
 async def test_start_stop(gm):

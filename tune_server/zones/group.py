@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Optional
 
 import structlog
 
@@ -151,10 +150,10 @@ class GroupManager:
         self._event_bus = event_bus
         self._groups: dict[str, ZoneGroup] = {}
 
-    def get_group(self, group_id: str) -> Optional[ZoneGroup]:
+    def get_group(self, group_id: str) -> ZoneGroup | None:
         return self._groups.get(group_id)
 
-    def get_group_for_zone(self, zone_id: int) -> Optional[ZoneGroup]:
+    def get_group_for_zone(self, zone_id: int) -> ZoneGroup | None:
         for group in self._groups.values():
             if zone_id in group.zone_ids:
                 return group

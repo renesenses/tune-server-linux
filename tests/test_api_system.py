@@ -15,6 +15,11 @@ async def test_config(app_client):
     assert "music_dirs" in data
     assert "api_port" in data
     assert "stream_port" in data
+    assert "sync_poll_playing_interval" in data
+    assert "sync_poll_idle_interval" in data
+    assert "sync_drift_threshold_ms" in data
+    assert "sync_correction_cooldown_s" in data
+    assert "sync_dlna_default_buffer_s" in data
 
 
 async def test_scan_trigger(app_client):

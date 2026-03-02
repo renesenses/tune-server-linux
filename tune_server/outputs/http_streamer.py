@@ -10,7 +10,6 @@ import structlog
 from aiohttp import web
 
 from tune_server.audio.formats import dsd_mime_from_extension, mime_type_for_format
-from tune_server.models import AudioFormat
 from tune_server.config import settings
 from tune_server.models import AudioFormat, AudioStreamInfo
 

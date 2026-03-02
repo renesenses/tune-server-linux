@@ -105,3 +105,51 @@ async def test_list_groups(app_client_with_zones):
     resp = await app_client_with_zones.get("/api/v1/zones/groups/list")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+async def test_create_zone_with_sync_delay(app_client_with_zones):
+    resp = await app_client_with_zones.post(
+        "/api/v1/zones",
+        json={"name": "Sync Zone", "output_type": "local", "sync_delay_ms": 150},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["sync_delay_ms"] == 150
+
+
+async def test_update_zone_sync_delay(app_client_with_zones):
+    create_resp = await app_client_with_zones.post(
+        "/api/v1/zones",
+        json={"name": "Update Zone", "output_type": "local"},
+    )
+    zone_id = create_resp.json()["id"]
+
+    resp = await app_client_with_zones.put(
+        f"/api/v1/zones/{zone_id}",
+        json={"name": "Update Zone", "sync_delay_ms": -200},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["sync_delay_ms"] == -200
+
+
+async def test_patch_zone_sync_delay(app_client_with_zones):
+    create_resp = await app_client_with_zones.post(
+        "/api/v1/zones",
+        json={"name": "Patch Zone", "output_type": "local"},
+    )
+    zone_id = create_resp.json()["id"]
+
+    resp = await app_client_with_zones.patch(
+        f"/api/v1/zones/{zone_id}",
+        json={"sync_delay_ms": 300},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["sync_delay_ms"] == 300
+
+
+async def test_create_zone_default_sync_delay(app_client_with_zones):
+    resp = await app_client_with_zones.post(
+        "/api/v1/zones",
+        json={"name": "Default Zone", "output_type": "local"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["sync_delay_ms"] == 0

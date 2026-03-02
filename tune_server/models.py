@@ -118,15 +118,15 @@ class QueueItem(BaseModel):
 
 
 class Zone(BaseModel):
-    id: Optional[int] = None
+    id: int | None = None
     name: str
     output_type: OutputType = OutputType.LOCAL
-    output_device_id: Optional[str] = None
+    output_device_id: str | None = None
     volume: float = Field(default=0.5, ge=0.0, le=1.0)
-    group_id: Optional[str] = None
+    group_id: str | None = None
     sync_delay_ms: int = 0
     state: PlaybackState = PlaybackState.STOPPED
-    current_track: Optional[Track] = None
+    current_track: Track | None = None
     position_ms: int = 0
     queue_length: int = 0
 
@@ -236,15 +236,15 @@ class QueueAddRequest(BaseModel):
 
 
 class ZoneCreateRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=255)
     output_type: OutputType = OutputType.LOCAL
-    output_device_id: Optional[str] = None
-    sync_delay_ms: int = 0
+    output_device_id: str | None = None
+    sync_delay_ms: int = Field(default=0, ge=-10000, le=10000)
 
 
 class ZoneUpdateRequest(BaseModel):
-    name: Optional[str] = None
-    sync_delay_ms: Optional[int] = None
+    name: str | None = None
+    sync_delay_ms: int | None = Field(default=None, ge=-10000, le=10000)
 
 
 class ZoneGroupRequest(BaseModel):
@@ -358,6 +358,11 @@ class SystemConfigResponse(BaseModel):
     spotify_enabled: bool = False
     deezer_enabled: bool = False
     discovery_enabled: bool
+    sync_poll_playing_interval: float = 1.0
+    sync_poll_idle_interval: float = 10.0
+    sync_drift_threshold_ms: int = 500
+    sync_correction_cooldown_s: float = 15.0
+    sync_dlna_default_buffer_s: float = 3.0
 
 
 class ScanStatusResponse(BaseModel):

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,10 +24,10 @@ class Settings(BaseSettings):
 
     # Security
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
-    api_key: Optional[str] = None  # None = no auth required (backward-compatible)
+    api_key: str | None = None  # None = no auth required (backward-compatible)
 
     # Web UI (built SPA served as static files, empty = disabled)
-    web_dir: Optional[str] = None
+    web_dir: str | None = None
 
     # Server
     api_host: str = "0.0.0.0"
@@ -69,14 +68,14 @@ class Settings(BaseSettings):
     tidal_quality: str = "HI_RES_LOSSLESS"  # LOW, HIGH, LOSSLESS, HI_RES_LOSSLESS
 
     qobuz_enabled: bool = False
-    qobuz_app_id: Optional[str] = None
-    qobuz_app_secret: Optional[str] = None
+    qobuz_app_id: str | None = None
+    qobuz_app_secret: str | None = None
 
     # YouTube Music
     youtube_enabled: bool = False
-    youtube_client_id: Optional[str] = None
-    youtube_client_secret: Optional[str] = None
-    youtube_oauth_json: Optional[str] = None  # Legacy: path to oauth.json file
+    youtube_client_id: str | None = None
+    youtube_client_secret: str | None = None
+    youtube_oauth_json: str | None = None  # Legacy: path to oauth.json file
     youtube_url_cache_ttl: int = 3600  # seconds (YouTube URLs expire ~6h)
 
     # Amazon Music
@@ -86,13 +85,13 @@ class Settings(BaseSettings):
 
     # Spotify
     spotify_enabled: bool = False
-    spotify_client_id: Optional[str] = None
+    spotify_client_id: str | None = None
     spotify_redirect_uri: str = "http://localhost:8888/api/v1/streaming/spotify/callback"
 
     # Deezer
     deezer_enabled: bool = False
-    deezer_app_id: Optional[str] = None
-    deezer_app_secret: Optional[str] = None
+    deezer_app_id: str | None = None
+    deezer_app_secret: str | None = None
     deezer_redirect_uri: str = "http://localhost:8888/api/v1/streaming/deezer/callback"
 
     # Discovery

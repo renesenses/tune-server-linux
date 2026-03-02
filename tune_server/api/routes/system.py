@@ -48,6 +48,11 @@ async def get_config():
         spotify_enabled=settings.spotify_enabled,
         deezer_enabled=settings.deezer_enabled,
         discovery_enabled=settings.discovery_enabled,
+        sync_poll_playing_interval=settings.sync_poll_playing_interval,
+        sync_poll_idle_interval=settings.sync_poll_idle_interval,
+        sync_drift_threshold_ms=settings.sync_drift_threshold_ms,
+        sync_correction_cooldown_s=settings.sync_correction_cooldown_s,
+        sync_dlna_default_buffer_s=settings.sync_dlna_default_buffer_s,
     )
 
 

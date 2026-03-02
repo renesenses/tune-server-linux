@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import struct
 import time
-from typing import Optional
 
 import numpy as np
 import sounddevice as sd
@@ -41,7 +39,7 @@ class LocalOutput(OutputTarget):
     def is_available(self) -> bool:
         return self._available
 
-    async def start(self, stream_info: AudioStreamInfo, track: Optional[Track] = None) -> None:
+    async def start(self, stream_info: AudioStreamInfo, track: Track | None = None) -> None:
         await self.stop()
         self._stream_info = stream_info
         self._paused = False
