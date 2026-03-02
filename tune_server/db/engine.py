@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 import aiosqlite
@@ -8,6 +10,7 @@ import structlog
 logger = structlog.get_logger()
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+_MAX_BACKUPS = 5
 
 
 class Database:
@@ -23,6 +26,10 @@ class Database:
 
     async def connect(self) -> None:
         logger.info("database_connecting", path=self._db_path)
+
+        # Backup database before any schema changes
+        self._backup_database()
+
         self._db = await aiosqlite.connect(self._db_path)
         self._db.row_factory = aiosqlite.Row
 
@@ -33,6 +40,45 @@ class Database:
 
         await self._init_schema()
         logger.info("database_connected", path=self._db_path)
+
+    def _backup_database(self) -> None:
+        """Create a timestamped backup of the database, keeping last N backups."""
+        db_file = Path(self._db_path)
+        if not db_file.exists():
+            return
+
+        backup_dir = db_file.parent / "backups"
+        backup_dir.mkdir(exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"{db_file.stem}_{timestamp}{db_file.suffix}"
+
+        try:
+            shutil.copy2(str(db_file), str(backup_path))
+            # Also copy WAL and SHM files if they exist
+            for suffix in ("-wal", "-shm"):
+                wal_file = db_file.with_name(db_file.name + suffix)
+                if wal_file.exists():
+                    shutil.copy2(str(wal_file), str(backup_path) + suffix)
+            logger.info("database_backup_created", path=str(backup_path))
+        except Exception:
+            logger.exception("database_backup_error")
+            return
+
+        # Prune old backups, keep only the last N
+        backups = sorted(backup_dir.glob(f"{db_file.stem}_*{db_file.suffix}"))
+        while len(backups) > _MAX_BACKUPS:
+            old = backups.pop(0)
+            try:
+                old.unlink()
+                # Remove associated WAL/SHM files
+                for suffix in ("-wal", "-shm"):
+                    wal = old.with_name(old.name + suffix)
+                    if wal.exists():
+                        wal.unlink()
+                logger.info("database_backup_pruned", path=str(old))
+            except Exception:
+                pass
 
     async def _init_schema(self) -> None:
         schema_sql = _SCHEMA_PATH.read_text()
