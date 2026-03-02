@@ -176,6 +176,8 @@ async def completeness_stats():
         albums_without_year=await deps.album_repo.count_without_year(),
         total_artists=await deps.artist_repo.count(),
         artists_without_image=await deps.artist_repo.count_without_image(),
+        total_tracks=await deps.track_repo.count(),
+        tracks_without_artist=await deps.track_repo.count_without_artist(),
     )
 
 

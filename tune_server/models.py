@@ -416,6 +416,8 @@ class CompletenessStats(BaseModel):
     albums_without_year: int = 0
     total_artists: int = 0
     artists_without_image: int = 0
+    total_tracks: int = 0
+    tracks_without_artist: int = 0
 
 
 # --- Browse by directory models ---

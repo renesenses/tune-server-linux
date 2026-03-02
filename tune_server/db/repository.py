@@ -491,6 +491,18 @@ class TrackRepo:
             for r in rows
         ]
 
+    async def count_without_artist(self) -> int:
+        row = await self._db.fetchone(
+            "SELECT COUNT(*) as cnt FROM tracks WHERE artist_id IS NULL"
+        )
+        return row["cnt"]
+
+    async def list_without_artist(self) -> list[Track]:
+        rows = await self._db.fetchall(
+            f"{self._SELECT} WHERE t.artist_id IS NULL ORDER BY t.title",
+        )
+        return [_row_to_track(r) for r in rows]
+
     async def count_by_root(self, root_dir: str) -> int:
         """Count all tracks under a root directory."""
         prefix = root_dir.rstrip("/") + "/"
