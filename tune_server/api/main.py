@@ -3,6 +3,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from starlette.types import ASGIApp, Receive, Scope, Send
+
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -78,17 +80,68 @@ def create_api_app() -> FastAPI:
 
         index_html = web_dir / "index.html"
 
-        @app.get("/{full_path:path}")
-        async def serve_spa(full_path: str):
-            # Never intercept API or docs routes
-            if full_path.startswith(("api/", "docs", "openapi.json", "ws")):
-                return JSONResponse(status_code=404, content={"detail": "Not found"})
-            # Try static file first
-            file_path = web_dir / full_path
-            if full_path and file_path.is_file() and file_path.resolve().is_relative_to(web_dir.resolve()):
-                return FileResponse(file_path)
-            # Fallback to index.html (SPA routing)
-            return FileResponse(index_html)
+        # SPA fallback middleware: serves index.html for non-API GET 404s
+        class _SPAFallback:
+            """Wraps the FastAPI app. For non-API GET requests that would 404,
+            serve index.html instead (SPA client-side routing)."""
+
+            def __init__(self, app: ASGIApp) -> None:
+                self.app = app
+
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                if scope["type"] != "http":
+                    await self.app(scope, receive, send)
+                    return
+
+                path = scope["path"]
+                method = scope.get("method", "GET")
+
+                # Non-GET or API/docs/ws: always pass through
+                if method != "GET" or path.startswith(("/api/", "/docs", "/openapi.json", "/ws")):
+                    await self.app(scope, receive, send)
+                    return
+
+                # Serve static file from web_dir if it exists (favicon, etc.)
+                rel = path.lstrip("/")
+                if rel:
+                    file_path = web_dir / rel
+                    if file_path.is_file() and file_path.resolve().is_relative_to(web_dir.resolve()):
+                        response = FileResponse(file_path)
+                        await response(scope, receive, send)
+                        return
+
+                # Let FastAPI try first; if it 404s, serve index.html
+                status_code = 0
+                headers_sent = False
+                buffered: list = []
+
+                async def _intercept_send(message):
+                    nonlocal status_code, headers_sent
+                    if message["type"] == "http.response.start":
+                        status_code = message.get("status", 200)
+                        if status_code != 404:
+                            headers_sent = True
+                            await send(message)
+                        else:
+                            buffered.append(message)
+                    elif message["type"] == "http.response.body":
+                        if headers_sent:
+                            await send(message)
+                        else:
+                            buffered.append(message)
+
+                await self.app(scope, receive, _intercept_send)
+
+                if status_code == 404 and not headers_sent:
+                    # Serve SPA index.html instead of 404
+                    response = FileResponse(index_html)
+                    await response(scope, receive, send)
+                elif not headers_sent and buffered:
+                    # Flush buffered messages (shouldn't happen)
+                    for msg in buffered:
+                        await send(msg)
+
+        app = _SPAFallback(app)  # type: ignore[assignment]
     else:
         @app.get("/")
         async def root():
