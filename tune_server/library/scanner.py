@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 
 import structlog
@@ -14,6 +15,26 @@ from tune_server.config import settings
 from tune_server.models import Track
 
 logger = structlog.get_logger()
+
+
+AUDIO_HASH_SAMPLE_SIZE = 64 * 1024  # 64KB sample for audio hash
+
+
+def compute_audio_hash(file_path: str) -> str:
+    """Compute MD5 hash of a 64KB audio sample from the middle of the file.
+
+    Skips metadata (typically at start/end) by reading from 25% into the file.
+    """
+    path = Path(file_path)
+    file_size = path.stat().st_size
+    offset = file_size // 4  # Start at 25% to skip metadata headers
+
+    md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        f.seek(offset)
+        data = f.read(AUDIO_HASH_SAMPLE_SIZE)
+        md5.update(data)
+    return md5.hexdigest()
 
 
 class LibraryScanner:
@@ -177,10 +198,12 @@ class LibraryScanner:
                 album.cover_path = cover_path
                 await self._album_repo.update(album)
 
-        # Skip duplicate: same album + disc + track number + format already exists
-        # (happens when same files are accessible from multiple mount points)
-        # Different formats (e.g. FLAC vs DSD) are kept as separate tracks
-        if await self._track_repo.exists_in_album(album.id, metadata.disc_number, metadata.track_number, metadata.format):
+        # Compute audio content hash for dedup
+        audio_hash = await asyncio.to_thread(compute_audio_hash, file_path)
+
+        # Skip if identical audio content already exists in the library
+        existing = await self._track_repo.find_by_audio_hash(audio_hash)
+        if existing:
             return False
 
         # Create track
@@ -199,9 +222,10 @@ class LibraryScanner:
         )
         track_id = await self._track_repo.create(track)
 
-        # Store file mtime for incremental scanning
+        # Store file mtime and audio hash
         mtime = Path(file_path).stat().st_mtime
         await self._track_repo.update_mtime(file_path, mtime)
+        await self._track_repo.update_audio_hash(file_path, audio_hash)
 
         # Update album track count
         await self._album_repo.update_track_count(album.id)

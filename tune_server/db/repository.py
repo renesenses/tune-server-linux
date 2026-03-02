@@ -379,35 +379,30 @@ class TrackRepo:
         await self._db.commit()
 
     async def deduplicate(self) -> int:
-        """Remove duplicate tracks (same album + disc + track_number + format), keeping the lowest id.
-        Tracks with different formats (e.g. FLAC vs DSD) are kept."""
+        """Remove duplicate tracks (same audio_hash), keeping the lowest id."""
         cursor = await self._db.execute(
             """DELETE FROM tracks WHERE id NOT IN (
                 SELECT MIN(id) FROM tracks
-                WHERE album_id IS NOT NULL
-                GROUP BY album_id, disc_number, track_number, format
+                WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
+                GROUP BY audio_hash
             ) AND id IN (
                 SELECT t.id FROM tracks t
                 JOIN (
-                    SELECT album_id, disc_number, track_number, format
-                    FROM tracks WHERE album_id IS NOT NULL
-                    GROUP BY album_id, disc_number, track_number, format
+                    SELECT audio_hash
+                    FROM tracks WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
+                    GROUP BY audio_hash
                     HAVING COUNT(*) > 1
-                ) d ON t.album_id = d.album_id
-                    AND t.disc_number = d.disc_number
-                    AND t.track_number = d.track_number
-                    AND t.format IS d.format
+                ) d ON t.audio_hash = d.audio_hash
             )""",
         )
         await self._db.commit()
         return cursor.rowcount
 
-    async def exists_in_album(self, album_id: int, disc_number: int, track_number: int, fmt: str | None = None) -> bool:
+    async def find_by_audio_hash(self, audio_hash: str) -> Optional[Track]:
         row = await self._db.fetchone(
-            "SELECT 1 FROM tracks WHERE album_id = ? AND disc_number = ? AND track_number = ? AND format IS ?",
-            (album_id, disc_number, track_number, fmt),
+            f"{self._SELECT} WHERE t.audio_hash = ? LIMIT 1", (audio_hash,)
         )
-        return row is not None
+        return _row_to_track(row) if row else None
 
     async def get_mtime(self, file_path: str) -> Optional[float]:
         row = await self._db.fetchone(
@@ -418,6 +413,12 @@ class TrackRepo:
     async def update_mtime(self, file_path: str, mtime: float) -> None:
         await self._db.execute(
             "UPDATE tracks SET file_mtime = ? WHERE file_path = ?", (mtime, file_path)
+        )
+        await self._db.commit()
+
+    async def update_audio_hash(self, file_path: str, audio_hash: str) -> None:
+        await self._db.execute(
+            "UPDATE tracks SET audio_hash = ? WHERE file_path = ?", (audio_hash, file_path)
         )
         await self._db.commit()
 

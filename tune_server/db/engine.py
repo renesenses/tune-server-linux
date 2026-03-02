@@ -46,6 +46,7 @@ class Database:
         migrations = [
             "ALTER TABLE tracks ADD COLUMN file_mtime REAL",
             "ALTER TABLE zones ADD COLUMN queue_json TEXT",
+            "ALTER TABLE tracks ADD COLUMN audio_hash TEXT",
         ]
         for sql in migrations:
             try:
