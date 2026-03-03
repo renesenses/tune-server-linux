@@ -225,12 +225,24 @@ class QobuzService(StreamingService):
 
     async def get_playlist_tracks(self, playlist_id: str) -> list[Track]:
         try:
-            data = await self._api_get("playlist/get", {
-                "playlist_id": playlist_id,
-                "extra": "tracks",
-            })
-            items = data.get("tracks", {}).get("items", [])
-            return [self._map_track(t) for t in items]
+            all_items: list[dict] = []
+            offset = 0
+            limit = 500
+            while True:
+                data = await self._api_get("playlist/get", {
+                    "playlist_id": playlist_id,
+                    "extra": "tracks",
+                    "limit": limit,
+                    "offset": offset,
+                })
+                tracks_data = data.get("tracks", {})
+                items = tracks_data.get("items", [])
+                all_items.extend(items)
+                total = tracks_data.get("total", 0)
+                if len(all_items) >= total or len(items) == 0:
+                    break
+                offset += len(items)
+            return [self._map_track(t) for t in all_items]
         except Exception:
             logger.exception("qobuz_playlist_tracks_error", playlist_id=playlist_id)
             return []
