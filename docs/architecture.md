@@ -286,6 +286,7 @@ DLNA MediaServers are browsable via the `/network/media-servers` API — their C
 The library supports full metadata editing and artwork management:
 
 - **Metadata editing**: PUT endpoints for tracks, albums, and artists update fields in SQLite
+- **Tag writing**: changes to title, artist, and album are written back to audio files via mutagen (FLAC, MP3/ID3, M4A/MP4, OGG Vorbis). Runs in a thread pool (`asyncio.to_thread`) to avoid blocking the event loop
 - **Artwork pipeline**: embedded art extraction → MusicBrainz fallback → manual upload
 - **Duplicate detection**: album merge-duplicates endpoint identifies same title+artist albums and consolidates tracks
 - **Completeness stats**: tracks albums/artists missing cover art, genre, year, or images

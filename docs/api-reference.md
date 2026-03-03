@@ -36,7 +36,7 @@ Get a single track by ID.
 
 ### PUT /library/tracks/{id}
 
-Update track metadata.
+Update track metadata. For local tracks, also writes changed tags (title, artist) to the audio file.
 
 **Request Body:**
 ```json
@@ -78,7 +78,7 @@ Get all tracks in an album, ordered by disc/track number.
 
 ### PUT /library/albums/{id}
 
-Update album metadata.
+Update album metadata. When the title is changed, writes the album tag to all local tracks in the album.
 
 **Request Body:**
 ```json
@@ -105,6 +105,20 @@ List all artists.
 - `offset` (int, default 0) — Skip N results (must be >= 0)
 
 **Response:** `Artist[]`
+
+### POST /library/artists
+
+Create a new artist.
+
+**Request Body:**
+```json
+{
+    "name": "Artist Name",
+    "sort_name": "Name, Artist"
+}
+```
+
+**Response:** `Artist` (201 Created)
 
 ### GET /library/artists/{id}
 

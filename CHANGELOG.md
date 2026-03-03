@@ -5,12 +5,18 @@ All notable changes to Tune Server.
 ## Unreleased
 
 ### Added
+- **Tag writing**: `PUT /library/tracks/{id}` and `PUT /library/albums/{id}` now write metadata (title, artist, album) to audio files via mutagen (FLAC, MP3, M4A, OGG)
+- **Create artist endpoint**: `POST /library/artists` to create new artists
+- **Hot add/remove music directories**: manage music directories via API without restart
 - **Multi-room sync improvements**: adaptive polling (1s active / 10s idle), output position queries (DLNA GetPositionInfo, AirPlay metadata, local elapsed time), configurable sync parameters via environment variables
 - **Per-zone sync offset**: `sync_delay_ms` field on zones for fine-tuning multi-room synchronization
 - **Adaptive DLNA latency**: measure and cache actual renderer startup latency instead of fixed 3s delay
 - **PATCH endpoint for zones**: partial update support for zone configuration
 - **Getting Started guide**: step-by-step guide from install to first playback
 - **DLNA MediaServer browse guide**: documentation for browsing ContentDirectory
+
+### Fixed
+- **Qobuz playlist pagination**: playlists with more than 50 tracks now fetch all items via pagination
 
 ### Changed
 - Sync engine drift threshold reduced from 1000ms to 500ms (configurable)
