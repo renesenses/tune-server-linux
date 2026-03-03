@@ -190,3 +190,71 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
     except Exception:
         logger.exception("metadata_read_error", path=file_path)
         return None
+
+
+def write_tags(file_path: str, *, title: str | None = None, artist: str | None = None,
+               album: str | None = None) -> bool:
+    """Write metadata tags to an audio file. Returns True on success."""
+    path = Path(file_path)
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        return False
+
+    try:
+        audio = MutagenFile(file_path)
+        if audio is None:
+            return False
+
+        if isinstance(audio, FLAC):
+            if title is not None:
+                audio["title"] = title
+            if artist is not None:
+                audio["artist"] = artist
+            if album is not None:
+                audio["album"] = album
+
+        elif isinstance(audio, MP3):
+            from mutagen.id3 import TIT2, TPE1, TALB
+            if audio.tags is None:
+                audio.add_tags()
+            if title is not None:
+                audio.tags["TIT2"] = TIT2(encoding=3, text=[title])
+            if artist is not None:
+                audio.tags["TPE1"] = TPE1(encoding=3, text=[artist])
+            if album is not None:
+                audio.tags["TALB"] = TALB(encoding=3, text=[album])
+
+        elif isinstance(audio, MP4):
+            if title is not None:
+                audio["\xa9nam"] = [title]
+            if artist is not None:
+                audio["\xa9ART"] = [artist]
+            if album is not None:
+                audio["\xa9alb"] = [album]
+
+        elif isinstance(audio, OggVorbis):
+            if title is not None:
+                audio["title"] = [title]
+            if artist is not None:
+                audio["artist"] = [artist]
+            if album is not None:
+                audio["album"] = [album]
+
+        else:
+            # Generic Vorbis-comment style
+            tags = audio.tags
+            if tags is None:
+                return False
+            if title is not None:
+                tags["title"] = [title]
+            if artist is not None:
+                tags["artist"] = [artist]
+            if album is not None:
+                tags["album"] = [album]
+
+        audio.save()
+        logger.info("tags_written", path=file_path, title=title, artist=artist, album=album)
+        return True
+
+    except Exception:
+        logger.exception("tag_write_error", path=file_path)
+        return False

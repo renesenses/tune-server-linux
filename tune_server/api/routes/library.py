@@ -13,6 +13,7 @@ from tune_server.config import settings
 from tune_server.db.repository import full_text_search
 from tune_server.event_bus import Event, EventType
 from tune_server.library.artwork import copy_cover_to_album_folder, fetch_cover_from_musicbrainz, get_album_artwork, save_artwork
+from tune_server.library.metadata_reader import write_tags
 from tune_server.models import (
     Album,
     AlbumUpdateRequest,
@@ -69,6 +70,15 @@ async def list_artists(limit: int = Query(100, le=500), offset: int = Query(0, g
     return await deps.artist_repo.list(limit=limit, offset=offset)
 
 
+@router.post("/artists", response_model=Artist, status_code=201)
+async def create_artist(req: ArtistUpdateRequest):
+    if not req.name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    artist = Artist(name=req.name, sort_name=req.sort_name, bio=req.bio)
+    artist_id = await deps.artist_repo.create(artist)
+    return await deps.artist_repo.get(artist_id)
+
+
 @router.get("/artists/{artist_id}", response_model=Artist)
 async def get_artist(artist_id: int):
     artist = await deps.artist_repo.get(artist_id)
@@ -107,6 +117,19 @@ async def update_track(track_id: int, req: TrackUpdateRequest):
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")
     updates = req.model_dump(exclude_none=True)
+
+    # Write tags to file if relevant fields changed
+    if track.file_path and track.source == "local":
+        tag_updates = {}
+        if req.title is not None:
+            tag_updates["title"] = req.title
+        if req.artist_id is not None:
+            artist = await deps.artist_repo.get(req.artist_id)
+            if artist:
+                tag_updates["artist"] = artist.name
+        if tag_updates:
+            await asyncio.to_thread(write_tags, track.file_path, **tag_updates)
+
     for field, value in updates.items():
         setattr(track, field, value)
     await deps.track_repo.update(track)
@@ -127,6 +150,14 @@ async def update_album(album_id: int, req: AlbumUpdateRequest):
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
     updates = req.model_dump(exclude_none=True)
+
+    # Write album tag to all tracks in the album
+    if req.title is not None:
+        tracks = await deps.track_repo.list_by_album(album_id)
+        for t in tracks:
+            if t.file_path and t.source == "local":
+                await asyncio.to_thread(write_tags, t.file_path, album=req.title)
+
     for field, value in updates.items():
         setattr(album, field, value)
     await deps.album_repo.update(album)
