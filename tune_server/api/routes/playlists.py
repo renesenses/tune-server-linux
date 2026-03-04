@@ -84,7 +84,33 @@ async def add_playlist_tracks(playlist_id: int, req: PlaylistAddTracksRequest):
     existing = await deps.playlist_repo.get(playlist_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    await deps.playlist_repo.add_tracks(playlist_id, req.track_ids, req.position)
+
+    all_track_ids = list(req.track_ids)
+
+    # Upsert streaming tracks into the tracks table
+    for st in req.streaming_tracks:
+        track = await deps.track_repo.get_by_source(st.source, st.source_id)
+        if not track:
+            track_obj = Track(
+                title=st.title,
+                artist_name=st.artist_name,
+                album_title=st.album_title,
+                duration_ms=st.duration_ms,
+                format=st.format,
+                sample_rate=st.sample_rate,
+                bit_depth=st.bit_depth,
+                channels=st.channels,
+                cover_path=st.cover_path,
+                source=st.source,
+                source_id=st.source_id,
+            )
+            track_id = await deps.track_repo.create(track_obj)
+        else:
+            track_id = track.id
+        all_track_ids.append(track_id)
+
+    if all_track_ids:
+        await deps.playlist_repo.add_tracks(playlist_id, all_track_ids, req.position)
     deps.event_bus.emit_nowait(Event(
         type=EventType.PLAYLIST_TRACKS_CHANGED,
         data={"playlist_id": playlist_id},

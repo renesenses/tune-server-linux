@@ -285,8 +285,23 @@ class PlaylistUpdateRequest(BaseModel):
     description: Optional[str] = None
 
 
+class StreamingTrackInfo(BaseModel):
+    source: Source
+    source_id: str
+    title: str
+    artist_name: Optional[str] = None
+    album_title: Optional[str] = None
+    duration_ms: int = 0
+    format: Optional[AudioFormat] = None
+    sample_rate: Optional[int] = None
+    bit_depth: Optional[int] = None
+    channels: int = 2
+    cover_path: Optional[str] = None
+
+
 class PlaylistAddTracksRequest(BaseModel):
-    track_ids: list[int]
+    track_ids: list[int] = Field(default_factory=list)
+    streaming_tracks: list[StreamingTrackInfo] = Field(default_factory=list)
     position: Optional[int] = None  # None = append
 
 

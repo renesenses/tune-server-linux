@@ -323,6 +323,13 @@ class TrackRepo:
         row = await self._db.fetchone(f"{self._SELECT} WHERE t.file_path = ?", (file_path,))
         return _row_to_track(row) if row else None
 
+    async def get_by_source(self, source: str, source_id: str) -> Optional[Track]:
+        row = await self._db.fetchone(
+            f"{self._SELECT} WHERE t.source = ? AND t.source_id = ?",
+            (source, source_id),
+        )
+        return _row_to_track(row) if row else None
+
     async def list(self, limit: int = 100, offset: int = 0) -> list[Track]:
         rows = await self._db.fetchall(
             f"{self._SELECT} ORDER BY t.title LIMIT ? OFFSET ?",
