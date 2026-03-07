@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi.responses import PlainTextResponse
 
 from tune_server.api.deps import deps
 from tune_server.event_bus import Event, EventType
@@ -76,6 +77,31 @@ async def list_radios(
     if not deps.radio_repo:
         raise HTTPException(status_code=503, detail="Radio repository not available")
     return await deps.radio_repo.list(limit=limit, offset=offset, genre=genre, favorite=favorite)
+
+
+@router.get("/export.m3u", response_class=PlainTextResponse)
+async def export_radios():
+    """Export all radio stations as an M3U playlist."""
+    if not deps.radio_repo:
+        raise HTTPException(status_code=503, detail="Radio repository not available")
+    stations = await deps.radio_repo.list(limit=10000, offset=0)
+    lines = ["#EXTM3U"]
+    for s in stations:
+        logo = ""
+        if s.logo_url and (s.logo_url.startswith("http://") or s.logo_url.startswith("https://")):
+            logo = s.logo_url
+        genre = f" ({s.genre})" if s.genre else ""
+        if logo:
+            extinf = f'#EXTINF:-1 tvg-logo="{logo}",{s.name}{genre}'
+        else:
+            extinf = f'#EXTINF:-1,{s.name}{genre}'
+        lines.append(extinf)
+        lines.append(s.stream_url)
+    return PlainTextResponse(
+        "\n".join(lines) + "\n",
+        media_type="audio/x-mpegurl",
+        headers={"Content-Disposition": "attachment; filename=radios.m3u"},
+    )
 
 
 @router.get("/{radio_id}", response_model=RadioStation)
