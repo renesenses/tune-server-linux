@@ -238,6 +238,19 @@ class TuneServer:
                 return None
             try:
                 import pyatv
+
+                # Load saved credentials from DB
+                if self._db:
+                    row = await self._db.execute(
+                        "SELECT credentials FROM device_credentials WHERE device_id = ?",
+                        (device_id,),
+                    )
+                    cred_row = await row.fetchone()
+                    if cred_row and cred_row[0]:
+                        for service in config.services:
+                            service.credentials = cred_row[0]
+                        logger.info("airplay_credentials_loaded", device_id=device_id)
+
                 atv = await pyatv.connect(config, asyncio.get_running_loop())
                 device = self._discovery_manager.get_device(device_id)
                 name = device.name if device else "AirPlay"

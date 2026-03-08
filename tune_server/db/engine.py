@@ -185,6 +185,16 @@ class Database:
         await self._db.commit()
 
         await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS device_credentials (
+                device_id TEXT PRIMARY KEY,
+                device_name TEXT,
+                credentials TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self._db.commit()
+
+        await self._db.execute("""
             CREATE TABLE IF NOT EXISTS radio_stations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
