@@ -124,9 +124,28 @@ def _auto_detect_web_dir() -> str | None:
     return None
 
 
+def _auto_detect_ffmpeg(name: str) -> str:
+    """Find ffmpeg/ffprobe next to executable, in cwd, or fall back to PATH."""
+    import shutil
+    import sys
+    ext = ".exe" if sys.platform == "win32" else ""
+    candidates = [
+        Path(sys.executable).parent / f"{name}{ext}",
+        Path.cwd() / f"{name}{ext}",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which(name) or name
+
+
 _raw = Settings()
 if _raw.web_dir is None:
     _raw.web_dir = _auto_detect_web_dir()
+if _raw.ffmpeg_path == "ffmpeg":
+    _raw.ffmpeg_path = _auto_detect_ffmpeg("ffmpeg")
+if _raw.ffprobe_path == "ffprobe":
+    _raw.ffprobe_path = _auto_detect_ffmpeg("ffprobe")
 settings = _raw
 
 
