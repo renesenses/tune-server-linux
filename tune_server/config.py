@@ -110,7 +110,24 @@ class Settings(BaseSettings):
     log_format: str = "console"  # console or json
 
 
-settings = Settings()
+def _auto_detect_web_dir() -> str | None:
+    """Look for a web/ folder next to the executable or working directory."""
+    import sys
+    candidates = [
+        Path(sys.executable).parent / "web",  # PyInstaller bundle
+        Path.cwd() / "web",
+        Path(__file__).resolve().parent.parent / "web",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir() and (candidate / "index.html").is_file():
+            return str(candidate)
+    return None
+
+
+_raw = Settings()
+if _raw.web_dir is None:
+    _raw.web_dir = _auto_detect_web_dir()
+settings = _raw
 
 
 def persist_env_var(key: str, value: str, env_file: str = ".env") -> None:
