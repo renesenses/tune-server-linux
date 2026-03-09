@@ -111,7 +111,7 @@ async def add_music_dir(body: MusicDirRequest):
     resolved = str(Path(body.path).resolve())
 
     if not Path(resolved).is_dir():
-        raise HTTPException(status_code=400, detail="Path does not exist or is not a directory")
+        raise HTTPException(status_code=400, detail=f"Path does not exist or is not a directory on this server: {resolved}")
 
     current = [str(Path(d).resolve()) for d in settings.music_dirs]
     if resolved in current:
