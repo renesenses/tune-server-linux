@@ -109,6 +109,14 @@ class LocalOutput(OutputTarget):
                 arr = arr.reshape(-1, info.channels)
 
             await asyncio.to_thread(self._stream.write, arr)
+        except sd.PortAudioError:
+            logger.warning("local_output_write_error_recovering")
+            # Attempt to recover by restarting the stream
+            if self._stream_info:
+                try:
+                    await self.start(self._stream_info)
+                except Exception:
+                    logger.exception("local_output_recovery_failed")
         except Exception:
             logger.exception("local_output_write_error")
 
