@@ -247,8 +247,10 @@ class TuneServer:
                     )
                     cred_row = await row.fetchone()
                     if cred_row and cred_row[0]:
-                        for service in config.services:
-                            service.credentials = cred_row[0]
+                        creds = cred_row[0]
+                        for protocol in [pyatv.Protocol.AirPlay, pyatv.Protocol.RAOP, pyatv.Protocol.Companion]:
+                            if config.get_service(protocol) is not None:
+                                config.set_credentials(protocol, creds)
                         logger.info("airplay_credentials_loaded", device_id=device_id)
 
                 atv = await pyatv.connect(config, asyncio.get_running_loop())

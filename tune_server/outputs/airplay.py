@@ -37,6 +37,10 @@ class AirPlayOutput(OutputTarget):
     def is_available(self) -> bool:
         return self._available
 
+    def supports_direct_url(self, track: Track) -> bool:
+        """AirPlay streams files natively via pyatv — always bypass the pipeline."""
+        return True
+
     async def start(self, stream_info: AudioStreamInfo, track: Track | None = None) -> None:
         if not track or not track.file_path:
             logger.error("airplay_no_file", device=self._device_name)

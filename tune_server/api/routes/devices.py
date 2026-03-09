@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
+import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from tune_server.api.deps import deps
 from tune_server.models import DiscoveredDevice, LocalAudioDevice, OutputType
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -126,15 +129,22 @@ async def submit_pairing_pin(device_id: str, req: PairPinRequest):
 
         if pairing.has_paired:
             # Save credentials to DB
-            credentials = pairing.service.credentials
+            credentials = None
+            try:
+                credentials = pairing.service.credentials
+            except Exception:
+                pass
+            logger.info("airplay_pairing_done", device_id=device_id, has_credentials=bool(credentials))
+
             if deps.db and credentials:
                 device = deps.discovery_manager.get_device(device_id) if deps.discovery_manager else None
                 name = device.name if device else device_id
                 await deps.db.execute(
                     "INSERT OR REPLACE INTO device_credentials (device_id, device_name, credentials) VALUES (?, ?, ?)",
-                    (device_id, name, credentials),
+                    (device_id, name, str(credentials)),
                 )
                 await deps.db.commit()
+                logger.info("airplay_credentials_saved", device_id=device_id)
 
             await pairing.close()
             del _pairing_sessions[device_id]
