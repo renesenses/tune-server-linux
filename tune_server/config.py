@@ -1,10 +1,34 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _detect_base_dir() -> Path:
+    """Return the directory containing the binary (PyInstaller) or the CWD."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
+
+
+def _detect_web_dir() -> str | None:
+    """Auto-detect web/ directory next to the binary."""
+    candidate = _detect_base_dir() / "web"
+    if candidate.is_dir() and (candidate / "index.html").is_file():
+        return str(candidate)
+    return None
+
+
+def _detect_bin(name: str) -> str:
+    """Auto-detect a bundled binary next to the executable, fallback to bare name (PATH)."""
+    candidate = _detect_base_dir() / name
+    if candidate.is_file():
+        return str(candidate)
+    return name
 
 
 class Settings(BaseSettings):
@@ -27,8 +51,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     api_key: str | None = None  # None = no auth required (backward-compatible)
 
-    # Web UI (built SPA served as static files, empty = disabled)
-    web_dir: str | None = None
+    # Web UI (auto-detected next to binary, set to empty string to disable)
+    web_dir: str | None = Field(default_factory=_detect_web_dir)
 
     # Server
     api_host: str = "0.0.0.0"
@@ -54,8 +78,8 @@ class Settings(BaseSettings):
     sync_dlna_default_buffer_s: float = 3.0        # seconds, default DLNA buffer delay
 
     # Audio
-    ffmpeg_path: str = "ffmpeg"
-    ffprobe_path: str = "ffprobe"
+    ffmpeg_path: str = Field(default_factory=lambda: _detect_bin("ffmpeg"))
+    ffprobe_path: str = Field(default_factory=lambda: _detect_bin("ffprobe"))
     default_output_format: str = "flac"  # flac, wav, mp3, alac
     max_sample_rate: int = 192000
     max_bit_depth: int = 24
@@ -110,43 +134,7 @@ class Settings(BaseSettings):
     log_format: str = "console"  # console or json
 
 
-def _auto_detect_web_dir() -> str | None:
-    """Look for a web/ folder next to the executable or working directory."""
-    import sys
-    candidates = [
-        Path(sys.executable).parent / "web",  # PyInstaller bundle
-        Path.cwd() / "web",
-        Path(__file__).resolve().parent.parent / "web",
-    ]
-    for candidate in candidates:
-        if candidate.is_dir() and (candidate / "index.html").is_file():
-            return str(candidate)
-    return None
-
-
-def _auto_detect_ffmpeg(name: str) -> str:
-    """Find ffmpeg/ffprobe next to executable, in cwd, or fall back to PATH."""
-    import shutil
-    import sys
-    ext = ".exe" if sys.platform == "win32" else ""
-    candidates = [
-        Path(sys.executable).parent / f"{name}{ext}",
-        Path.cwd() / f"{name}{ext}",
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-    return shutil.which(name) or name
-
-
-_raw = Settings()
-if _raw.web_dir is None:
-    _raw.web_dir = _auto_detect_web_dir()
-if _raw.ffmpeg_path == "ffmpeg":
-    _raw.ffmpeg_path = _auto_detect_ffmpeg("ffmpeg")
-if _raw.ffprobe_path == "ffprobe":
-    _raw.ffprobe_path = _auto_detect_ffmpeg("ffprobe")
-settings = _raw
+settings = Settings()
 
 
 def persist_env_var(key: str, value: str, env_file: str = ".env") -> None:

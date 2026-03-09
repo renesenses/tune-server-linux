@@ -52,6 +52,14 @@ async def list_audio_devices():
     return result
 
 
+@router.post("/scan", response_model=list[DiscoveredDevice])
+async def scan_devices():
+    """Force an immediate rescan of all LAN devices (DLNA + AirPlay)."""
+    if not deps.discovery_manager:
+        return []
+    return await deps.discovery_manager.rescan()
+
+
 @router.get("/{device_id}", response_model=DiscoveredDevice)
 async def get_device(device_id: str):
     if not deps.discovery_manager:
