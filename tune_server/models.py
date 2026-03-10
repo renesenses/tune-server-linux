@@ -223,6 +223,7 @@ class PlayRequest(BaseModel):
     playlist_id: Optional[int] = None
     source: Optional[Source] = None
     source_id: Optional[str] = None
+    streaming_album_id: Optional[str] = None
     streaming_playlist_id: Optional[str] = None
 
 
