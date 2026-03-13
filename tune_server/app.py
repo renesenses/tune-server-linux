@@ -78,7 +78,8 @@ class TuneServer:
 
     async def start(self) -> None:
         _configure_logging()
-        logger.info("tune_server_starting", version="0.1.0")
+        from tune_server import __version__
+        logger.info("tune_server_starting", version=__version__)
 
         # Startup validation
         from pathlib import Path
