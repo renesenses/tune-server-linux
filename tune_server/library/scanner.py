@@ -103,7 +103,7 @@ class LibraryScanner:
                     except PermissionError:
                         continue
 
-                    path_str = str(file_path)
+                    path_str = str(file_path).replace("\\", "/")
                     found_paths.add(path_str)
                     stats["scanned"] += 1
 
@@ -131,10 +131,10 @@ class LibraryScanner:
             # Remove tracks that no longer exist on disk
             async with self._lock:
                 current_paths = await self._track_repo.get_all_paths()
-                scanned_roots = [str(Path(d).resolve()) for d in music_dirs]
+                scanned_roots = [str(Path(d).resolve()).replace("\\", "/") for d in music_dirs]
                 candidate_paths = {
                     p for p in current_paths
-                    if any(p.startswith(root + "/") or p.startswith(root + "\\") for root in scanned_roots)
+                    if any(p.replace("\\", "/").startswith(root + "/") for root in scanned_roots)
                 }
                 removed_paths = candidate_paths - found_paths
                 for path_str in removed_paths:

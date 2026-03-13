@@ -467,7 +467,7 @@ class TrackRepo:
 
     async def list_by_directory(self, directory: str) -> list[Track]:
         """Return tracks directly in a directory (not in subdirectories)."""
-        prefix = directory.rstrip("/") + "/"
+        prefix = directory.replace("\\", "/").rstrip("/") + "/"
         rows = await self._db.fetchall(
             f"""{self._SELECT}
                 WHERE t.file_path LIKE ? || '%'
@@ -479,7 +479,7 @@ class TrackRepo:
 
     async def list_subdirectories(self, directory: str) -> list[dict]:
         """Return immediate subdirectories with recursive track counts."""
-        prefix = directory.rstrip("/") + "/"
+        prefix = directory.replace("\\", "/").rstrip("/") + "/"
         prefix_len = len(prefix) + 1  # SQL SUBSTR is 1-based
         rows = await self._db.fetchall(
             """SELECT
@@ -517,7 +517,7 @@ class TrackRepo:
 
     async def count_by_root(self, root_dir: str) -> int:
         """Count all tracks under a root directory."""
-        prefix = root_dir.rstrip("/") + "/"
+        prefix = root_dir.replace("\\", "/").rstrip("/") + "/"
         row = await self._db.fetchone(
             "SELECT COUNT(*) as cnt FROM tracks WHERE file_path LIKE ? || '%'",
             (prefix,),
