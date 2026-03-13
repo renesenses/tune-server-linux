@@ -91,11 +91,13 @@ class LocalOutput(OutputTarget):
             if not info:
                 return
 
-            # Convert bytes to numpy array
+            # Convert bytes to numpy array (trim trailing bytes to align)
             if info.bit_depth <= 16:
-                arr = np.frombuffer(data, dtype=np.int16)
+                trim = len(data) % 2
+                arr = np.frombuffer(data[:len(data) - trim] if trim else data, dtype=np.int16)
             else:
-                arr = np.frombuffer(data, dtype=np.int32)
+                trim = len(data) % 4
+                arr = np.frombuffer(data[:len(data) - trim] if trim else data, dtype=np.int32)
 
             # Apply volume
             if self._volume < 1.0:
