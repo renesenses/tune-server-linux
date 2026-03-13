@@ -60,6 +60,7 @@ class Artist(BaseModel):
     discogs_id: Optional[str] = None
     bio: Optional[str] = None
     image_path: Optional[str] = None
+    source_id: Optional[str] = None
 
 
 class Album(BaseModel):
