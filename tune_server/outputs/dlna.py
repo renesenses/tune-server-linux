@@ -159,6 +159,10 @@ class DlnaOutput(OutputTarget):
             return False
         if not (track.file_path.startswith("http://") or track.file_path.startswith("https://")):
             return False
+        # Micromega: only radio URLs work via direct passthrough (HTTPS→HTTP downgrade).
+        # Streaming services (Tidal, Qobuz…) require HTTPS — must go through pipeline.
+        if self._is_micromega and track.source != Source.RADIO:
+            return False
         fmt = AudioFormat(track.format) if track.format else None
         return fmt in _DLNA_DIRECT_FORMATS
 
@@ -187,6 +191,38 @@ class DlnaOutput(OutputTarget):
                 self._direct_url = True
                 self._available = True
                 logger.info("dlna_direct_url_playback", device=self.name, url=url[:80])
+                return
+
+            # Micromega proxy: relay HTTPS streaming URLs over HTTP with Content-Length
+            if (
+                self._is_micromega
+                and track
+                and track.file_path
+                and track.file_path.startswith("https://")
+                and track.source != Source.RADIO
+            ):
+                fmt = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+                mime = mime_type_for_format(fmt)
+                proxy_info = AudioStreamInfo(
+                    format=fmt,
+                    sample_rate=track.sample_rate or 44100,
+                    bit_depth=track.bit_depth or 16,
+                    channels=track.channels or 2,
+                )
+                self._stream_id = self._streamer.create_proxy_session(track.file_path, proxy_info)
+                stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+                metadata = _build_didl_lite(track, stream_url, mime)
+
+                dmr = self._device
+                title = track.title or "Unknown"
+                await asyncio.wait_for(
+                    dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
+                )
+                await asyncio.wait_for(dmr.async_play(), timeout=10)
+
+                self._direct_url = True
+                self._available = True
+                logger.info("micromega_proxy_playback", device=self.name, url=track.file_path[:80])
                 return
 
             # Native DSD passthrough: serve DSF/DFF file directly to the renderer
