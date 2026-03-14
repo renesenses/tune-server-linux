@@ -406,6 +406,7 @@ class FeaturedSection(BaseModel):
 class StreamingServiceStatus(BaseModel):
     enabled: bool
     authenticated: bool
+    iframe_only: bool = False
 
 
 class StreamingAuthRequest(BaseModel):
@@ -418,6 +419,7 @@ class StreamingAuthResponse(BaseModel):
     authenticated: bool
     verification_url: Optional[str] = None
     user_code: Optional[str] = None
+    error: Optional[str] = None
 
 
 class ZoneGroupResponse(BaseModel):

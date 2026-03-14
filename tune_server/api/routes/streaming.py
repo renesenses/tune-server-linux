@@ -36,6 +36,7 @@ async def list_services():
         result[name] = StreamingServiceStatus(
             enabled=True,
             authenticated=service.is_authenticated,
+            iframe_only=getattr(service, "iframe_only", False),
         )
     return result
 
@@ -46,6 +47,7 @@ async def service_status(service_name: str):
     return StreamingServiceStatus(
         enabled=service is not None,
         authenticated=service.is_authenticated if service else False,
+        iframe_only=getattr(service, "iframe_only", False) if service else False,
     )
 
 
@@ -68,9 +70,10 @@ async def authenticate(
     success = await service.authenticate(**kwargs, db=deps.db)
     verification_url = getattr(service, "verification_url", None)
     user_code = getattr(service, "user_code", None)
+    error = getattr(service, "_auth_error", None)
     if success and deps.db:
         await service.save_auth(deps.db)
-    return StreamingAuthResponse(authenticated=success, verification_url=verification_url, user_code=user_code)
+    return StreamingAuthResponse(authenticated=success, verification_url=verification_url, user_code=user_code, error=error)
 
 
 @router.post("/{service_name}/disconnect")

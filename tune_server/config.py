@@ -72,12 +72,11 @@ class Settings(BaseSettings):
     qobuz_app_id: str | None = None
     qobuz_app_secret: str | None = None
 
-    # YouTube Music
+    # YouTube (Data API v3 + IFrame Player)
     youtube_enabled: bool = False
     youtube_client_id: str | None = None
     youtube_client_secret: str | None = None
-    youtube_oauth_json: str | None = None  # Legacy: path to oauth.json file
-    youtube_url_cache_ttl: int = 3600  # seconds (YouTube URLs expire ~6h)
+    youtube_api_key: str | None = None  # Optional: for unauthenticated search quota
 
     # Amazon Music
     amazon_music_enabled: bool = False
