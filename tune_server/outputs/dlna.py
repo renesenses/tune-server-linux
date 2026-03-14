@@ -168,19 +168,25 @@ class DlnaOutput(OutputTarget):
         try:
             # Direct URL passthrough: let the DLNA renderer fetch from the CDN
             if track and self.supports_direct_url(track):
+                url = track.file_path
+                # Micromega M-One doesn't support HTTPS — downgrade to HTTP
+                if self._is_micromega and url.startswith("https://"):
+                    url = "http://" + url[len("https://"):]
+                    logger.info("micromega_https_downgrade", url=url[:80])
+
                 mime = mime_type_for_format(AudioFormat(track.format))
-                metadata = _build_didl_lite(track, track.file_path, mime)
+                metadata = _build_didl_lite(track, url, mime)
 
                 dmr = self._device
                 title = track.title or "Unknown"
                 await asyncio.wait_for(
-                    dmr.async_set_transport_uri(track.file_path, title, meta_data=metadata), timeout=10
+                    dmr.async_set_transport_uri(url, title, meta_data=metadata), timeout=10
                 )
                 await asyncio.wait_for(dmr.async_play(), timeout=10)
 
                 self._direct_url = True
                 self._available = True
-                logger.info("dlna_direct_url_playback", device=self.name, url=track.file_path[:80])
+                logger.info("dlna_direct_url_playback", device=self.name, url=url[:80])
                 return
 
             # Native DSD passthrough: serve DSF/DFF file directly to the renderer
@@ -315,9 +321,12 @@ class DlnaOutput(OutputTarget):
         try:
             # Direct URL for next track too if applicable
             if self.supports_direct_url(track):
+                url = track.file_path
+                if self._is_micromega and url.startswith("https://"):
+                    url = "http://" + url[len("https://"):]
                 mime = mime_type_for_format(AudioFormat(track.format))
-                metadata = _build_didl_lite(track, track.file_path, mime)
-                await self._device.async_set_next_transport_uri(track.file_path, track.title or "Unknown", meta_data=metadata)
+                metadata = _build_didl_lite(track, url, mime)
+                await self._device.async_set_next_transport_uri(url, track.title or "Unknown", meta_data=metadata)
                 logger.info("dlna_next_track_set_direct", track=track.title)
                 return True
 
