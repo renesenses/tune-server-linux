@@ -2,9 +2,12 @@
 
 All notable changes to Tune Server.
 
-## Unreleased
+## v0.1.5 — 2026-03-14
 
 ### Added
+- **Micromega M-One volume control**: proprietary protocol integration for native volume management
+- **HTTPS→HTTP proxy**: transparent proxy for Tidal/Qobuz streams on DLNA renderers that don't support HTTPS
+- **Native DSD on Micromega M-One**: automatic DSD passthrough detection and activation
 - **Tag writing**: `PUT /library/tracks/{id}` and `PUT /library/albums/{id}` now write metadata (title, artist, album) to audio files via mutagen (FLAC, MP3, M4A, OGG)
 - **Create artist endpoint**: `POST /library/artists` to create new artists
 - **Hot add/remove music directories**: manage music directories via API without restart
@@ -12,11 +15,16 @@ All notable changes to Tune Server.
 - **Per-zone sync offset**: `sync_delay_ms` field on zones for fine-tuning multi-room synchronization
 - **Adaptive DLNA latency**: measure and cache actual renderer startup latency instead of fixed 3s delay
 - **PATCH endpoint for zones**: partial update support for zone configuration
-- **Getting Started guide**: step-by-step guide from install to first playback
-- **DLNA MediaServer browse guide**: documentation for browsing ContentDirectory
+- **Web client**: Tune logo in sidebar, playing indicator on recently played, clickable streaming artists
 
 ### Fixed
+- **Buffer alignment**: fix unaligned buffer causing all tracks to skip
+- **Windows path normalization**: backslash→slash conversion for cross-platform compatibility
+- **One device per zone**: prevent assigning the same device to multiple zones
+- **Streaming artist source_id**: add source_id to Qobuz/Tidal artist responses
+- **Radio HTTPS downgrade**: HTTPS→HTTP fallback for radio streams on renderers without TLS
 - **Qobuz playlist pagination**: playlists with more than 50 tracks now fetch all items via pagination
+- **Dynamic version**: read version from pyproject.toml instead of hardcoded string
 
 ### Changed
 - Sync engine drift threshold reduced from 1000ms to 500ms (configurable)
