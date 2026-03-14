@@ -37,24 +37,31 @@ jobs:
           VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Create archive (Linux/macOS)
-        if: matrix.platform != 'windows'
+      - name: Create archive (Linux)
+        if: matrix.platform == 'linux'
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          ARCHIVE="tune-server-${VERSION}-${{ matrix.platform }}.tar.gz"
+          ARCHIVE="tune-server-${VERSION}-linux.tar.gz"
 
           tar czf "${ARCHIVE}" \
             --transform "s,^,tune-server/," \
-            tune_server/ \
-            web/ \
-            pyproject.toml \
-            install.sh \
-            tune-server.service \
-            README.md \
-            CHANGELOG.md
+            tune_server/ web/ pyproject.toml install.sh tune-server.service README.md CHANGELOG.md
 
           sha256sum "${ARCHIVE}" | awk '{print $1}' > "${ARCHIVE}.sha256"
+
+      - name: Create archive (macOS)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCHIVE="tune-server-${VERSION}-macos.tar.gz"
+
+          mkdir -p tune-server
+          cp -r tune_server web pyproject.toml install.sh tune-server.service README.md CHANGELOG.md tune-server/
+          tar czf "${ARCHIVE}" tune-server
+
+          shasum -a 256 "${ARCHIVE}" | awk '{print $1}' > "${ARCHIVE}.sha256"
 
       - name: Create archive (Windows)
         if: matrix.platform == 'windows'
