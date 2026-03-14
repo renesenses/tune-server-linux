@@ -224,11 +224,13 @@ class TuneServer:
             # Pass device info for DSD detection
             disc_device = self._discovery_manager.ssdp.devices.get(device_id)
             caps = disc_device.capabilities if disc_device else {}
+            device_ip = disc_device.host if disc_device else None
             return DlnaOutput(
                 dmr, self._http_streamer, self._server_ip,
                 sink_protocols=caps.get("sink_protocols", []),
                 device_name=caps.get("device_name", ""),
                 device_model=caps.get("model", ""),
+                device_ip=device_ip,
             )
 
         async def create_airplay_output(device_id: str | None):

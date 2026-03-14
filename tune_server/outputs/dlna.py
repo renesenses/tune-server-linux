@@ -104,6 +104,7 @@ class DlnaOutput(OutputTarget):
         sink_protocols: list[str] | None = None,
         device_name: str = "",
         device_model: str = "",
+        device_ip: str | None = None,
     ) -> None:
         self._device = device
         self._streamer = streamer
@@ -112,6 +113,11 @@ class DlnaOutput(OutputTarget):
         self._direct_url: bool = False
         self._available = True
         self._volume: float = 0.5
+        self._device_ip = device_ip
+        # Micromega M-One: proprietary volume via HTTP on port 7000
+        self._is_micromega = "micromega" in device_name.lower()
+        if self._is_micromega:
+            logger.info("micromega_device_detected", device=device_name, ip=device_ip)
         # DSD detection: protocol info first, then device name/model heuristic
         self._supports_native_dsd = (
             detect_dsd_from_sink_protocols(sink_protocols or [])
@@ -269,7 +275,37 @@ class DlnaOutput(OutputTarget):
 
     async def set_volume(self, volume: float) -> None:
         self._volume = volume
-        await self._dmr_call("async_set_volume_level", volume)
+        if self._is_micromega and self._device_ip:
+            await self._micromega_set_volume(volume)
+        else:
+            await self._dmr_call("async_set_volume_level", volume)
+
+    async def _micromega_set_volume(self, volume: float) -> None:
+        """Set volume on Micromega M-One via proprietary HTTP protocol on port 7000.
+
+        The M-One expects: GET /volume HTTP/1.0\\r\\n\\r\\nvolume=<value>\\r\\n
+        where value is a float (0.0 to 100.0, matching the amplifier's display).
+        Tune's 0.0-1.0 range maps to 0.0-100.0 on the M-One.
+        """
+        import socket
+
+        target_vol = volume * 100.0
+        msg = f"GET /volume HTTP/1.0\r\n\r\nvolume={target_vol:.1f}\r\n"
+
+        def _send() -> None:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(3)
+                s.connect((self._device_ip, 7000))
+                s.send(msg.encode())
+                s.shutdown(socket.SHUT_WR)
+                s.recv(256)  # read response
+                s.close()
+            except Exception:
+                logger.debug("micromega_volume_error", device=self.name, volume=target_vol)
+
+        await asyncio.to_thread(_send)
+        logger.debug("micromega_volume_set", device=self.name, volume=target_vol)
 
     async def close(self) -> None:
         await self.stop()
