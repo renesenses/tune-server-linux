@@ -84,14 +84,26 @@ async def play(zone_id: int, request: PlayRequest = None):
 
     tracks = await _resolve_tracks(request)
 
+    # Detect whether the request targeted something specific (vs. bare resume)
+    has_target = any([
+        request.track_id,
+        request.track_ids,
+        request.album_id,
+        request.playlist_id,
+        request.source_id,
+        request.streaming_playlist_id,
+    ])
+
     # If zone is in a group, play on all group members
     group = deps.group_manager.get_group_for_zone(zone_id) if deps.group_manager else None
     if group and tracks:
         await group.play(tracks)
     elif tracks:
         await zone.player.play(tracks=tracks)
-    else:
+    elif not has_target:
+        # Bare play request with no target → resume current playback
         await zone.player.play()
+    # else: had a target but no tracks resolved (e.g. iframe_only service) — do nothing
 
     return zone.to_model()
 
