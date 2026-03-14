@@ -20,11 +20,16 @@ from tune_server.models import (
     Track,
 )
 from tune_server.streaming.base import StreamingService
+from tune_server.streaming.cache import StreamUrlCache
 
 if TYPE_CHECKING:
     from tune_server.db.engine import Database
 
 logger = structlog.get_logger()
+
+# YouTube stream URLs expire after ~6 hours — cache for 5h to be safe
+_STREAM_URL_TTL = 18_000  # seconds
+_YTDLP_TIMEOUT = 30  # seconds
 
 # Google OAuth endpoints
 OAUTH_CODE_URL = "https://oauth2.googleapis.com/device/code"
@@ -73,6 +78,7 @@ class YouTubeService(StreamingService):
         self._auth_error: str | None = None
         self._poll_task: asyncio.Task | None = None
         self._session: aiohttp.ClientSession | None = None
+        self._url_cache = StreamUrlCache(ttl_seconds=_STREAM_URL_TTL)
 
     # ------------------------------------------------------------------
     # Properties
@@ -391,12 +397,53 @@ class YouTubeService(StreamingService):
             await self._session.close()
 
     # ------------------------------------------------------------------
-    # Streaming — IFrame only (task 2.6)
+    # Streaming — hybrid: yt-dlp audio URL for DLNA, IFrame for visuals
     # ------------------------------------------------------------------
 
     async def get_stream_url(self, track_id: str) -> Optional[str]:
-        """YouTube tracks are played via IFrame Player — no stream URL."""
-        return None
+        """Extract YouTube audio URL via yt-dlp for DLNA backend playback.
+
+        The IFrame Player (frontend) handles the legal/official player requirement
+        and is muted. This URL powers the actual audio routed through the zone.
+        URLs are cached for ~5h (YouTube CDN URLs expire after ~6h).
+        """
+        cached = self._url_cache.get(track_id)
+        if cached:
+            return cached
+
+        try:
+            url = await asyncio.wait_for(
+                asyncio.to_thread(self._extract_audio_url, track_id),
+                timeout=_YTDLP_TIMEOUT,
+            )
+            if url:
+                self._url_cache.set(track_id, url)
+                logger.info("youtube_stream_url_resolved", track_id=track_id)
+            return url
+        except asyncio.TimeoutError:
+            logger.warning("youtube_stream_url_timeout", track_id=track_id)
+            return None
+        except Exception:
+            logger.exception("youtube_stream_url_error", track_id=track_id)
+            return None
+
+    @staticmethod
+    def _extract_audio_url(track_id: str) -> str | None:
+        """Run yt-dlp synchronously in a thread to get the best audio URL."""
+        from yt_dlp import YoutubeDL
+
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": False,
+        }
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(
+                f"https://www.youtube.com/watch?v={track_id}",
+                download=False,
+            )
+            return info.get("url") if info else None
 
     # ------------------------------------------------------------------
     # Search — Data API v3 (task 2.2)
