@@ -159,10 +159,10 @@ class DlnaOutput(OutputTarget):
             return False
         if not (track.file_path.startswith("http://") or track.file_path.startswith("https://")):
             return False
-        # Micromega: only radio URLs work via direct passthrough (HTTPS→HTTP downgrade).
-        # Streaming services (Tidal, Qobuz…) require HTTPS — must go through pipeline.
-        if self._is_micromega and track.source != Source.RADIO:
-            return False
+        # Micromega: HTTPS streams (Tidal, Qobuz) are handled via the HTTP proxy in start().
+        # Radio and streaming are both direct — no pipeline needed.
+        if self._is_micromega:
+            return True
         fmt = AudioFormat(track.format) if track.format else None
         return fmt in _DLNA_DIRECT_FORMATS
 
