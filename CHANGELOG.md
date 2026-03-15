@@ -2,6 +2,13 @@
 
 All notable changes to Tune Server.
 
+## Unreleased (v0.1.6)
+
+### Fixed
+- **Qobuz/Tidal skip on Micromega**: `supports_direct_url()` returned False for streaming services, forcing an unnecessary pipeline that conflicted with the proxy relay — tracks skipped every 1-2 seconds instead of playing
+
+---
+
 ## v0.1.5 — 2026-03-14
 
 ### Added
