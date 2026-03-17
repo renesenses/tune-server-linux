@@ -235,6 +235,7 @@ class QueueAddRequest(BaseModel):
     album_id: Optional[int] = None
     source: Optional[Source] = None
     source_id: Optional[str] = None
+    file_path: Optional[str] = None  # Direct URL (e.g. media server stream)
     position: Optional[int] = None  # None = append to end
 
 

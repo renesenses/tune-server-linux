@@ -259,6 +259,24 @@ async def add_to_queue(zone_id: int, request: QueueAddRequest):
                 if url:
                     track.file_path = url
                     tracks.append(track)
+    elif request.file_path:
+        from tune_server.models import Track, AudioFormat
+        fmt = AudioFormat.WAV
+        url_lower = request.file_path.lower()
+        if "flac" in url_lower:
+            fmt = AudioFormat.FLAC
+        elif "mp3" in url_lower:
+            fmt = AudioFormat.MP3
+        elif "aac" in url_lower or "m4a" in url_lower:
+            fmt = AudioFormat.AAC
+        elif "ogg" in url_lower:
+            fmt = AudioFormat.OGG
+        tracks.append(Track(
+            id=None,
+            title=request.file_path.rsplit("/", 1)[-1],
+            file_path=request.file_path,
+            format=fmt,
+        ))
 
     if tracks:
         zone.player.queue.add_tracks(tracks, position=request.position)
