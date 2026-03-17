@@ -2,10 +2,23 @@
 
 All notable changes to Tune Server.
 
-## Unreleased (v0.1.6)
+## v0.1.6 — 2026-03-17
+
+### Added
+- **DLNA Media Server browsing**: discover and browse UPnP/DLNA media servers on the local network (Asset UPnP, Sonos, etc.) via `/network/media-servers` API
+- **Media Server playback**: play tracks from DLNA media servers directly to any zone
+- **Direct URL playback**: `file_path` parameter in PlayRequest and QueueAddRequest to play/queue media server streams and other direct URLs
+- **Homebrew formula**: `brew install renesenses/tap/tune-server` for macOS (Apple Silicon + Intel) and Linux
 
 ### Fixed
 - **Qobuz/Tidal skip on Micromega**: `supports_direct_url()` returned False for streaming services, forcing an unnecessary pipeline that conflicted with the proxy relay — tracks skipped every 1-2 seconds instead of playing
+- **Play race condition**: stop pipeline before changing queue to prevent old `_direct_url_monitor` from advancing into the new queue
+
+### Web Client
+- **Media Servers view**: full browsing UI with breadcrumb navigation, format badges (FLAC 44.1kHz/16bit), duration, and add-to-queue button
+- **Recently played fix**: media server albums now appear and are clickable — search by title fallback for tracks without album_id
+- **Navigation fix**: clicking album title navigates to album page instead of starting playback
+- **Harmonized track display**: media server tracks match library track layout (thumbnail, artist — album, format badge)
 
 ---
 
