@@ -226,6 +226,7 @@ class PlayRequest(BaseModel):
     source_id: Optional[str] = None
     streaming_album_id: Optional[str] = None
     streaming_playlist_id: Optional[str] = None
+    file_path: Optional[str] = None  # Direct URL (e.g. media server stream)
 
 
 class QueueAddRequest(BaseModel):

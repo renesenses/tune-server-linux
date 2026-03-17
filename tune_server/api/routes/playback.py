@@ -89,6 +89,26 @@ async def _resolve_tracks(request: PlayRequest) -> list:
                     track.file_path = url
                     tracks.append(track)
 
+    elif request.file_path:
+        # Direct URL playback (e.g. media server stream replay from history)
+        from tune_server.models import Track, AudioFormat
+        fmt = AudioFormat.WAV
+        url_lower = request.file_path.lower()
+        if "flac" in url_lower:
+            fmt = AudioFormat.FLAC
+        elif "mp3" in url_lower:
+            fmt = AudioFormat.MP3
+        elif "aac" in url_lower or "m4a" in url_lower:
+            fmt = AudioFormat.AAC
+        elif "ogg" in url_lower:
+            fmt = AudioFormat.OGG
+        tracks.append(Track(
+            id=None,
+            title=request.file_path.rsplit("/", 1)[-1],
+            file_path=request.file_path,
+            format=fmt,
+        ))
+
     return tracks
 
 
