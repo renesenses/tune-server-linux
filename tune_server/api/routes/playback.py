@@ -64,9 +64,12 @@ async def _resolve_tracks(request: PlayRequest) -> list:
             tracks = [t for t in resolved if t.file_path]
 
     elif request.source and request.source_id:
-        # Streaming service track — resolve track metadata AND stream URL
+        # Streaming service track — resolve track metadata AND stream URL.
+        # Invalidate any cached URL so a stopped/failed stream gets a fresh one.
         service = deps.streaming_services.get(request.source.value)
         if service and service.is_authenticated:
+            if hasattr(service, '_url_cache'):
+                service._url_cache.invalidate(request.source_id)
             track = await service.get_track(request.source_id)
             if track:
                 url = await service.get_stream_url(request.source_id)

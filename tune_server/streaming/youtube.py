@@ -67,7 +67,7 @@ def _best_thumbnail(thumbnails: dict) -> str | None:
 class YouTubeService(StreamingService):
     """YouTube streaming service — YouTube Data API v3 + IFrame Player."""
 
-    iframe_only = True  # Signals frontend to use IFrame Player, not a stream URL
+    iframe_only = False  # Hybrid: IFrame (muted) + yt-dlp → DLNA for audio
 
     def __init__(self) -> None:
         self._access_token: str | None = None
@@ -433,7 +433,11 @@ class YouTubeService(StreamingService):
         from yt_dlp import YoutubeDL
 
         ydl_opts = {
-            "format": "bestaudio/best",
+            # Prefer a non-segmented HTTPS stream (e.g. m4a/aac progressive).
+            # "bestaudio" alone often picks a DASH format whose URL only covers
+            # the first segment (~50 s). Filtering by protocol=https forces
+            # yt-dlp to select a single-file progressive download instead.
+            "format": "bestaudio[protocol=https]/bestaudio[protocol=http]/bestaudio",
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
@@ -489,6 +493,7 @@ class YouTubeService(StreamingService):
                 artists.append(Artist(
                     name=title,
                     image_path=cover,
+                    musicbrainz_id=item["id"]["channelId"],  # channel ID used as artist identifier
                 ))
 
         return SearchResult(tracks=tracks, albums=albums, artists=artists)
