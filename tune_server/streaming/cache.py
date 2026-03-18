@@ -36,6 +36,9 @@ class StreamUrlCache:
             expires_at=time.monotonic() + (ttl or self._ttl),
         )
 
+    def invalidate(self, track_id: str) -> None:
+        self._cache.pop(track_id, None)
+
     def clear(self) -> None:
         self._cache.clear()
 
