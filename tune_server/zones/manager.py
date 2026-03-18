@@ -50,6 +50,7 @@ class ZoneManager:
                         event_bus=self._event_bus,
                         queue_repo=self._queue_repo,
                         zone_repo=self._zone_repo,
+                        output_device_id=row.get("output_device_id"),
                     )
                     zone.group_id = row.get("group_id")
                     zone.sync_delay_ms = row.get("sync_delay_ms", 0) or 0
@@ -81,6 +82,15 @@ class ZoneManager:
         output_device_id: str | None = None,
         sync_delay_ms: int = 0,
     ) -> ZoneInstance:
+        # Prevent duplicate device assignment
+        if output_device_id:
+            for zone in self._zones.values():
+                if (zone.output_type == output_type
+                        and zone.output_device_id == output_device_id):
+                    raise ValueError(
+                        f"Device already in use by zone '{zone.name}'"
+                    )
+
         # Create output FIRST — only persist to DB if it succeeds
         output = await self._create_output(output_type, output_device_id)
         if not output:
@@ -99,6 +109,7 @@ class ZoneManager:
             event_bus=self._event_bus,
             queue_repo=self._queue_repo,
             zone_repo=self._zone_repo,
+            output_device_id=output_device_id,
         )
         zone.sync_delay_ms = sync_delay_ms
         if self._stream_url_resolver:

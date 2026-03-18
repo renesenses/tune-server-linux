@@ -489,5 +489,5 @@ class TidalService(StreamingService):
     def _map_artist(self, ar) -> Artist:
         return Artist(
             name=ar.name or "Unknown",
-            source=Source.TIDAL,
+            source_id=str(ar.id),
         )

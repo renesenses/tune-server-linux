@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import structlog
@@ -84,6 +85,18 @@ class DiscoveryManager:
         if self._mdns:
             devices.extend(self._mdns.devices.values())
         return devices
+
+    async def rescan(self) -> list[DiscoveredDevice]:
+        """Force an immediate rescan of all discovery sources."""
+        logger.info("discovery_rescan_requested")
+        tasks = []
+        if self._ssdp:
+            tasks.append(self._ssdp.rescan())
+        if self._mdns:
+            tasks.append(self._mdns.rescan())
+        if tasks:
+            await asyncio.gather(*tasks)
+        return self.list_devices()
 
     def get_device(self, device_id: str) -> DiscoveredDevice | None:
         if self._ssdp:

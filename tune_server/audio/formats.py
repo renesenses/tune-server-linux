@@ -154,6 +154,7 @@ _DSD_CAPABLE_PATTERNS = [
     "linn",       # Linn DS/DSM
     "lumin",      # Lumin streamers
     "auralic",    # Auralic Aries
+    "micromega",  # Micromega M-One (ESS Sabre DAC)
 ]
 
 
