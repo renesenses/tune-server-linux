@@ -99,6 +99,10 @@ class Player:
         tracks: Optional[list[Track]] = None,
         start_position: int = 0,
     ) -> None:
+        # Stop any current playback BEFORE changing the queue to avoid race conditions
+        # where the old _direct_url_monitor or _playback_loop advances into the new queue
+        await self._stop_pipeline()
+
         if tracks:
             self._queue.set_tracks(tracks, start_position)
             await self._persist_queue()

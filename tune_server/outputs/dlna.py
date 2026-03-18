@@ -104,6 +104,7 @@ class DlnaOutput(OutputTarget):
         sink_protocols: list[str] | None = None,
         device_name: str = "",
         device_model: str = "",
+        device_ip: str | None = None,
     ) -> None:
         self._device = device
         self._streamer = streamer
@@ -112,6 +113,11 @@ class DlnaOutput(OutputTarget):
         self._direct_url: bool = False
         self._available = True
         self._volume: float = 0.5
+        self._device_ip = device_ip
+        # Micromega M-One: proprietary volume via HTTP on port 7000
+        self._is_micromega = "micromega" in device_name.lower()
+        if self._is_micromega:
+            logger.info("micromega_device_detected", device=device_name, ip=device_ip)
         # DSD detection: protocol info first, then device name/model heuristic
         self._supports_native_dsd = (
             detect_dsd_from_sink_protocols(sink_protocols or [])
@@ -153,6 +159,10 @@ class DlnaOutput(OutputTarget):
             return False
         if not (track.file_path.startswith("http://") or track.file_path.startswith("https://")):
             return False
+        # Micromega: HTTPS streams (Tidal, Qobuz) are handled via the HTTP proxy in start().
+        # Radio and streaming are both direct — no pipeline needed.
+        if self._is_micromega:
+            return True
         fmt = AudioFormat(track.format) if track.format else None
         return fmt in _DLNA_DIRECT_FORMATS
 
@@ -162,19 +172,57 @@ class DlnaOutput(OutputTarget):
         try:
             # Direct URL passthrough: let the DLNA renderer fetch from the CDN
             if track and self.supports_direct_url(track):
+                url = track.file_path
+                # Micromega M-One doesn't support HTTPS — downgrade to HTTP
+                if self._is_micromega and url.startswith("https://"):
+                    url = "http://" + url[len("https://"):]
+                    logger.info("micromega_https_downgrade", url=url[:80])
+
                 mime = mime_type_for_format(AudioFormat(track.format))
-                metadata = _build_didl_lite(track, track.file_path, mime)
+                metadata = _build_didl_lite(track, url, mime)
 
                 dmr = self._device
                 title = track.title or "Unknown"
                 await asyncio.wait_for(
-                    dmr.async_set_transport_uri(track.file_path, title, meta_data=metadata), timeout=10
+                    dmr.async_set_transport_uri(url, title, meta_data=metadata), timeout=10
                 )
                 await asyncio.wait_for(dmr.async_play(), timeout=10)
 
                 self._direct_url = True
                 self._available = True
-                logger.info("dlna_direct_url_playback", device=self.name, url=track.file_path[:80])
+                logger.info("dlna_direct_url_playback", device=self.name, url=url[:80])
+                return
+
+            # Micromega proxy: relay HTTPS streaming URLs over HTTP with Content-Length
+            if (
+                self._is_micromega
+                and track
+                and track.file_path
+                and track.file_path.startswith("https://")
+                and track.source != Source.RADIO
+            ):
+                fmt = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+                mime = mime_type_for_format(fmt)
+                proxy_info = AudioStreamInfo(
+                    format=fmt,
+                    sample_rate=track.sample_rate or 44100,
+                    bit_depth=track.bit_depth or 16,
+                    channels=track.channels or 2,
+                )
+                self._stream_id = self._streamer.create_proxy_session(track.file_path, proxy_info)
+                stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+                metadata = _build_didl_lite(track, stream_url, mime)
+
+                dmr = self._device
+                title = track.title or "Unknown"
+                await asyncio.wait_for(
+                    dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
+                )
+                await asyncio.wait_for(dmr.async_play(), timeout=10)
+
+                self._direct_url = True
+                self._available = True
+                logger.info("micromega_proxy_playback", device=self.name, url=track.file_path[:80])
                 return
 
             # Native DSD passthrough: serve DSF/DFF file directly to the renderer
@@ -269,7 +317,37 @@ class DlnaOutput(OutputTarget):
 
     async def set_volume(self, volume: float) -> None:
         self._volume = volume
-        await self._dmr_call("async_set_volume_level", volume)
+        if self._is_micromega and self._device_ip:
+            await self._micromega_set_volume(volume)
+        else:
+            await self._dmr_call("async_set_volume_level", volume)
+
+    async def _micromega_set_volume(self, volume: float) -> None:
+        """Set volume on Micromega M-One via proprietary HTTP protocol on port 7000.
+
+        The M-One expects: GET /volume HTTP/1.0\\r\\n\\r\\nvolume=<value>\\r\\n
+        where value is a float (0.0 to 100.0, matching the amplifier's display).
+        Tune's 0.0-1.0 range maps to 0.0-100.0 on the M-One.
+        """
+        import socket
+
+        target_vol = volume * 100.0
+        msg = f"GET /volume HTTP/1.0\r\n\r\nvolume={target_vol:.1f}\r\n"
+
+        def _send() -> None:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(3)
+                s.connect((self._device_ip, 7000))
+                s.send(msg.encode())
+                s.shutdown(socket.SHUT_WR)
+                s.recv(256)  # read response
+                s.close()
+            except Exception:
+                logger.debug("micromega_volume_error", device=self.name, volume=target_vol)
+
+        await asyncio.to_thread(_send)
+        logger.debug("micromega_volume_set", device=self.name, volume=target_vol)
 
     async def close(self) -> None:
         await self.stop()
@@ -279,9 +357,12 @@ class DlnaOutput(OutputTarget):
         try:
             # Direct URL for next track too if applicable
             if self.supports_direct_url(track):
+                url = track.file_path
+                if self._is_micromega and url.startswith("https://"):
+                    url = "http://" + url[len("https://"):]
                 mime = mime_type_for_format(AudioFormat(track.format))
-                metadata = _build_didl_lite(track, track.file_path, mime)
-                await self._device.async_set_next_transport_uri(track.file_path, track.title or "Unknown", meta_data=metadata)
+                metadata = _build_didl_lite(track, url, mime)
+                await self._device.async_set_next_transport_uri(url, track.title or "Unknown", meta_data=metadata)
                 logger.info("dlna_next_track_set_direct", track=track.title)
                 return True
 

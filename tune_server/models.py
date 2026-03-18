@@ -60,6 +60,7 @@ class Artist(BaseModel):
     discogs_id: Optional[str] = None
     bio: Optional[str] = None
     image_path: Optional[str] = None
+    source_id: Optional[str] = None
 
 
 class Album(BaseModel):
@@ -223,7 +224,9 @@ class PlayRequest(BaseModel):
     playlist_id: Optional[int] = None
     source: Optional[Source] = None
     source_id: Optional[str] = None
+    streaming_album_id: Optional[str] = None
     streaming_playlist_id: Optional[str] = None
+    file_path: Optional[str] = None  # Direct URL (e.g. media server stream)
 
 
 class QueueAddRequest(BaseModel):
@@ -232,6 +235,7 @@ class QueueAddRequest(BaseModel):
     album_id: Optional[int] = None
     source: Optional[Source] = None
     source_id: Optional[str] = None
+    file_path: Optional[str] = None  # Direct URL (e.g. media server stream)
     position: Optional[int] = None  # None = append to end
 
 

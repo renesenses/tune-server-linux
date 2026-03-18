@@ -6,12 +6,15 @@ from fastapi import APIRouter, HTTPException, Query
 from tune_server.api.deps import deps
 from tune_server.discovery.network_shares import NetworkShareDiscovery
 from tune_server.models import (
+    AudioFormat,
     DiscoveredMediaServer,
     MediaServerBrowseResult,
     MountInfo,
     MountRequest,
     NetworkShare,
     ShareProtocol,
+    Track,
+    Zone,
 )
 
 logger = structlog.get_logger()
@@ -142,6 +145,87 @@ async def get_media_server_stream_url(server_id: str, item_id: str):
         raise HTTPException(status_code=502, detail=f"Failed to get stream URL: {e}")
 
     raise HTTPException(status_code=404, detail="No stream URL found for this item")
+
+
+@router.post("/media-servers/{server_id:path}/item/{item_id}/play/{zone_id}", response_model=Zone)
+async def play_media_server_item(server_id: str, item_id: str, zone_id: int):
+    """Play a media server item on the given zone."""
+    if not deps.zone_manager:
+        raise HTTPException(status_code=503, detail="Zone manager not available")
+
+    zone = deps.zone_manager.get_zone(zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+
+    dm = deps.discovery_manager
+    if not dm or not dm.media_servers:
+        raise HTTPException(status_code=503, detail="Media server discovery not enabled")
+
+    upnp_device = dm.media_servers.get_upnp_device(server_id)
+    if not upnp_device:
+        raise HTTPException(status_code=404, detail="Media server not found")
+
+    from tune_server.network.media_server_browser import MediaServerBrowser
+
+    browser = MediaServerBrowser(upnp_device)
+    try:
+        cd = browser._find_content_directory_service()
+        browse_action = cd.action("Browse")
+        raw = await browse_action.async_call(
+            ObjectID=item_id,
+            BrowseFlag="BrowseMetadata",
+            Filter="*",
+            StartingIndex=0,
+            RequestedCount=1,
+            SortCriteria="",
+        )
+        didl_result = browser._parse_didl(
+            raw.get("Result", ""),
+            object_id=item_id,
+            total=1,
+            returned=1,
+        )
+        if not didl_result.items or not didl_result.items[0].res_url:
+            raise HTTPException(status_code=404, detail="No stream URL found")
+
+        item = didl_result.items[0]
+        url = item.res_url
+
+        fmt = AudioFormat.WAV
+        url_lower = url.lower()
+        if "flac" in url_lower:
+            fmt = AudioFormat.FLAC
+        elif "mp3" in url_lower:
+            fmt = AudioFormat.MP3
+        elif "aac" in url_lower or "m4a" in url_lower:
+            fmt = AudioFormat.AAC
+        elif "ogg" in url_lower:
+            fmt = AudioFormat.OGG
+
+        track = Track(
+            id=None,
+            title=item.title or "Unknown",
+            file_path=url,
+            format=fmt,
+            duration_ms=item.duration_ms or 0,
+            artist_name=item.artist or None,
+            album_title=item.album or None,
+            cover_path=item.album_art_uri or None,
+        )
+
+        group = deps.group_manager.get_group_for_zone(zone_id) if deps.group_manager else None
+        if group:
+            await group.play([track])
+        else:
+            await zone.player.play(tracks=[track])
+
+        return zone.to_model()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("media_server_play_error", server_id=server_id, item_id=item_id)
+        raise HTTPException(status_code=502, detail=f"Playback failed: {e}")
 
 
 # --- Mount management ---

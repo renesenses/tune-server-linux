@@ -25,6 +25,8 @@ async def create_zone(request: ZoneCreateRequest):
             output_device_id=request.output_device_id,
             sync_delay_ms=request.sync_delay_ms,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return zone.to_model()

@@ -19,10 +19,11 @@ _ws_manager: WebSocketManager | None = None
 
 
 def create_api_app() -> FastAPI:
+    from tune_server import __version__
     app = FastAPI(
         title="Tune Server",
         description="Network-accessible music server with multi-room playback",
-        version="0.1.0",
+        version=__version__,
     )
 
     # CORS — use configured origins
@@ -145,9 +146,10 @@ def create_api_app() -> FastAPI:
     else:
         @app.get("/")
         async def root():
+            from tune_server import __version__
             return {
                 "name": "Tune Server",
-                "version": "0.1.0",
+                "version": __version__,
                 "api": "/api/v1",
                 "docs": "/docs",
             }

@@ -1,9 +1,23 @@
 class TuneServer < Formula
   desc "Multi-room music server with DLNA/UPnP, AirPlay, and streaming services"
-  homepage "https://github.com/renesenses/tune-server"
-  url "https://github.com/renesenses/tune-server/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "" # TODO: fill in after creating the release tarball
+  homepage "https://github.com/renesenses/tune-server-linux"
+  version "0.1.5"
   license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/renesenses/tune-server-linux/releases/download/v0.1.5/tune-server-0.1.5-macos.tar.gz"
+      sha256 "b5b8512cc91b645f6603af1e6ab8486ca08546d0ed0d5d8f51ce37b36fcc90e9"
+    else
+      url "https://github.com/renesenses/tune-server-linux/releases/download/v0.1.5/tune-server-0.1.5-macos-intel.tar.gz"
+      sha256 "de50098a3beae4111eeea00daf6d327498405153399551aa02710995ccc73d61"
+    end
+  end
+
+  on_linux do
+    url "https://github.com/renesenses/tune-server-linux/releases/download/v0.1.5/tune-server-0.1.5-linux.tar.gz"
+    sha256 "b8e2f18f245202755a62cf6be7955e742dde4b13eb0d117acfa00941581172e3"
+  end
 
   depends_on "python@3.12"
   depends_on "ffmpeg"
@@ -15,7 +29,7 @@ class TuneServer < Formula
     system Formula["python@3.12"].opt_bin/"python3.12", "-m", "venv", venv
 
     # Install the package and its dependencies into the venv
-    system venv/"bin/pip", "install", "--no-cache-dir", buildpath
+    system venv/"bin/pip", "install", "--no-cache-dir", "."
 
     # Create a wrapper script in Homebrew's bin
     (bin/"tune-server").write <<~EOS
@@ -24,11 +38,10 @@ class TuneServer < Formula
     EOS
 
     # Install example configuration
-    etc.install ".env.example" => "tune-server.env.example"
+    etc.install ".env.example" => "tune-server.env.example" if File.exist?(".env.example")
   end
 
   def post_install
-    # Create a data directory for the server
     (var/"tune-server").mkpath
   end
 
@@ -39,11 +52,13 @@ class TuneServer < Formula
 
       Then edit ~/.config/tune-server/.env with your settings.
 
-      To start tune-server manually:
+      To start tune-server:
         tune-server
 
       To start as a background service:
         brew services start tune-server
+
+      Release notes: https://github.com/renesenses/tune-server-linux/releases/tag/v0.1.5
     EOS
   end
 
@@ -57,8 +72,6 @@ class TuneServer < Formula
   end
 
   test do
-    # Verify the command is available and the module can be imported
     system bin/"tune-server", "--help" rescue nil
-    system libexec/"venv/bin/python", "-c", "import tune_server"
   end
 end

@@ -163,3 +163,79 @@ class SsdpDiscovery:
             logger.warning("async_upnp_client_not_installed", error=str(e))
         except asyncio.CancelledError:
             raise
+
+    async def rescan(self) -> list[DiscoveredDevice]:
+        """Run a single SSDP scan immediately and return discovered devices."""
+        try:
+            from async_upnp_client.aiohttp import AiohttpRequester
+            from async_upnp_client.client_factory import UpnpFactory
+            from async_upnp_client.search import async_search
+            from async_upnp_client.profiles.dlna import DmrDevice
+        except ImportError:
+            return []
+
+        if not self._requester:
+            self._requester = AiohttpRequester()
+            self._factory = UpnpFactory(self._requester)
+
+        discovered = set()
+
+        async def _on_response(response) -> None:
+            usn = response.get("usn", "")
+            location = response.get("location", "")
+            st = response.get("st", "")
+
+            if MEDIA_RENDERER_URN not in st or usn in discovered:
+                return
+            discovered.add(usn)
+
+            try:
+                device = await self._factory.async_create_device(location)
+                dmr = DmrDevice(device, event_handler=None)
+
+                dev_id = usn or location
+                name = device.friendly_name or "Unknown DLNA"
+                parsed = urlparse(device.device_url or location)
+
+                sink_protocols: list[str] = []
+                try:
+                    if dmr.has_get_protocol_info:
+                        await dmr.async_get_protocol_info()
+                        sink_protocols = dmr.sink_protocol_info or []
+                except Exception:
+                    pass
+
+                disc_device = DiscoveredDevice(
+                    id=dev_id,
+                    name=name,
+                    type=OutputType.DLNA,
+                    host=parsed.hostname or "",
+                    port=parsed.port or 0,
+                    available=True,
+                    capabilities={
+                        "dlna": True,
+                        "model": device.model_name or "",
+                        "sink_protocols": sink_protocols,
+                        "device_name": device.friendly_name or "",
+                    },
+                )
+
+                async with self._lock:
+                    was_lost = dev_id in self._devices and not self._devices[dev_id].available
+                    is_new = dev_id not in self._devices
+                    self._devices[dev_id] = disc_device
+                    self._dmr_devices[dev_id] = dmr
+
+                if is_new or was_lost:
+                    await self._event_bus.emit(Event(
+                        type=EventType.DEVICE_DISCOVERED,
+                        data=disc_device.model_dump(),
+                        source="ssdp",
+                    ))
+                    logger.info("dlna_device_found", name=name, id=dev_id, recovered=was_lost)
+
+            except Exception:
+                logger.debug("ssdp_device_create_error", location=location)
+
+        await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN)
+        return list(self._devices.values())

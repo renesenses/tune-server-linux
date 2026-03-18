@@ -25,11 +25,13 @@ class ZoneInstance:
         event_bus: EventBus,
         queue_repo: PlayQueueRepo | None = None,
         zone_repo: ZoneRepo | None = None,
+        output_device_id: str | None = None,
     ) -> None:
         self._zone_id = zone_id
         self._name = name
         self._output_type = output_type
         self._output = output
+        self._output_device_id = output_device_id
         self._queue_repo = queue_repo
         self._zone_repo = zone_repo
         self._player = Player(zone_id, event_bus)
@@ -56,6 +58,10 @@ class ZoneInstance:
     @property
     def output_type(self) -> OutputType:
         return self._output_type
+
+    @property
+    def output_device_id(self) -> str | None:
+        return self._output_device_id
 
     @property
     def output(self) -> OutputTarget:

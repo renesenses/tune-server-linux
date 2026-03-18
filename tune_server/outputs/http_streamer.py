@@ -7,6 +7,7 @@ import uuid
 from typing import Optional
 
 import structlog
+import aiohttp
 from aiohttp import web
 
 from tune_server.audio.formats import dsd_mime_from_extension, mime_type_for_format
@@ -90,6 +91,7 @@ class HttpAudioStreamer:
         self._runner: web.AppRunner | None = None
         self._sessions: dict[str, StreamSession] = {}
         self._file_paths: dict[str, str] = {}  # stream_id -> file_path for passthrough
+        self._proxy_urls: dict[str, str] = {}  # stream_id -> upstream HTTPS URL for proxy
         self._cleanup_task: asyncio.Task | None = None
 
     @property
@@ -107,11 +109,20 @@ class HttpAudioStreamer:
     def get_session(self, stream_id: str) -> Optional[StreamSession]:
         return self._sessions.get(stream_id)
 
+    def create_proxy_session(self, upstream_url: str, stream_info: AudioStreamInfo) -> str:
+        """Create a session that proxies an upstream HTTPS URL over HTTP."""
+        stream_id = str(uuid.uuid4())
+        self._sessions[stream_id] = StreamSession(stream_id, stream_info)
+        self._proxy_urls[stream_id] = upstream_url
+        logger.info("proxy_session_created", stream_id=stream_id, url=upstream_url[:80])
+        return stream_id
+
     def remove_session(self, stream_id: str) -> None:
         session = self._sessions.pop(stream_id, None)
         if session:
             session.close()
         self._file_paths.pop(stream_id, None)
+        self._proxy_urls.pop(stream_id, None)
 
     def _resolve_mime(self, stream_id: str, session) -> str:
         """Return the correct MIME type, using file extension for DSD."""
@@ -129,7 +140,8 @@ class HttpAudioStreamer:
 
     async def start(self) -> None:
         self._app = web.Application()
-        self._app.router.add_get("/stream/{stream_id}", self._handle_stream)
+        self._app.router.add_route("HEAD", "/stream/{stream_id}", self._handle_head)
+        self._app.router.add_route("GET", "/stream/{stream_id}", self._handle_stream)
 
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
@@ -153,7 +165,21 @@ class HttpAudioStreamer:
             "contentFeatures.dlna.org": "",
         }
 
-        if session.stream_info.file_size:
+        # For proxy sessions, fetch Content-Length from upstream
+        proxy_url = self._proxy_urls.get(stream_id)
+        if proxy_url:
+            try:
+                async with aiohttp.ClientSession() as cs:
+                    async with cs.head(proxy_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        cl = resp.headers.get("Content-Length")
+                        if cl:
+                            headers["Content-Length"] = cl
+                        upstream_ct = resp.headers.get("Content-Type")
+                        if upstream_ct:
+                            headers["Content-Type"] = upstream_ct
+            except Exception:
+                pass
+        elif session.stream_info.file_size:
             headers["Content-Length"] = str(session.stream_info.file_size)
 
         return web.Response(headers=headers)
@@ -178,6 +204,15 @@ class HttpAudioStreamer:
             except Exception:
                 logger.debug("stream_client_disconnected", stream_id=stream_id)
                 return web.Response(status=499)  # client closed
+
+        # Proxy mode: relay upstream HTTPS content over HTTP
+        proxy_url = self._proxy_urls.get(stream_id)
+        if proxy_url:
+            try:
+                return await self._proxy_stream(request, proxy_url, mime, stream_id)
+            except Exception:
+                logger.debug("proxy_client_disconnected", stream_id=stream_id)
+                return web.Response(status=499)
 
         # Streaming mode
         response = web.StreamResponse(
@@ -281,6 +316,35 @@ class HttpAudioStreamer:
         except Exception:
             logger.debug("serve_file_client_disconnected", stream_id=request.match_info.get("stream_id"))
         return response
+
+    async def _proxy_stream(
+        self, request: web.Request, upstream_url: str, mime: str, stream_id: str,
+    ) -> web.StreamResponse:
+        """Proxy an upstream HTTPS URL over HTTP with Content-Length."""
+        async with aiohttp.ClientSession() as cs:
+            async with cs.get(upstream_url, timeout=aiohttp.ClientTimeout(total=600)) as upstream:
+                headers = {
+                    "Content-Type": upstream.headers.get("Content-Type", mime),
+                    "Accept-Ranges": "bytes",
+                    "transferMode.dlna.org": "Streaming",
+                }
+                cl = upstream.headers.get("Content-Length")
+                if cl:
+                    headers["Content-Length"] = cl
+
+                response = web.StreamResponse(headers=headers)
+                await response.prepare(request)
+
+                logger.info("proxy_stream_started", stream_id=stream_id, content_length=cl)
+
+                try:
+                    async for chunk in upstream.content.iter_chunked(65536):
+                        await response.write(chunk)
+                    await response.write_eof()
+                except Exception:
+                    logger.debug("proxy_stream_disconnected", stream_id=stream_id)
+
+                return response
 
     async def _cleanup_loop(self) -> None:
         """Remove stale sessions every 60s."""

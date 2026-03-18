@@ -120,3 +120,43 @@ class MdnsDiscovery:
             logger.warning("pyatv_not_installed")
         except asyncio.CancelledError:
             raise
+
+    async def rescan(self) -> list[DiscoveredDevice]:
+        """Run a single mDNS scan immediately and return discovered devices."""
+        try:
+            import pyatv
+        except ImportError:
+            return []
+
+        atvs = await pyatv.scan(asyncio.get_running_loop(), timeout=10)
+
+        for atv_config in atvs:
+            dev_id = str(atv_config.identifier) or atv_config.name
+            address = str(atv_config.address)
+            name = atv_config.name
+
+            disc_device = DiscoveredDevice(
+                id=dev_id,
+                name=name,
+                type=OutputType.AIRPLAY,
+                host=address,
+                port=7000,
+                available=True,
+                capabilities={"airplay": True},
+            )
+
+            async with self._lock:
+                was_lost = dev_id in self._devices and not self._devices[dev_id].available
+                is_new = dev_id not in self._devices
+                self._devices[dev_id] = disc_device
+                self._atv_configs[dev_id] = atv_config
+
+            if is_new or was_lost:
+                await self._event_bus.emit(Event(
+                    type=EventType.DEVICE_DISCOVERED,
+                    data=disc_device.model_dump(),
+                    source="mdns",
+                ))
+                logger.info("airplay_device_found", name=name, id=dev_id, recovered=was_lost)
+
+        return list(self._devices.values())

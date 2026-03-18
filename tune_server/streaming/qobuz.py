@@ -346,4 +346,6 @@ class QobuzService(StreamingService):
     def _map_artist(self, ar: dict) -> Artist:
         return Artist(
             name=ar.get("name", "Unknown"),
+            source_id=str(ar.get("id", "")),
+            image_path=ar.get("image", {}).get("large") if isinstance(ar.get("image"), dict) else None,
         )

@@ -109,27 +109,35 @@ class AudioPipeline:
             if out_depth < 16:
                 out_depth = 16
 
+            # For URL sources, prefer FLAC over WAV if target supports it.
+            # Some DLNA renderers (e.g. Micromega) can't handle streaming WAV
+            # (no Content-Length) but handle FLAC streams fine.
+            use_flac = _is_url and AudioFormat.FLAC in self._capabilities.formats
+            out_format = AudioFormat.FLAC if use_flac else AudioFormat.WAV
+
             logger.info(
                 "pipeline_decode",
                 source_format=source_format,
                 source_rate=sample_rate,
                 output_rate=out_rate,
                 output_depth=out_depth,
+                output_format=out_format,
             )
 
             self._stream_info = AudioStreamInfo(
-                format=AudioFormat.WAV,
+                format=out_format,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
                 channels=channels,
             )
 
-            # Decoder: source file → raw PCM (streamed as WAV with header)
+            # Decoder: source file → PCM or encoded format
             self._decoder = FFmpegDecoder(
                 file_path=file_path,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
                 channels=channels,
+                output_format=out_format if use_flac else None,
             )
             await self._decoder.start(seek_ms=seek_ms)
 

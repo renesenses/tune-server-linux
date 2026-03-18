@@ -400,7 +400,7 @@ async def browse_roots():
 
     roots = []
     for music_dir in settings.music_dirs:
-        resolved = str(Path(music_dir).resolve())
+        resolved = str(Path(music_dir).resolve()).replace("\\", "/")
         count = await deps.track_repo.count_by_root(resolved)
         name = mount_display.get(resolved, Path(resolved).name)
         roots.append(BrowseRootEntry(
