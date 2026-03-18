@@ -13,6 +13,7 @@ from tune_server.config import settings
 from tune_server.models import (
     Album,
     Artist,
+    AudioFormat,
     FeaturedSection,
     SearchResult,
     Source,
@@ -463,7 +464,7 @@ class YouTubeService(StreamingService):
         if not data:
             return SearchResult()
 
-        tracks: list[Track] = []
+        video_ids: list[str] = []
         albums: list[Album] = []
         artists: list[Artist] = []
 
@@ -474,13 +475,7 @@ class YouTubeService(StreamingService):
             title = snippet.get("title", "Unknown")
 
             if kind == "youtube#video":
-                tracks.append(Track(
-                    title=title,
-                    artist_name=snippet.get("channelTitle"),
-                    cover_path=cover,
-                    source=Source.YOUTUBE,
-                    source_id=item["id"]["videoId"],
-                ))
+                video_ids.append(item["id"]["videoId"])
             elif kind == "youtube#playlist":
                 albums.append(Album(
                     title=title,
@@ -493,8 +488,11 @@ class YouTubeService(StreamingService):
                 artists.append(Artist(
                     name=title,
                     image_path=cover,
-                    musicbrainz_id=item["id"]["channelId"],  # channel ID used as artist identifier
+                    musicbrainz_id=item["id"]["channelId"],
                 ))
+
+        # Fetch full video details (duration, etc.) in a single batch call
+        tracks = await self._fetch_videos_batch(video_ids)
 
         return SearchResult(tracks=tracks, albums=albums, artists=artists)
 
@@ -521,6 +519,10 @@ class YouTubeService(StreamingService):
             title=snippet.get("title", "Unknown"),
             artist_name=snippet.get("channelTitle"),
             duration_ms=_parse_iso_duration(content.get("duration", "")),
+            format=AudioFormat.OPUS,
+            sample_rate=48000,
+            bit_depth=16,
+            channels=2,
             cover_path=_best_thumbnail(snippet.get("thumbnails", {})),
             source=Source.YOUTUBE,
             source_id=item.get("id", ""),
