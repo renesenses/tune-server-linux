@@ -30,6 +30,7 @@ class EventType(str, Enum):
     PLAYBACK_TRACK_CHANGED = "playback.track_changed"
     PLAYBACK_POSITION = "playback.position"
     PLAYBACK_ERROR = "playback.error"
+    PLAYBACK_METADATA = "playback.metadata"
     PLAYBACK_QUEUE_CHANGED = "playback.queue_changed"
 
     # Playlist events

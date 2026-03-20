@@ -198,9 +198,10 @@ class Player:
 
         capabilities = self._output.capabilities
 
-        # Build audio pipeline
+        # Build audio pipeline with ICY callback for radio streams
+        icy_cb = self._make_icy_callback(track) if track.source == Source.RADIO else None
         source_format = AudioFormat(track.format) if track.format else AudioFormat.FLAC
-        self._pipeline = AudioPipeline(capabilities)
+        self._pipeline = AudioPipeline(capabilities, icy_callback=icy_cb)
         try:
             stream_info = await asyncio.wait_for(
                 self._pipeline.start(
@@ -480,6 +481,51 @@ class Player:
             data={"zone_id": self._zone_id, "volume": self._volume},
             source="player",
         ))
+
+    def _make_icy_callback(self, track: Track):
+        """Create a callback that updates the current track with ICY metadata."""
+        zone_id = self._zone_id
+        event_bus = self._event_bus
+        station_name = track.title  # original station name
+
+        def on_icy_metadata(meta: dict[str, str]) -> None:
+            current = self._queue.current
+            if not current or current.source != Source.RADIO:
+                return
+
+            icy_title = meta.get("title", "")
+            icy_artist = meta.get("artist", "")
+
+            if not icy_title and not icy_artist:
+                return
+
+            # Update the track metadata in-place
+            if icy_artist:
+                current.artist_name = icy_artist
+                current.title = icy_title or station_name
+            else:
+                # No separator found — put raw title in album_title
+                current.title = icy_title
+                current.artist_name = station_name
+
+            current.album_title = station_name  # keep station name accessible
+
+            logger.info("icy_metadata_update", station=station_name, title=icy_title, artist=icy_artist)
+
+            # Emit event so WebSocket clients can update
+            event_bus.emit_nowait(Event(
+                type=EventType.PLAYBACK_METADATA,
+                data={
+                    "zone_id": zone_id,
+                    "title": current.title,
+                    "artist_name": current.artist_name,
+                    "album_title": current.album_title,
+                    "source": "radio",
+                },
+                source="player",
+            ))
+
+        return on_icy_metadata
 
     async def _stop_pipeline(self) -> None:
         if self._gapless:

@@ -6,7 +6,7 @@ from pathlib import Path
 import structlog
 
 from tune_server.audio.buffer import AsyncRingBuffer
-from tune_server.audio.decoder import FFmpegDecoder
+from tune_server.audio.decoder import FFmpegDecoder, IcyMetadataCallback
 from tune_server.audio.formats import AudioCapabilities, can_passthrough
 from tune_server.models import AudioFormat, AudioStreamInfo
 
@@ -34,8 +34,13 @@ class AudioPipeline:
     Otherwise, decodes to PCM and re-encodes to a compatible format.
     """
 
-    def __init__(self, target_capabilities: AudioCapabilities) -> None:
+    def __init__(
+        self,
+        target_capabilities: AudioCapabilities,
+        icy_callback: IcyMetadataCallback | None = None,
+    ) -> None:
         self._capabilities = target_capabilities
+        self._icy_callback = icy_callback
         self._decoder: FFmpegDecoder | None = None
         self._output_buffer = AsyncRingBuffer(max_chunks=512)
         self._pipeline_task: asyncio.Task | None = None
@@ -138,6 +143,7 @@ class AudioPipeline:
                 bit_depth=out_depth,
                 channels=channels,
                 output_format=out_format if use_flac else None,
+                icy_callback=self._icy_callback if _is_url else None,
             )
             await self._decoder.start(seek_ms=seek_ms)
 

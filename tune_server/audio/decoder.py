@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+import re
+from typing import Callable, Optional
 
 import structlog
 
@@ -13,6 +14,9 @@ logger = structlog.get_logger()
 
 # 32KB chunks — larger buffers reduce context-switch overhead for hi-res streams
 CHUNK_SIZE = 32768
+
+# Callback type for ICY metadata updates
+IcyMetadataCallback = Callable[[dict[str, str]], None]
 
 
 class FFmpegDecoder:
@@ -29,15 +33,19 @@ class FFmpegDecoder:
         bit_depth: int = 16,
         channels: int = 2,
         output_format: Optional[AudioFormat] = None,
+        icy_callback: Optional[IcyMetadataCallback] = None,
     ) -> None:
         self._file_path = file_path
         self._sample_rate = sample_rate
         self._bit_depth = bit_depth
         self._channels = channels
         self._output_format = output_format
+        self._icy_callback = icy_callback
         self._process: asyncio.subprocess.Process | None = None
         self._buffer = AsyncRingBuffer(max_chunks=512)
         self._read_task: asyncio.Task | None = None
+        self._stderr_task: asyncio.Task | None = None
+        self._is_http_stream = file_path.startswith("http://") or file_path.startswith("https://")
 
     @property
     def buffer(self) -> AsyncRingBuffer:
@@ -52,7 +60,13 @@ class FFmpegDecoder:
             return "s32le"
 
     def _build_cmd(self, seek_ms: int = 0) -> list[str]:
-        cmd = [settings.ffmpeg_path, "-hide_banner", "-loglevel", "error"]
+        # Use 'info' loglevel for HTTP streams to capture ICY metadata from stderr
+        loglevel = "info" if self._is_http_stream and self._icy_callback else "error"
+        cmd = [settings.ffmpeg_path, "-hide_banner", "-loglevel", loglevel]
+
+        if self._is_http_stream:
+            # Request ICY metadata from the stream
+            cmd.extend(["-icy", "1"])
 
         if seek_ms > 0:
             seconds = seek_ms / 1000.0
@@ -96,6 +110,9 @@ class FFmpegDecoder:
             stderr=asyncio.subprocess.PIPE,
         )
         self._read_task = asyncio.create_task(self._read_output())
+        # Parse stderr for ICY metadata on HTTP streams
+        if self._is_http_stream and self._icy_callback:
+            self._stderr_task = asyncio.create_task(self._read_stderr())
 
     async def _read_output(self) -> None:
         try:
@@ -111,11 +128,67 @@ class FFmpegDecoder:
         finally:
             self._buffer.close()
 
+    # Regex patterns for FFmpeg ICY metadata output
+    _ICY_TITLE_RE = re.compile(r"StreamTitle='([^']*)'")
+    _ICY_META_RE = re.compile(r"icy-(\w+)\s*:\s*(.+)", re.IGNORECASE)
+
+    async def _read_stderr(self) -> None:
+        """Read FFmpeg stderr to extract ICY metadata updates."""
+        last_title = ""
+        try:
+            while True:
+                line_bytes = await self._process.stderr.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+
+                # FFmpeg outputs ICY info like:
+                #   icy-name       : Fip
+                #   icy-genre      : Eclectique
+                # And metadata updates as:
+                #   StreamTitle='Artist - Title'
+                match = self._ICY_TITLE_RE.search(line)
+                if match:
+                    raw_title = match.group(1).strip()
+                    if raw_title and raw_title != last_title:
+                        last_title = raw_title
+                        meta = self._parse_stream_title(raw_title)
+                        if self._icy_callback:
+                            self._icy_callback(meta)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("ffmpeg_stderr_read_error")
+
+    @staticmethod
+    def _parse_stream_title(raw: str) -> dict[str, str]:
+        """Parse 'Artist - Title' or just 'Title' from StreamTitle."""
+        meta: dict[str, str] = {"raw": raw}
+        # Common separators: " - ", " – ", " — "
+        for sep in (" - ", " – ", " — ", " | "):
+            if sep in raw:
+                parts = raw.split(sep, 1)
+                meta["artist"] = parts[0].strip()
+                meta["title"] = parts[1].strip()
+                return meta
+        # No separator found — use entire string as title
+        meta["title"] = raw
+        return meta
+
     async def stop(self) -> None:
         if self._read_task:
             self._read_task.cancel()
             try:
                 await self._read_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
             except asyncio.CancelledError:
                 pass
 
