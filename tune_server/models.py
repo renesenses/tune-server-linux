@@ -227,6 +227,12 @@ class PlayRequest(BaseModel):
     streaming_album_id: Optional[str] = None
     streaming_playlist_id: Optional[str] = None
     file_path: Optional[str] = None  # Direct URL (e.g. media server stream)
+    # Optional metadata for file_path playback
+    title: Optional[str] = None
+    artist_name: Optional[str] = None
+    album_title: Optional[str] = None
+    cover_path: Optional[str] = None
+    duration_ms: Optional[int] = None
 
 
 class QueueAddRequest(BaseModel):
@@ -237,6 +243,11 @@ class QueueAddRequest(BaseModel):
     source_id: Optional[str] = None
     file_path: Optional[str] = None  # Direct URL (e.g. media server stream)
     position: Optional[int] = None  # None = append to end
+    title: Optional[str] = None
+    artist_name: Optional[str] = None
+    album_title: Optional[str] = None
+    cover_path: Optional[str] = None
+    duration_ms: Optional[int] = None
 
 
 class ZoneCreateRequest(BaseModel):
