@@ -542,6 +542,7 @@ class MediaServerContainer(BaseModel):
     parent_id: str
     title: str
     child_count: int = 0
+    album_art_uri: str | None = None
 
 
 class MediaServerItem(BaseModel):

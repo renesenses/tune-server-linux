@@ -118,12 +118,15 @@ class MediaServerBrowser:
             title_el = elem.find("dc:title", NS)
             title = title_el.text if title_el is not None and title_el.text else ""
             child_count = int(elem.get("childCount", "0"))
+            art_el = elem.find("upnp:albumArtURI", NS)
+            album_art_uri = art_el.text if art_el is not None and art_el.text else None
 
             containers.append(MediaServerContainer(
                 id=cid,
                 parent_id=parent_id,
                 title=title,
                 child_count=child_count,
+                album_art_uri=album_art_uri,
             ))
 
         # Parse <item> elements
