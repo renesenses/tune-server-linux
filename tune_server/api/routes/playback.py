@@ -5,6 +5,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 
 from tune_server.api.deps import deps
+from tune_server.event_bus import Event, EventType
 from tune_server.models import (
     PlayRequest,
     QueueAddRequest,
@@ -283,6 +284,8 @@ async def add_to_queue(zone_id: int, request: QueueAddRequest):
 
     if tracks:
         zone.player.queue.add_tracks(tracks, position=request.position)
+        # Notify clients
+        await deps.event_bus.emit(Event(type=EventType.PLAYBACK_QUEUE_CHANGED, data={"zone_id": zone_id}))
 
     return QueueLengthResponse(queue_length=zone.player.queue.length)
 
