@@ -28,6 +28,18 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/zones/{zone_id}", tags=["playback"])
 
 
+def _clean_file_title(file_path: str) -> str:
+    """Extract a clean title from a file path, avoiding raw UPnP IDs."""
+    import re
+    filename = file_path.rsplit("/", 1)[-1]
+    # Remove extension
+    name = filename.rsplit(".", 1)[0] if "." in filename else filename
+    # UPnP IDs look like: d1234567890-coXXXXXXXX or just hex/numbers
+    if re.match(r'^[a-f0-9d-]{20,}$', name, re.IGNORECASE):
+        return "Piste audio"
+    return filename
+
+
 def _get_zone(zone_id: int):
     zone = deps.zone_manager.get_zone(zone_id)
     if not zone:
@@ -126,7 +138,7 @@ async def _resolve_tracks(request: PlayRequest) -> list:
             fmt = AudioFormat.OGG
         tracks.append(Track(
             id=None,
-            title=request.title or request.file_path.rsplit("/", 1)[-1],
+            title=request.title or _clean_file_title(request.file_path),
             artist_name=request.artist_name,
             album_title=request.album_title,
             cover_path=request.cover_path,
@@ -337,7 +349,7 @@ async def add_to_queue(zone_id: int, request: QueueAddRequest):
             fmt = AudioFormat.OGG
         tracks.append(Track(
             id=None,
-            title=request.title or request.file_path.rsplit("/", 1)[-1],
+            title=request.title or _clean_file_title(request.file_path),
             artist_name=request.artist_name,
             album_title=request.album_title,
             cover_path=request.cover_path,
