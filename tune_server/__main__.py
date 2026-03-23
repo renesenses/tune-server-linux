@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import sys
 
 
 def main() -> None:
@@ -10,8 +11,10 @@ def main() -> None:
     async def _run() -> None:
         shutdown_event = asyncio.Event()
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, shutdown_event.set)
+        # add_signal_handler is not supported on Windows
+        if sys.platform != "win32":
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, shutdown_event.set)
         await run_server(shutdown_event)
 
     asyncio.run(_run())
