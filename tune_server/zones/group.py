@@ -114,23 +114,38 @@ class ZoneGroup:
 
     async def pause(self) -> None:
         for zone in self.all_zones:
-            await zone.player.pause()
+            try:
+                await zone.player.pause()
+            except Exception:
+                logger.exception("group_pause_error", zone_id=zone.zone_id)
 
     async def resume(self) -> None:
         for zone in self.all_zones:
-            await zone.player.resume()
+            try:
+                await zone.player.resume()
+            except Exception:
+                logger.exception("group_resume_error", zone_id=zone.zone_id)
 
     async def stop(self) -> None:
         for zone in self.all_zones:
-            await zone.player.stop()
+            try:
+                await zone.player.stop()
+            except Exception:
+                logger.exception("group_stop_error", zone_id=zone.zone_id)
 
     async def skip_next(self) -> None:
         for zone in self.all_zones:
-            await zone.player.skip_next()
+            try:
+                await zone.player.skip_next()
+            except Exception:
+                logger.exception("group_skip_next_error", zone_id=zone.zone_id)
 
     async def skip_previous(self) -> None:
         for zone in self.all_zones:
-            await zone.player.skip_previous()
+            try:
+                await zone.player.skip_previous()
+            except Exception:
+                logger.exception("group_skip_previous_error", zone_id=zone.zone_id)
 
     def add_follower(self, zone: ZoneInstance) -> None:
         if zone not in self._followers and zone != self._leader:

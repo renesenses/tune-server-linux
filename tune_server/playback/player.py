@@ -41,6 +41,7 @@ class Player:
         self._gapless: GaplessHandler | None = None
         self._queue_persist_cb: QueuePersistCallback | None = None
         self._volume_change_cb: Callable | None = None
+        self._lock = asyncio.Lock()
 
     @property
     def state(self) -> PlaybackState:
@@ -99,20 +100,21 @@ class Player:
         tracks: Optional[list[Track]] = None,
         start_position: int = 0,
     ) -> None:
-        # Stop any current playback BEFORE changing the queue to avoid race conditions
-        # where the old _direct_url_monitor or _playback_loop advances into the new queue
-        await self._stop_pipeline()
+        async with self._lock:
+            # Stop any current playback BEFORE changing the queue to avoid race conditions
+            # where the old _direct_url_monitor or _playback_loop advances into the new queue
+            await self._stop_pipeline()
 
-        if tracks:
-            self._queue.set_tracks(tracks, start_position)
-            await self._persist_queue()
+            if tracks:
+                self._queue.set_tracks(tracks, start_position)
+                await self._persist_queue()
 
-        track = self._queue.current
-        if not track:
-            logger.warning("play_no_track", zone_id=self._zone_id)
-            return
+            track = self._queue.current
+            if not track:
+                logger.warning("play_no_track", zone_id=self._zone_id)
+                return
 
-        await self._start_track(track)
+            await self._start_track(track)
 
     async def _start_track(self, track: Track, seek_ms: int = 0) -> None:
         # Stop any current playback
@@ -120,6 +122,11 @@ class Player:
 
         if not self._output:
             logger.error("play_no_output", zone_id=self._zone_id)
+            return
+
+        if hasattr(self._output, '_available') and not self._output._available:
+            logger.warning("output_unavailable", zone_id=self._zone_id)
+            await self._emit_playback_error("output_unavailable", "Output device is not available")
             return
 
         # Resolve stream URL for non-local tracks
@@ -260,7 +267,11 @@ class Player:
             return
         # Resolve stream URL if needed
         if not next_track.file_path and next_track.source_id and self._stream_url_resolver:
-            url = await self._stream_url_resolver(next_track)
+            try:
+                url = await asyncio.wait_for(self._stream_url_resolver(next_track), timeout=10)
+            except (asyncio.TimeoutError, Exception):
+                logger.warning("preload_url_resolve_failed", track=next_track.title)
+                return
             if url:
                 next_track.file_path = url
         if next_track.file_path:
@@ -276,7 +287,13 @@ class Player:
                         continue  # Seamlessly continue the loop with new pipeline
                     break  # No gapless; fall through to _advance_track
                 if self._output:
-                    await self._output.write(chunk)
+                    try:
+                        await asyncio.wait_for(self._output.write(chunk), timeout=10)
+                    except (asyncio.TimeoutError, IOError, ConnectionError, OSError):
+                        logger.warning("output_write_failed", zone_id=self._zone_id)
+                        await self._emit_playback_error("output_disconnected", "Output device disconnected")
+                        self._state = PlaybackState.STOPPED
+                        break
 
             if self._output:
                 await self._output.flush()
@@ -370,6 +387,22 @@ class Player:
         return True
 
     async def _advance_track(self) -> None:
+        # Check if current track failed prematurely (stream URL expired)
+        current = self._queue.current
+        if (current and current.source_id and self._stream_url_resolver
+                and current.duration_ms and self.position_ms < current.duration_ms * 0.9):
+            try:
+                new_url = await asyncio.wait_for(
+                    self._stream_url_resolver(current), timeout=10
+                )
+                if new_url and new_url != current.file_path:
+                    current.file_path = new_url
+                    logger.info("stream_url_refreshed", track=current.title)
+                    await self._start_track(current, seek_ms=self.position_ms)
+                    return
+            except Exception:
+                logger.warning("stream_url_refresh_failed", track=current.title)
+
         next_track = self._queue.next()
         if next_track:
             await self._persist_queue()
@@ -394,93 +427,109 @@ class Player:
             ))
 
     async def pause(self) -> None:
-        if self._state != PlaybackState.PLAYING:
-            return
+        async with self._lock:
+            if self._state != PlaybackState.PLAYING:
+                return
 
-        self._position_ms = self.position_ms
-        self._state = PlaybackState.PAUSED
+            self._position_ms = self.position_ms
+            self._state = PlaybackState.PAUSED
 
-        if self._output:
-            await self._output.pause()
+            if self._output:
+                await self._output.pause()
 
-        await self._event_bus.emit(Event(
-            type=EventType.PLAYBACK_PAUSED,
-            data={"zone_id": self._zone_id, "position_ms": self._position_ms},
-            source="player",
-        ))
+            await self._event_bus.emit(Event(
+                type=EventType.PLAYBACK_PAUSED,
+                data={"zone_id": self._zone_id, "position_ms": self._position_ms},
+                source="player",
+            ))
 
     async def resume(self) -> None:
-        if self._state != PlaybackState.PAUSED:
-            return
+        async with self._lock:
+            if self._state != PlaybackState.PAUSED:
+                return
 
-        self._state = PlaybackState.PLAYING
-        self._position_start_time = time.monotonic()
+            self._state = PlaybackState.PLAYING
+            self._position_start_time = time.monotonic()
 
-        if self._output:
-            await self._output.resume()
+            if self._output:
+                await self._output.resume()
 
-        await self._event_bus.emit(Event(
-            type=EventType.PLAYBACK_RESUMED,
-            data={"zone_id": self._zone_id},
-            source="player",
-        ))
+            await self._event_bus.emit(Event(
+                type=EventType.PLAYBACK_RESUMED,
+                data={"zone_id": self._zone_id},
+                source="player",
+            ))
 
     async def stop(self) -> None:
-        await self._stop_pipeline()
-        self._state = PlaybackState.STOPPED
-        self._position_ms = 0
+        async with self._lock:
+            await self._stop_pipeline()
+            self._state = PlaybackState.STOPPED
+            self._position_ms = 0
 
-        if self._output:
-            await self._output.stop()
+            if self._output:
+                await self._output.stop()
 
-        await self._event_bus.emit(Event(
-            type=EventType.PLAYBACK_STOPPED,
-            data={"zone_id": self._zone_id},
-            source="player",
-        ))
+            await self._event_bus.emit(Event(
+                type=EventType.PLAYBACK_STOPPED,
+                data={"zone_id": self._zone_id},
+                source="player",
+            ))
 
     async def skip_next(self) -> None:
-        next_track = self._queue.next()
-        if next_track:
-            await self._persist_queue()
-            await self._start_track(next_track)
-        else:
-            await self.stop()
+        async with self._lock:
+            next_track = self._queue.next()
+            if next_track:
+                await self._persist_queue()
+                await self._start_track(next_track)
+            else:
+                await self._stop_pipeline()
+                self._state = PlaybackState.STOPPED
+                self._position_ms = 0
+                if self._output:
+                    await self._output.stop()
+                await self._event_bus.emit(Event(
+                    type=EventType.PLAYBACK_STOPPED,
+                    data={"zone_id": self._zone_id},
+                    source="player",
+                ))
 
     async def skip_previous(self) -> None:
-        prev_track = self._queue.previous()
-        if prev_track:
-            await self._persist_queue()
-            await self._start_track(prev_track)
+        async with self._lock:
+            prev_track = self._queue.previous()
+            if prev_track:
+                await self._persist_queue()
+                await self._start_track(prev_track)
 
     async def seek(self, position_ms: int) -> None:
-        track = self._queue.current
-        if not track:
-            return
+        async with self._lock:
+            track = self._queue.current
+            if not track:
+                return
 
-        if position_ms < 0:
-            position_ms = 0
-        if track.duration_ms and position_ms > track.duration_ms:
-            position_ms = track.duration_ms
+            if position_ms < 0:
+                position_ms = 0
+            if track.duration_ms and position_ms > track.duration_ms:
+                position_ms = track.duration_ms
 
-        was_playing = self._state == PlaybackState.PLAYING
-        await self._stop_pipeline()
+            was_playing = self._state == PlaybackState.PLAYING
+            await self._stop_pipeline()
 
-        if was_playing:
-            await self._start_track(track, seek_ms=position_ms)
+            if was_playing:
+                await self._start_track(track, seek_ms=position_ms)
 
     async def set_volume(self, volume: float) -> None:
-        self._volume = max(0.0, min(1.0, volume))
-        if self._output:
-            await self._output.set_volume(self._volume)
-        if self._volume_change_cb:
-            await self._volume_change_cb(self._volume)
+        async with self._lock:
+            self._volume = max(0.0, min(1.0, volume))
+            if self._output:
+                await self._output.set_volume(self._volume)
+            if self._volume_change_cb:
+                await self._volume_change_cb(self._volume)
 
-        await self._event_bus.emit(Event(
-            type=EventType.ZONE_VOLUME_CHANGED,
-            data={"zone_id": self._zone_id, "volume": self._volume},
-            source="player",
-        ))
+            await self._event_bus.emit(Event(
+                type=EventType.ZONE_VOLUME_CHANGED,
+                data={"zone_id": self._zone_id, "volume": self._volume},
+                source="player",
+            ))
 
     def _make_icy_callback(self, track: Track):
         """Create a callback that updates the current track with ICY metadata."""

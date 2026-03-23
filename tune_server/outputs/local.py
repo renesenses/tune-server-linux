@@ -24,6 +24,7 @@ class LocalOutput(OutputTarget):
         self._volume: float = 1.0
         self._paused = False
         self._available = True
+        self._recovery_attempts = 0
         self._start_time: float = 0.0
         self._elapsed_before_pause: float = 0.0
 
@@ -112,11 +113,17 @@ class LocalOutput(OutputTarget):
 
             await asyncio.to_thread(self._stream.write, arr)
         except sd.PortAudioError:
-            logger.warning("local_output_write_error_recovering")
+            self._recovery_attempts += 1
+            logger.warning("local_output_write_error_recovering", attempt=self._recovery_attempts)
+            if self._recovery_attempts > 3:
+                self._available = False
+                raise IOError("Local output recovery failed after 3 attempts")
             # Attempt to recover by restarting the stream
             if self._stream_info:
+                await asyncio.sleep(0.5 * self._recovery_attempts)
                 try:
                     await self.start(self._stream_info)
+                    self._recovery_attempts = 0
                 except Exception:
                     logger.exception("local_output_recovery_failed")
         except Exception:
