@@ -503,6 +503,15 @@ class Player:
                 ))
 
     async def skip_previous(self) -> None:
+        # CD player behavior: if past 3 seconds, restart current track;
+        # if in the first 3 seconds, go to previous track
+        if self.position_ms > 3000 and self._queue.current:
+            track = self._queue.current
+            async with self._lock:
+                await self._stop_pipeline()
+            await self._start_track(track)
+            return
+
         async with self._lock:
             prev_track = self._queue.previous()
             if prev_track:

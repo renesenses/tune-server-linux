@@ -111,6 +111,7 @@ class DlnaOutput(OutputTarget):
         self._server_ip = server_ip
         self._stream_id: str | None = None
         self._direct_url: bool = False
+        self._last_uri: str | None = None
         self._available = True
         self._volume: float = 0.5
         self._device_ip = device_ip
@@ -189,6 +190,7 @@ class DlnaOutput(OutputTarget):
                 await asyncio.wait_for(dmr.async_play(), timeout=10)
 
                 self._direct_url = True
+                self._last_uri = url
                 self._available = True
                 logger.info("dlna_direct_url_playback", device=self.name, url=url[:80])
                 return
@@ -268,6 +270,7 @@ class DlnaOutput(OutputTarget):
             )
             await asyncio.wait_for(dmr.async_play(), timeout=10)
 
+            self._last_uri = stream_url
             self._available = True
             logger.info("dlna_playback_started", device=self.name, url=stream_url)
         except Exception:
@@ -305,7 +308,13 @@ class DlnaOutput(OutputTarget):
         await self._dmr_call("async_pause")
 
     async def resume(self) -> None:
-        await self._dmr_call("async_play")
+        ok = await self._dmr_call("async_play")
+        if not ok:
+            logger.warning("dlna_resume_failed_retry", device=self.name)
+            # Some renderers need SetAVTransportURI again after pause
+            if self._last_uri:
+                await self._dmr_call("async_set_transport_uri", self._last_uri)
+                await self._dmr_call("async_play")
 
     async def stop(self) -> None:
         await self._dmr_call("async_stop")
