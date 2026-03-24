@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     music_dirs: list[str] = Field(default_factory=lambda: [str(Path.home() / "Music")])
     scan_on_startup: bool = True
     watch_filesystem: bool = True
+    recording_dir: str = str(Path.home() / "Music" / "Recordings")
     watcher_debounce_seconds: float = 2.0
 
     # Database

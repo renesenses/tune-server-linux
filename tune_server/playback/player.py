@@ -41,6 +41,7 @@ class Player:
         self._gapless: GaplessHandler | None = None
         self._queue_persist_cb: QueuePersistCallback | None = None
         self._volume_change_cb: Callable | None = None
+        self._recording_hook: Callable | None = None  # Called with (zone_id, track) before playback
         self._lock = asyncio.Lock()
 
     @property
@@ -78,6 +79,9 @@ class Player:
 
     def set_volume_change_callback(self, cb: Callable) -> None:
         self._volume_change_cb = cb
+
+    def set_recording_hook(self, cb: Callable) -> None:
+        self._recording_hook = cb
 
     async def _persist_queue(self) -> None:
         """Persist current queue state if callback is set."""
@@ -150,6 +154,13 @@ class Player:
                 await self._emit_playback_error("stream_url_failed", f"Failed to resolve URL for '{track.title}'", track)
                 await self._advance_track()
                 return
+
+        # Notify recording hook (captures track URL before playback starts)
+        if self._recording_hook:
+            try:
+                self._recording_hook(self._zone_id, track)
+            except Exception:
+                pass  # Recording errors should never affect playback
 
         # Check if output can handle URL directly (e.g., DLNA renderer fetching from CDN)
         # or if output handles native DSD passthrough (renderer pulls DSF via HTTP)

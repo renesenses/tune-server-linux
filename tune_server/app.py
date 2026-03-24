@@ -165,6 +165,12 @@ class TuneServer:
         deps.zone_repo = zone_repo
         deps.radio_repo = radio_repo
 
+        # Recording service
+        from tune_server.recording.recorder import RecordingService
+        self._recording_service = RecordingService(self._event_bus, settings.recording_dir)
+        await self._recording_service.start()
+        deps.recording_service = self._recording_service
+
         # WebSocket manager
         self._ws_manager = await setup_websocket_manager(self._event_bus)
 
@@ -324,10 +330,12 @@ class TuneServer:
 
         deps.stream_url_resolver = _resolve_stream_url
 
-        # Set resolver on all existing zones
+        # Set resolver and recording hook on all existing zones
         if self._zone_manager:
             for zone in self._zone_manager.list_zones():
                 zone.player.set_stream_url_resolver(_resolve_stream_url)
+                if self._recording_service:
+                    zone.player.set_recording_hook(self._recording_service.set_track_info)
             self._zone_manager.set_stream_url_resolver(_resolve_stream_url)
 
     async def _safe_stop(self, name: str, coro) -> None:
