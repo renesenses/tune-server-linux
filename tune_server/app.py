@@ -145,6 +145,12 @@ class TuneServer:
         # Initialize zones from DB (now devices should be available)
         await self._zone_manager.initialize()
 
+        # Recording service
+        from tune_server.recording.recorder import RecordingService
+        self._recording_service = RecordingService(self._event_bus, settings.recording_dir)
+        await self._recording_service.start()
+        deps.recording_service = self._recording_service
+
         # Streaming services
         self._setup_streaming_services()
         await self._restore_streaming_auth()
@@ -164,12 +170,6 @@ class TuneServer:
         deps.queue_repo = queue_repo
         deps.zone_repo = zone_repo
         deps.radio_repo = radio_repo
-
-        # Recording service
-        from tune_server.recording.recorder import RecordingService
-        self._recording_service = RecordingService(self._event_bus, settings.recording_dir)
-        await self._recording_service.start()
-        deps.recording_service = self._recording_service
 
         # WebSocket manager
         self._ws_manager = await setup_websocket_manager(self._event_bus)
