@@ -279,7 +279,11 @@ class Player:
 
     async def _playback_loop(self) -> None:
         try:
-            while self._state in (PlaybackState.PLAYING, PlaybackState.BUFFERING):
+            while self._state in (PlaybackState.PLAYING, PlaybackState.BUFFERING, PlaybackState.PAUSED):
+                # Wait while paused
+                if self._state == PlaybackState.PAUSED:
+                    await asyncio.sleep(0.1)
+                    continue
                 chunk = await self._pipeline.output_buffer.get()
                 if chunk is None:
                     # Track finished — try gapless transition
@@ -480,8 +484,13 @@ class Player:
             next_track = self._queue.next()
             if next_track:
                 await self._persist_queue()
-                await self._start_track(next_track)
-            else:
+                # Stop current playback quickly
+                await self._stop_pipeline()
+        # Start new track outside lock to avoid blocking other commands
+        if next_track:
+            await self._start_track(next_track)
+        else:
+            async with self._lock:
                 await self._stop_pipeline()
                 self._state = PlaybackState.STOPPED
                 self._position_ms = 0
@@ -498,24 +507,26 @@ class Player:
             prev_track = self._queue.previous()
             if prev_track:
                 await self._persist_queue()
-                await self._start_track(prev_track)
+                await self._stop_pipeline()
+        if prev_track:
+            await self._start_track(prev_track)
 
     async def seek(self, position_ms: int) -> None:
+        track = self._queue.current
+        if not track:
+            return
+
+        if position_ms < 0:
+            position_ms = 0
+        if track.duration_ms and position_ms > track.duration_ms:
+            position_ms = track.duration_ms
+
         async with self._lock:
-            track = self._queue.current
-            if not track:
-                return
-
-            if position_ms < 0:
-                position_ms = 0
-            if track.duration_ms and position_ms > track.duration_ms:
-                position_ms = track.duration_ms
-
             was_playing = self._state == PlaybackState.PLAYING
             await self._stop_pipeline()
-
-            if was_playing:
-                await self._start_track(track, seek_ms=position_ms)
+        # Restart outside lock for responsiveness
+        if was_playing:
+            await self._start_track(track, seek_ms=position_ms)
 
     async def set_volume(self, volume: float) -> None:
         async with self._lock:
