@@ -33,6 +33,12 @@ class EventType(str, Enum):
     PLAYBACK_METADATA = "playback.metadata"
     PLAYBACK_QUEUE_CHANGED = "playback.queue_changed"
 
+    # Recording events
+    RECORDING_STARTED = "recording.started"
+    RECORDING_TRACK_SAVED = "recording.track_saved"
+    RECORDING_STOPPED = "recording.stopped"
+    RECORDING_ERROR = "recording.error"
+
     # Playlist events
     PLAYLIST_CREATED = "playlist.created"
     PLAYLIST_UPDATED = "playlist.updated"
