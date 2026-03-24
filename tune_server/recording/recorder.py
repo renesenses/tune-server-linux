@@ -182,6 +182,21 @@ class RecordingService:
             return
         await self._start_capture(zone_id)
 
+    async def _resolve_fresh_url(self, track: Track) -> str | None:
+        """Resolve a fresh streaming URL for recording (avoid sharing with player)."""
+        if not track.source_id or not track.source:
+            return None
+        try:
+            from tune_server.api.deps import deps as _deps
+            svc_name = track.source.value if isinstance(track.source, Source) else str(track.source)
+            svc = _deps.streaming_services.get(svc_name)
+            if svc and hasattr(svc, "get_stream_url"):
+                url = await asyncio.wait_for(svc.get_stream_url(track.source_id), timeout=15)
+                return url
+        except Exception:
+            logger.debug("recording_fresh_url_failed", source_id=track.source_id)
+        return None
+
     async def _enrich_track_metadata(self, track: Track) -> None:
         """Fill in missing album_title/cover from the streaming connector."""
         if track.album_title and track.cover_path:
@@ -224,6 +239,13 @@ class RecordingService:
 
         # Cancel any existing capture for this zone
         await self._finalize_current(zone_id)
+
+        # For streaming tracks, resolve a SEPARATE URL to avoid stealing the player's stream
+        if url and url.startswith(("http://", "https://")) and track.source_id and track.source not in (Source.RADIO,):
+            fresh_url = await self._resolve_fresh_url(track)
+            if fresh_url:
+                url = fresh_url
+                logger.info("recording_fresh_url_resolved", zone_id=zone_id, title=track.title)
 
         # Determine output path
         source_name = track.source.value if track.source else "unknown"

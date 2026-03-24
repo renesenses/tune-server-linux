@@ -34,6 +34,26 @@ async def _enrich_track(track: Track) -> None:
     except Exception:
         logger.debug("enrich_track_failed", source=svc_name, source_id=track.source_id)
 
+
+async def _resolve_recording_url(track: Track) -> str | None:
+    """Resolve a fresh streaming URL dedicated to recording (separate from playback)."""
+    if not track.source_id or not track.source:
+        return None
+
+    svc_name = track.source.value if isinstance(track.source, Source) else str(track.source)
+    svc = deps.streaming_services.get(svc_name)
+    if not svc or not hasattr(svc, "get_stream_url"):
+        return None
+
+    try:
+        import asyncio
+        url = await asyncio.wait_for(svc.get_stream_url(track.source_id), timeout=15)
+        return url
+    except Exception:
+        logger.debug("resolve_recording_url_failed", source=svc_name, source_id=track.source_id)
+        return None
+
+
 router = APIRouter(prefix="/zones/{zone_id}/record", tags=["recording"])
 
 
@@ -55,18 +75,19 @@ async def start_recording(zone_id: int):
         # Enrich track metadata from streaming service if missing
         await _enrich_track(track)
 
-        # For streaming tracks, resolve URL if not already set
-        if not track.file_path and track.source_id and zone.player._stream_url_resolver:
-            try:
-                import asyncio
-                url = await asyncio.wait_for(
-                    zone.player._stream_url_resolver(track), timeout=15
-                )
-                if url:
-                    track.file_path = url
-            except Exception:
-                pass
-        deps.recording_service.set_track_info(zone_id, track)
+        # Resolve a SEPARATE URL for recording (don't steal the player's stream)
+        rec_track = track.model_copy()
+        if not rec_track.file_path and rec_track.source_id:
+            rec_url = await _resolve_recording_url(rec_track)
+            if rec_url:
+                rec_track.file_path = rec_url
+        elif rec_track.file_path and rec_track.file_path.startswith("http"):
+            # Player already has a URL — get a fresh one for recording
+            rec_url = await _resolve_recording_url(rec_track)
+            if rec_url:
+                rec_track.file_path = rec_url
+
+        deps.recording_service.set_track_info(zone_id, rec_track)
         await deps.recording_service.capture_current_track(zone_id)
 
     return {"status": "recording", "zone_id": zone_id}
