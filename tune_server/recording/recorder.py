@@ -170,6 +170,40 @@ class RecordingService:
         self._track_info[zone_id] = track
         if track.file_path:
             self._track_urls[zone_id] = track.file_path
+            logger.info("recording_track_url_captured", zone_id=zone_id,
+                        title=track.title, url_prefix=track.file_path[:60])
+        else:
+            logger.warning("recording_track_no_url", zone_id=zone_id,
+                           title=track.title, source=str(track.source))
+
+    async def capture_current_track(self, zone_id: int) -> None:
+        """Start capturing immediately for a track already playing."""
+        if zone_id not in self._enabled_zones:
+            return
+        await self._start_capture(zone_id)
+
+    async def _enrich_track_metadata(self, track: Track) -> None:
+        """Fill in missing album_title/cover from the streaming connector."""
+        if track.album_title and track.cover_path:
+            return
+        if not track.source_id or not track.source:
+            return
+
+        try:
+            from tune_server.api.deps import deps as _deps
+            svc_name = track.source.value if isinstance(track.source, Source) else str(track.source)
+            svc = _deps.streaming_services.get(svc_name)
+            if svc:
+                full = await svc.get_track(track.source_id)
+                if full:
+                    if not track.album_title and full.album_title:
+                        track.album_title = full.album_title
+                    if not track.cover_path and full.cover_path:
+                        track.cover_path = full.cover_path
+                    if not track.artist_name and full.artist_name:
+                        track.artist_name = full.artist_name
+        except Exception:
+            logger.debug("enrich_track_metadata_failed", source_id=track.source_id)
 
     async def _start_capture(self, zone_id: int) -> None:
         """Start capturing the current track for a zone."""
@@ -179,6 +213,9 @@ class RecordingService:
         if not track:
             logger.warning("recording_no_track_info", zone_id=zone_id)
             return
+
+        # Enrich metadata if missing
+        await self._enrich_track_metadata(track)
 
         # Check excluded sources
         if track.source in EXCLUDED_SOURCES:

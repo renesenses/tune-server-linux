@@ -1,9 +1,38 @@
 """Recording API routes."""
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, HTTPException
 
 from tune_server.api.deps import deps
+from tune_server.models import Source, Track
+
+logger = structlog.get_logger()
+
+
+async def _enrich_track(track: Track) -> None:
+    """Fill in missing album_title/cover from the streaming connector."""
+    if track.album_title and track.cover_path:
+        return  # already complete
+    if not track.source_id or not track.source:
+        return
+
+    svc_name = track.source.value if isinstance(track.source, Source) else str(track.source)
+    svc = deps.streaming_services.get(svc_name)
+    if not svc:
+        return
+
+    try:
+        full = await svc.get_track(track.source_id)
+        if full:
+            if not track.album_title and full.album_title:
+                track.album_title = full.album_title
+            if not track.cover_path and full.cover_path:
+                track.cover_path = full.cover_path
+            if not track.artist_name and full.artist_name:
+                track.artist_name = full.artist_name
+    except Exception:
+        logger.debug("enrich_track_failed", source=svc_name, source_id=track.source_id)
 
 router = APIRouter(prefix="/zones/{zone_id}/record", tags=["recording"])
 
@@ -20,10 +49,25 @@ async def start_recording(zone_id: int):
 
     deps.recording_service.start_recording_zone(zone_id)
 
-    # If already playing, capture the current track
+    # If already playing, capture the current track immediately
     track = zone.player.current_track
     if track:
+        # Enrich track metadata from streaming service if missing
+        await _enrich_track(track)
+
+        # For streaming tracks, resolve URL if not already set
+        if not track.file_path and track.source_id and zone.player._stream_url_resolver:
+            try:
+                import asyncio
+                url = await asyncio.wait_for(
+                    zone.player._stream_url_resolver(track), timeout=15
+                )
+                if url:
+                    track.file_path = url
+            except Exception:
+                pass
         deps.recording_service.set_track_info(zone_id, track)
+        await deps.recording_service.capture_current_track(zone_id)
 
     return {"status": "recording", "zone_id": zone_id}
 
