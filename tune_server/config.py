@@ -16,10 +16,11 @@ def _detect_base_dir() -> Path:
 
 
 def _detect_web_dir() -> str | None:
-    """Auto-detect web/ directory next to the binary."""
-    candidate = _detect_base_dir() / "web"
-    if candidate.is_dir() and (candidate / "index.html").is_file():
-        return str(candidate)
+    """Auto-detect web/ directory next to the binary or in _internal/."""
+    base = _detect_base_dir()
+    for candidate in [base / "web", base / "_internal" / "web"]:
+        if candidate.is_dir() and (candidate / "index.html").is_file():
+            return str(candidate)
     return None
 
 
