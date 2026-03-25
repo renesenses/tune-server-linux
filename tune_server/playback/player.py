@@ -306,16 +306,36 @@ class Player:
                         await asyncio.wait_for(self._output.write(chunk), timeout=10)
                     except (asyncio.TimeoutError, IOError, ConnectionError, OSError):
                         logger.warning("output_write_failed", zone_id=self._zone_id)
-                        await self._emit_playback_error("output_disconnected", "Output device disconnected")
-                        self._state = PlaybackState.STOPPED
-                        break
+                        # Check if renderer is still playing (e.g. DLNA buffered data)
+                        renderer_pos = await self._output.get_position_ms() if self._output else -1
+                        if renderer_pos > 0:
+                            # Renderer still playing — switch to direct_url monitor mode
+                            logger.info("output_write_failed_but_renderer_playing",
+                                        zone_id=self._zone_id, renderer_pos=renderer_pos)
+                            break  # Exit pipeline loop, fall through to monitor below
+                        # Retry once
+                        await asyncio.sleep(1)
+                        try:
+                            await asyncio.wait_for(self._output.write(chunk), timeout=10)
+                            logger.info("output_write_recovered", zone_id=self._zone_id)
+                        except Exception:
+                            logger.error("output_write_failed_final", zone_id=self._zone_id)
+                            await self._emit_playback_error("output_disconnected", "Output device disconnected")
+                            self._state = PlaybackState.STOPPED
+                            break
 
             if self._output:
                 await self._output.flush()
 
-            # Auto-advance to next track
+            # Auto-advance to next track (or monitor renderer if it's still playing)
             if self._state == PlaybackState.PLAYING:
-                await self._advance_track()
+                # Check if renderer is still playing (pipeline broke but renderer buffered)
+                renderer_pos = await self._output.get_position_ms() if self._output else -1
+                if renderer_pos > 0 and self._queue.current:
+                    logger.info("switching_to_renderer_monitor", zone_id=self._zone_id)
+                    await self._direct_url_monitor(self._queue.current)
+                else:
+                    await self._advance_track()
 
         except asyncio.CancelledError:
             pass
