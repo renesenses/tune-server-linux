@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from tune_server.network.mount_manager import MountManager
     from tune_server.streaming.base import StreamingService
     from tune_server.zones.group import GroupManager
-    from tune_server.recording.recorder import RecordingService
     from tune_server.zones.manager import ZoneManager
 
 
@@ -30,7 +29,6 @@ class AppDeps:
         self.streaming_services: dict[str, StreamingService] = {}
         self.watcher: FileSystemWatcher | None = None
         self.stream_url_resolver: object | None = None  # StreamUrlResolver callable
-        self.recording_service: RecordingService | None = None
 
         # Repos (set after DB init)
         self.track_repo: TrackRepo | None = None

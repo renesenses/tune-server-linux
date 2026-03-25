@@ -35,15 +35,6 @@ LOCAL_CAPABILITIES = AudioCapabilities(
     supports_gapless=True,
 )
 
-RECORDER_CAPABILITIES = AudioCapabilities(
-    formats={AudioFormat.FLAC, AudioFormat.WAV, AudioFormat.MP3, AudioFormat.AAC,
-             AudioFormat.ALAC, AudioFormat.OGG, AudioFormat.OPUS, AudioFormat.DSD,
-             AudioFormat.AIFF},
-    max_sample_rate=768000,
-    max_bit_depth=64,
-    supports_gapless=False,
-)
-
 
 def format_from_extension(ext: str) -> AudioFormat | None:
     ext = ext.lower().lstrip(".")

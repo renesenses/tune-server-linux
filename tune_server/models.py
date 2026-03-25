@@ -47,7 +47,6 @@ class OutputType(str, Enum):
     LOCAL = "local"
     DLNA = "dlna"
     AIRPLAY = "airplay"
-    RECORDER = "recorder"
 
 
 # --- Domain models ---

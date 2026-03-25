@@ -38,7 +38,6 @@ class EventType(str, Enum):
     RECORDING_TRACK_SAVED = "recording.track_saved"
     RECORDING_STOPPED = "recording.stopped"
     RECORDING_ERROR = "recording.error"
-    RECORDING_PROGRESS = "recording.progress"
 
     # Playlist events
     PLAYLIST_CREATED = "playlist.created"
