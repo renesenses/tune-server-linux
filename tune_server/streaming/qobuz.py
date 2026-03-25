@@ -312,13 +312,24 @@ class QobuzService(StreamingService):
     def _map_track(self, t: dict) -> Track:
         performer = t.get("performer", {})
         album = t.get("album", {})
+        album_artist = album.get("artist", {}) if album else {}
         image = album.get("image", {}) if album else {}
         cover_path = image.get("large") or image.get("small") or image.get("thumbnail") or None
 
+        # Artist: prefer performer, fallback to album artist
+        artist_name = (
+            performer.get("name")
+            or album_artist.get("name")
+            or t.get("composer", {}).get("name")
+            or "Unknown"
+        )
+
         return Track(
             title=t.get("title", "Unknown"),
-            artist_name=performer.get("name", "Unknown"),
+            artist_name=artist_name,
             album_title=album.get("title"),
+            track_number=t.get("track_number", 0),
+            disc_number=t.get("media_number", 1),
             duration_ms=int(t.get("duration", 0)) * 1000,
             format=AudioFormat.FLAC,
             sample_rate=t.get("maximum_sampling_rate", 44.1) * 1000,

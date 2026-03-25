@@ -172,11 +172,14 @@ class RecorderOutput(OutputTarget):
 
         except asyncio.CancelledError:
             # Clean up partial file
-            if output_path.exists() and self._bytes_written == 0:
+            if output_path.exists():
                 output_path.unlink(missing_ok=True)
             raise
         except Exception:
             logger.exception("recorder_download_error", title=track.title)
+            # Clean up corrupted/partial file
+            if output_path.exists() and output_path.stat().st_size < 1024:
+                output_path.unlink(missing_ok=True)
             await self._event_bus.emit(Event(
                 type=EventType.RECORDING_ERROR,
                 data={"track_title": track.title, "error": "Download failed"},
@@ -237,8 +240,19 @@ class RecorderOutput(OutputTarget):
         }
         ext = ext_map.get(fmt, ".flac")
 
-        prefix = f"{track.track_number:02d} - " if track.track_number else ""
-        return self._output_dir / source_name.capitalize() / artist / album / f"{prefix}{title}{ext}"
+        # Include disc number for multi-disc albums
+        disc = track.disc_number or 1
+        prefix = ""
+        if disc > 1:
+            prefix += f"D{disc} "
+        if track.track_number:
+            prefix += f"{track.track_number:02d} - "
+
+        # Avoid filename collisions: append source_id if file already exists
+        base_path = self._output_dir / source_name.capitalize() / artist / album / f"{prefix}{title}{ext}"
+        if base_path.exists() and track.source_id:
+            base_path = base_path.with_stem(f"{prefix}{title} ({track.source_id})")
+        return base_path
 
 
 def _safe_dir(name: str, max_len: int = 80) -> str:

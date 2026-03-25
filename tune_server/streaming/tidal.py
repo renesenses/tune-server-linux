@@ -460,6 +460,8 @@ class TidalService(StreamingService):
             title=t.name or "Unknown",
             artist_name=artist_name,
             album_title=album_title,
+            track_number=getattr(t, "track_num", 0) or 0,
+            disc_number=getattr(t, "volume_num", 1) or 1,
             duration_ms=duration,
             format=fmt,
             sample_rate=44100,
