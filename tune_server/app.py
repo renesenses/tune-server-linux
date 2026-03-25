@@ -273,9 +273,17 @@ class TuneServer:
         async def create_local_output(device_id: str | None):
             return LocalOutput(device_name=device_id)
 
+        async def create_recorder_output(device_id: str | None):
+            from tune_server.outputs.recorder import RecorderOutput
+            return RecorderOutput(
+                event_bus=self._event_bus,
+                output_dir=settings.recording_dir,
+            )
+
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
         self._zone_manager.register_output_factory(OutputType.AIRPLAY, create_airplay_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
+        self._zone_manager.register_output_factory(OutputType.RECORDER, create_recorder_output)
 
     def _setup_streaming_services(self) -> None:
         if settings.tidal_enabled:

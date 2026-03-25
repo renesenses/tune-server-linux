@@ -327,17 +327,20 @@ class Player:
         """Monitor direct URL playback and auto-advance when track finishes."""
         try:
             duration_ms = track.duration_ms or 0
-            if not duration_ms:
-                # No duration info — cannot auto-advance, wait for user action or stop
-                while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
-                    await asyncio.sleep(2)
-                return
 
             while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
                 await asyncio.sleep(1)
                 if self._state == PlaybackState.PAUSED:
                     continue
-                if self.position_ms >= duration_ms:
+
+                # Prefer output-reported position (recorder, some DLNA)
+                output_pos = await self._output.get_position_ms() if self._output else -1
+                pos = output_pos if output_pos >= 0 else self.position_ms
+
+                if duration_ms and pos >= duration_ms:
+                    break
+                # No duration but output signals completion (pos >= 1)
+                if not duration_ms and output_pos >= 1:
                     break
 
             if self._state == PlaybackState.PLAYING:
