@@ -2,6 +2,27 @@
 
 All notable changes to Tune Server.
 
+## v0.2.2 — 2026-03-26
+
+### Fixed
+- **DLNA resilience**: automatic fallback to renderer monitor when the local pipeline breaks (e.g., network glitch) — playback continues seamlessly
+- **DLNA resume**: pause/resume now works reliably on all DLNA renderers
+- **Skip/seek reactivity**: previous track uses CD-style behavior (restart if >3s, else go back)
+- **Track numbers**: streaming connectors (Tidal, Qobuz, YouTube) now correctly populate `track_number` and `disc_number`
+- **Windows**: fixed crash on startup (`add_signal_handler` not supported on Win32)
+- **PyInstaller 6+**: fixed `web/` directory detection inside `_internal/` bundle
+- **Version detection**: fallback reads `pyproject.toml` when `importlib.metadata` is unavailable (frozen builds)
+
+### Web Client
+- **Full responsive UI**: 3 breakpoints — desktop (sidebar), tablet (icon sidebar), mobile (bottom tab bar)
+- **Mobile bottom tab bar**: Zone selector, Home, Library, Search, Streaming, Plus (drawer with all remaining views)
+- **Mini-player**: compact transport bar on mobile, tap to open full-screen Now Playing
+- **Zone selector**: accessible on mobile and tablet via sheet overlay
+- **Record button**: Now Playing view includes recording controls
+- **Dynamic version**: no more hardcoded client version
+
+---
+
 ## v0.1.6 — 2026-03-17
 
 ### Added
