@@ -27,20 +27,29 @@ NS = {
 class ContentDirectoryHandler:
     def __init__(
         self,
-        track_repo,
-        album_repo,
-        artist_repo,
         server_ip: str,
         http_port: int,
         api_port: int,
     ) -> None:
-        self._tracks = track_repo
-        self._albums = album_repo
-        self._artists = artist_repo
         self._ip = server_ip
         self._http_port = http_port
         self._api_port = api_port
         self.system_update_id = 1
+
+    @property
+    def _tracks(self):
+        from tune_server.api.deps import deps
+        return deps.track_repo
+
+    @property
+    def _albums(self):
+        from tune_server.api.deps import deps
+        return deps.album_repo
+
+    @property
+    def _artists(self):
+        from tune_server.api.deps import deps
+        return deps.artist_repo
 
     async def handle(self, request: web.Request) -> web.Response:
         body = await request.text()

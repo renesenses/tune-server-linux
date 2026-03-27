@@ -30,12 +30,9 @@ class UpnpMediaServer:
         server_ip: str,
         http_port: int,
         api_port: int,
-        aiohttp_app: web.Application,
-        track_repo,
-        album_repo,
-        artist_repo,
         event_bus: EventBus,
         friendly_name: str = "Tune Server",
+        **kwargs,
     ) -> None:
         self._uuid = _generate_uuid()
         self._ip = server_ip
@@ -46,9 +43,6 @@ class UpnpMediaServer:
         self._friendly_name = friendly_name
 
         self._cd_handler = ContentDirectoryHandler(
-            track_repo=track_repo,
-            album_repo=album_repo,
-            artist_repo=artist_repo,
             server_ip=server_ip,
             http_port=http_port,
             api_port=api_port,
@@ -61,7 +55,7 @@ class UpnpMediaServer:
         register_descriptor_routes(app, self._uuid, self._friendly_name, self._ip, self._http_port)
         register_cd_routes(app, self._cd_handler)
         register_cm_routes(app)
-        register_audio_routes(app, self._cd_handler._tracks)
+        register_audio_routes(app)
 
     async def start(self) -> None:
 

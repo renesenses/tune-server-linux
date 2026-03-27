@@ -13,14 +13,15 @@ from tune_server.models import AudioFormat
 logger = structlog.get_logger()
 
 
-def register_audio_routes(app: web.Application, track_repo) -> None:
+def register_audio_routes(app: web.Application) -> None:
     async def handle_audio(request: web.Request) -> web.Response:
         track_id = request.match_info.get("track_id")
         if not track_id:
             return web.Response(status=400)
 
         try:
-            track = await track_repo.get(int(track_id))
+            from tune_server.api.deps import deps
+            track = await deps.track_repo.get(int(track_id))
         except Exception:
             return web.Response(status=404)
 
