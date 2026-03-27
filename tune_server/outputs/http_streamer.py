@@ -89,11 +89,16 @@ class HttpAudioStreamer:
         self._port = port
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
+        self._route_callbacks: list = []
 
     @property
     def app(self) -> web.Application | None:
-        """Expose the aiohttp app for mounting additional routes (e.g., UPnP)."""
         return self._app
+
+    def on_app_created(self, callback) -> None:
+        """Register a callback to add routes after app creation, before freeze."""
+        self._route_callbacks.append(callback)
+
         self._sessions: dict[str, StreamSession] = {}
         self._file_paths: dict[str, str] = {}  # stream_id -> file_path for passthrough
         self._proxy_urls: dict[str, str] = {}  # stream_id -> upstream HTTPS URL for proxy
@@ -147,6 +152,10 @@ class HttpAudioStreamer:
         self._app = web.Application()
         self._app.router.add_route("HEAD", "/stream/{stream_id}", self._handle_head)
         self._app.router.add_route("GET", "/stream/{stream_id}", self._handle_stream)
+
+        # Appel des callbacks pour ajouter des routes (UPnP, etc.) avant freeze
+        for cb in self._route_callbacks:
+            cb(self._app)
 
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()

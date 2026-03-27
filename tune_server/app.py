@@ -121,23 +121,27 @@ class TuneServer:
             host=settings.stream_host,
             port=settings.stream_port,
         )
-        await self._http_streamer.start()
 
-        # UPnP MediaServer — mount on the HTTP streamer's aiohttp app
+        # UPnP MediaServer — register routes before http_streamer starts (freeze)
         self._upnp_server = None
-        if settings.upnp_server_enabled and self._http_streamer.app:
+        if settings.upnp_server_enabled:
             from tune_server.upnp_server.server import UpnpMediaServer
             self._upnp_server = UpnpMediaServer(
                 server_ip=self._server_ip,
                 http_port=settings.stream_port,
                 api_port=settings.api_port,
-                aiohttp_app=self._http_streamer.app,
+                aiohttp_app=None,  # routes registered via callback
                 track_repo=self._track_repo,
                 album_repo=self._album_repo,
                 artist_repo=self._artist_repo,
                 event_bus=self._event_bus,
                 friendly_name=settings.upnp_server_name,
             )
+            self._http_streamer.on_app_created(self._upnp_server.register_routes)
+
+        await self._http_streamer.start()
+
+        if self._upnp_server:
             await self._upnp_server.start()
 
         # Register output factories

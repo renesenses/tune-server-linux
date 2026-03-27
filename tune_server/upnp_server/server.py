@@ -56,12 +56,14 @@ class UpnpMediaServer:
         self._advertiser = SsdpAdvertiser(self._uuid, server_ip, http_port)
         self._unsub = None
 
+    def register_routes(self, app: web.Application) -> None:
+        """Called by HttpAudioStreamer before app freeze."""
+        register_descriptor_routes(app, self._uuid, self._friendly_name, self._ip, self._http_port)
+        register_cd_routes(app, self._cd_handler)
+        register_cm_routes(app)
+        register_audio_routes(app, self._cd_handler._tracks)
+
     async def start(self) -> None:
-        # Register HTTP routes on the aiohttp app
-        register_descriptor_routes(self._app, self._uuid, self._friendly_name, self._ip, self._http_port)
-        register_cd_routes(self._app, self._cd_handler)
-        register_cm_routes(self._app)
-        register_audio_routes(self._app, self._cd_handler._tracks)
 
         # Start SSDP advertisement
         await self._advertiser.start()
