@@ -38,7 +38,6 @@ class UpnpMediaServer:
         self._ip = server_ip
         self._http_port = http_port
         self._api_port = api_port
-        self._app = aiohttp_app
         self._event_bus = event_bus
         self._friendly_name = friendly_name
 
