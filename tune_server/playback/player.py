@@ -330,8 +330,9 @@ class Player:
             # Auto-advance to next track (or monitor renderer if it's still playing)
             if self._state == PlaybackState.PLAYING:
                 # Check if renderer is still playing (pipeline broke but renderer buffered)
+                # -2 means renderer stopped, don't switch to monitor
                 renderer_pos = await self._output.get_position_ms() if self._output else -1
-                if renderer_pos > 0 and self._queue.current:
+                if renderer_pos > 0 and renderer_pos != -2 and self._queue.current:
                     logger.info("switching_to_renderer_monitor", zone_id=self._zone_id)
                     await self._direct_url_monitor(self._queue.current)
                 else:
@@ -355,6 +356,11 @@ class Player:
 
                 # Prefer output-reported position (recorder, some DLNA)
                 output_pos = await self._output.get_position_ms() if self._output else -1
+
+                # -2 = renderer has stopped (track finished)
+                if output_pos == -2:
+                    break
+
                 pos = output_pos if output_pos >= 0 else self.position_ms
 
                 if duration_ms and pos >= duration_ms:

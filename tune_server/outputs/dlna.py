@@ -415,10 +415,20 @@ class DlnaOutput(OutputTarget):
         return None
 
     async def get_position_ms(self) -> int:
-        """Query the renderer's current playback position via GetPositionInfo."""
+        """Query the renderer's current playback position via GetPositionInfo.
+
+        Returns -2 if the renderer has stopped (track finished).
+        Returns -1 if position is unknown.
+        """
         try:
             dmr = self._device
             await asyncio.wait_for(dmr.async_update(do_ping=False), timeout=5)
+
+            # Check if renderer has stopped playing
+            transport_state = getattr(dmr, "transport_state", None)
+            if transport_state in ("STOPPED", "NO_MEDIA_PRESENT"):
+                return -2  # signal track end
+
             pos = dmr.media_position
             if pos is not None and pos >= 0:
                 return int(pos * 1000)
