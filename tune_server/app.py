@@ -417,6 +417,56 @@ class TuneServer:
 
 async def run_server(shutdown_event: asyncio.Event | None = None) -> None:
     """Entry point: start the server and run Uvicorn."""
+
+    # ── Remote mode: proxy to another Tune Server ───────────────────────
+    if settings.mode == "remote":
+        remote_host = settings.remote_host
+        if not remote_host and settings.remote_auto_discover:
+            logger.info("tune_remote_discovering")
+            from tune_server.remote.discovery import discover_tune_servers
+            servers = await discover_tune_servers(timeout=5)
+            if servers:
+                remote_host = f"{servers[0].host}:{servers[0].port}"
+                logger.info("tune_remote_auto_discovered",
+                            name=servers[0].name, host=remote_host)
+            else:
+                logger.error("tune_remote_no_server_found")
+                return
+
+        if not remote_host:
+            logger.error("tune_remote_no_host_configured")
+            return
+
+        base_url = remote_host if remote_host.startswith("http") else f"http://{remote_host}"
+        logger.info("tune_remote_starting", remote=base_url)
+
+        from tune_server.remote.proxy import create_remote_app
+        app = create_remote_app(base_url)
+
+        config = uvicorn.Config(
+            app,
+            host=settings.api_host,
+            port=settings.api_port,
+            log_level=settings.log_level.lower(),
+            access_log=False,
+        )
+        uvi_server = uvicorn.Server(config)
+
+        signal_task = None
+        if shutdown_event:
+            async def _wait():
+                await shutdown_event.wait()
+                uvi_server.should_exit = True
+            signal_task = asyncio.create_task(_wait())
+
+        try:
+            await uvi_server.serve()
+        finally:
+            if signal_task:
+                signal_task.cancel()
+        return
+
+    # ── Server mode (default) ───────────────────────────────────────────
     server = TuneServer()
     try:
         await server.start()

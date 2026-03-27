@@ -172,3 +172,47 @@ async def restore_backup(filename: str):
     if not success:
         raise HTTPException(status_code=404, detail="Backup not found or restore failed")
     return {"restored": True, "filename": filename}
+
+
+
+# ── Remote mode management ──────────────────────────────────────────────
+
+@router.get("/mode")
+async def get_mode():
+    """Get current server mode (server or remote)."""
+    return {
+        "mode": settings.mode,
+        "remote_host": settings.remote_host,
+    }
+
+
+@router.post("/mode")
+async def set_mode(request: dict):
+    """Switch between server and remote mode. Requires restart."""
+    mode = request.get("mode", "server")
+    if mode not in ("server", "remote"):
+        raise HTTPException(400, "mode must be 'server' or 'remote'")
+
+    persist_env_var("TUNE_MODE", mode)
+
+    if mode == "remote":
+        host = request.get("remote_host")
+        if host:
+            persist_env_var("TUNE_REMOTE_HOST", host)
+
+    return {
+        "mode": mode,
+        "remote_host": request.get("remote_host"),
+        "message": "Restart Tune Server to apply",
+    }
+
+
+@router.get("/discover-servers")
+async def discover_servers():
+    """Discover Tune Servers on the LAN."""
+    from tune_server.remote.discovery import discover_tune_servers
+    servers = await discover_tune_servers(timeout=5)
+    return [
+        {"name": s.name, "host": s.host, "port": s.port, "uuid": s.uuid}
+        for s in servers
+    ]

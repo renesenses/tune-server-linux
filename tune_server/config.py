@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     upnp_server_enabled: bool = True
     upnp_server_name: str = "Tune Server"
 
+    # Mode: "server" (default) or "remote" (proxy to another Tune Server)
+    mode: str = "server"  # "server" | "remote"
+    remote_host: str | None = None  # IP:port of the Tune Server to connect to
+    remote_auto_discover: bool = True  # Auto-discover Tune Servers on LAN
+
     # Network shares & media servers
     network_shares_enabled: bool = False
     network_media_servers_enabled: bool = False
