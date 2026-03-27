@@ -1,39 +1,59 @@
 # Tune Server
 
-A multi-room music server for local libraries and streaming services, with DLNA/UPnP, AirPlay, and local audio output. Designed for **Debian/Ubuntu Linux**.
+A free, open-source multi-room music server for audiophiles. Manage your local library and streaming services (Tidal, Qobuz, YouTube Music) from a single interface. Stream to any DLNA/UPnP renderer, AirPlay device, or local soundcard.
+
+Available on **Linux**, **macOS** (Homebrew), **Windows**, **iPadOS/iOS** (native Swift), and **Flutter** (cross-platform).
 
 ## Features
 
-- **Library Management** — Scan local music folders, extract metadata (mutagen), full-text search (FTS5), browse by directory
-- **Metadata Editing** — Edit track/album/artist metadata, upload artwork, MusicBrainz enrichment, duplicate album merging
+### Audio & Playback
+- **Multi-Room** — Create zones, group them for synchronized playback
+- **Bit-Perfect Playback** — Passthrough when the output supports the source format
+- **Native DSD** — DSF/DFF bit-perfect passthrough to DSD-capable DLNA renderers; PCM fallback (176.4kHz/24-bit)
+- **Gapless Playback** — Seamless track transitions with pre-buffering
 - **Multiple Outputs** — DLNA/UPnP renderers, AirPlay devices, local soundcard
-- **Multi-Room** — Group zones for synchronized playback
-- **Streaming Services** — Tidal, Qobuz, YouTube Music, Amazon Music, Spotify, and Deezer integration with featured content browsing
+
+### Library & Content
+- **Library Management** — Scan local folders, extract metadata (mutagen), full-text search (FTS5)
+- **Metadata Editing** — Edit track/album/artist metadata, upload artwork, MusicBrainz enrichment
+- **Streaming Services** — Tidal (HiRes FLAC), Qobuz (HiRes FLAC), YouTube Music, Amazon Music, Spotify, Deezer
 - **Federated Search** — Search across local library and all streaming services simultaneously
 - **Playlists** — Full CRUD with track management and real-time sync events
-- **Internet Radio** — CRUD management of Icecast/Shoutcast stations, M3U/PLS import, cover upload, genre filtering and favorites
-- **Bit-Perfect Playback** — Passthrough when the output supports the source format; direct URL passthrough for DLNA + streaming services
-- **Native DSD** — DSF/DFF bit-perfect passthrough to DSD-capable DLNA renderers (auto-detected via GetProtocolInfo or device heuristic); PCM transcoding fallback (176.4kHz/24-bit) for non-DSD devices
-- **Gapless Playback** — Seamless track transitions with pre-buffering
+- **Internet Radio** — M3U/PLS import, ICY metadata, genre filtering, favorites
+
+### Network & Discovery
 - **Device Discovery** — Automatic SSDP (DLNA) and mDNS (AirPlay) scanning
-- **Network Shares** — Discover, mount, and scan SMB/NFS network shares; browse DLNA MediaServers
-- **Web Client** — Embedded Svelte SPA served from the same port as the API
-- **Real-Time Events** — WebSocket push with subscribe/unsubscribe filtering (fnmatch patterns)
+- **UPnP MediaServer** — Tune Server announces itself as a UPnP MediaServer on the LAN. Browse and play from any DLNA control point (mconnect, BubbleUPnP, etc.)
+- **Network Shares** — Discover and mount SMB/NFS shares; browse DLNA MediaServers
+
+### Clients & Remote
+- **Web Client** — Embedded responsive Svelte SPA (desktop, tablet, mobile with bottom tab bar)
+- **Tune Remote** — Run Tune in proxy mode to control a remote Tune Server from any machine
+- **iPadOS/iOS App** — Native SwiftUI app with embedded server or remote mode
+- **Flutter App** — Cross-platform (iOS/Android) with full feature parity
+
+### Infrastructure
+- **Real-Time Events** — WebSocket push with pattern-based filtering
 - **Background Enrichment** — MusicBrainz metadata and artwork lookup
 - **Security** — Optional API key authentication, configurable CORS origins
+- **Multi-Platform** — Linux, macOS (ARM + Intel), Windows, Docker
 
 ## Architecture
 
 ```mermaid
 graph TD
     subgraph Clients["Clients"]
-        WEB["Web UI (Svelte 5)"]
-        CLI["curl / scripts"]
+        WEB["Web UI (Svelte 5)<br>Desktop / Tablet / Mobile"]
+        IOS["iPadOS / iOS<br>(SwiftUI)"]
+        FLUTTER["Flutter<br>(iOS / Android)"]
+        UPNP_CLIENT["UPnP Control Points<br>(mconnect, BubbleUPnP)"]
+        REMOTE["Tune Remote<br>(proxy mode)"]
     end
 
     subgraph Server["Tune Server Process"]
-        API["REST API :8888<br>(106 endpoints)<br>+ WebSocket"]
-        BUS["Event Bus<br>(40 event types)"]
+        API["REST API :8888<br>(106+ endpoints)<br>+ WebSocket"]
+        BUS["Event Bus<br>(40+ event types)"]
+        UPNP_SRV["UPnP MediaServer<br>:8080<br>(SSDP + ContentDirectory)"]
 
         subgraph Core
             LIB["Library<br>Scanner"]
@@ -46,9 +66,9 @@ graph TD
             TIDAL["Tidal<br>(HiRes FLAC)"]
             QOBUZ["Qobuz<br>(HiRes FLAC)"]
             YT["YouTube Music<br>(yt-dlp)"]
-            AMZN["Amazon Music<br>(HD/Ultra HD)"]
-            SPOT["Spotify<br>(previews)"]
-            DEEZ["Deezer<br>(previews)"]
+            AMZN["Amazon Music"]
+            SPOT["Spotify"]
+            DEEZ["Deezer"]
         end
     end
 
@@ -64,7 +84,8 @@ graph TD
         HTTP["HTTP Streamer<br>:8080"]
     end
 
-    WEB & CLI --> API
+    WEB & IOS & FLUTTER & REMOTE --> API
+    UPNP_CLIENT --> UPNP_SRV
     API <--> BUS
     BUS --- Core
     BUS --- Streaming
@@ -72,17 +93,68 @@ graph TD
     AUDIO --- FFMPEG["FFmpeg"]
     ZONE --> DLNA & AIRPLAY & LOCAL
     DLNA --> HTTP
+    UPNP_SRV --- DB
+```
+
+## Platforms
+
+| Platform | Install | Notes |
+|----------|---------|-------|
+| **Linux** (Debian/Ubuntu) | `.deb` package, install script, pip, Docker | Primary platform |
+| **macOS** (ARM + Intel) | `brew install renesenses/tune/tune-server` | Homebrew tap |
+| **Windows** | Download `.exe` from GitHub Releases | Standalone PyInstaller bundle |
+| **iPadOS / iOS** | Native SwiftUI app (TestFlight) | Embedded server or Remote mode |
+| **Flutter** | iOS + Android | Cross-platform client |
+
+## Tune Remote Mode
+
+Tune Server can run in **remote mode** — a lightweight proxy that connects to another Tune Server on the LAN. The web client is served locally, but all API calls and WebSocket events are forwarded to the remote server.
+
+```bash
+# Auto-discover and connect to the first Tune Server found
+TUNE_MODE=remote python -m tune_server
+
+# Or specify the host explicitly
+TUNE_MODE=remote TUNE_REMOTE_HOST=192.168.1.50:8888 python -m tune_server
+```
+
+This turns any PC/Mac into a Tune remote control — just open `http://localhost:8888`.
+
+## UPnP MediaServer
+
+Tune Server announces itself as a **UPnP/DLNA MediaServer** on the local network. Any UPnP control point can browse the library and play music:
+
+- **mconnect** (iOS/Android) — browse Albums/Artists/Tracks, play to any renderer
+- **BubbleUPnP** (Android) — full DLNA control
+- **foobar2000** (Windows) — UPnP browser plugin
+
+The ContentDirectory exposes: Albums, Artists, All Tracks, Genres. Audio is streamed via HTTP with Range support and proper DLNA headers.
+
+Configuration:
+```bash
+TUNE_UPNP_SERVER_ENABLED=true    # default
+TUNE_UPNP_SERVER_NAME="Tune Server"
 ```
 
 ## Requirements
 
-- **OS**: Debian 12+ / Ubuntu 22.04+
+- **OS**: Debian 12+ / Ubuntu 22.04+ (or macOS / Windows)
 - **Python**: 3.11+
 - **FFmpeg**: for audio decoding/transcoding
 
 ## Installation
 
-### Option 1: Debian package (recommended for production)
+### Option 1: Homebrew (macOS)
+
+```bash
+brew tap renesenses/tune
+brew install tune-server
+brew services start tune-server
+```
+
+Open `http://localhost:8888`. Data is stored in `$(brew --prefix)/var/tune-server/`.
+
+### Option 2: Debian package (recommended for Linux production)
 
 Build and install the `.deb` package, which handles everything: dependencies, systemd service, user creation, web UI.
 
@@ -111,7 +183,13 @@ After installation:
 2. Start the service: `sudo systemctl start tune-server`
 3. Open `http://<server-ip>:8888` in your browser
 
-### Option 2: Quick install script
+### Option 3: Windows
+
+Download `tune-server-x.y.z-win-x64.zip` from [GitHub Releases](https://github.com/renesenses/tune-server-linux/releases). Extract and run `tune-server.exe`. Data is stored in `%LOCALAPPDATA%\TuneServer\`.
+
+Run `install.bat` to create a desktop shortcut.
+
+### Option 4: Quick install script (Linux)
 
 ```bash
 git clone git@github.com:renesenses/tune-server.git
@@ -120,7 +198,7 @@ sudo ./install.sh           # Install to /opt/tune-server
 sudo ./install.sh --systemd # Install + enable systemd service
 ```
 
-### Option 3: Development setup
+### Option 5: Development setup
 
 ```bash
 # System dependencies
@@ -141,7 +219,7 @@ cp .env.example .env  # edit as needed
 python -m tune_server
 ```
 
-### Option 4: Docker
+### Option 6: Docker
 
 ```bash
 docker build -t tune-server .
@@ -228,6 +306,13 @@ cp .env.example .env
 | `TUNE_SMB_MOUNT_DIR` | `~/.tune/mounts` | Directory for network share mount points |
 | **WebSocket** | | |
 | `TUNE_WS_HEARTBEAT_INTERVAL` | `30` | WebSocket ping interval (seconds, 0 = disabled) |
+| **UPnP Server** | | |
+| `TUNE_UPNP_SERVER_ENABLED` | `true` | Enable UPnP MediaServer advertisement |
+| `TUNE_UPNP_SERVER_NAME` | `Tune Server` | Friendly name shown to DLNA control points |
+| **Remote Mode** | | |
+| `TUNE_MODE` | `server` | `server` (full) or `remote` (proxy to another Tune Server) |
+| `TUNE_REMOTE_HOST` | `None` | IP:port of the Tune Server to connect to |
+| `TUNE_REMOTE_AUTO_DISCOVER` | `true` | Auto-discover Tune Servers on LAN if no host set |
 
 ## Usage
 
@@ -581,6 +666,8 @@ tune_server/
 ├── outputs/            # DLNA, AirPlay, local, HTTP streamer
 ├── discovery/          # SSDP, mDNS, device registry
 ├── streaming/          # Tidal, Qobuz, YouTube, Amazon, Spotify, Deezer
+├── upnp_server/        # UPnP MediaServer (SSDP ad, ContentDirectory, audio serving)
+├── remote/             # Tune Remote proxy mode (discovery + reverse proxy)
 ├── api/                # FastAPI routes, WebSocket, deps
 └── utils/              # Network, audio helpers
 ```
@@ -624,6 +711,22 @@ tune_server/
 | yt-dlp | YouTube audio URL extraction |
 | tidalapi | Tidal streaming |
 | deezer-python | Deezer catalog browsing |
+
+## Ecosystem
+
+| Repository | Description |
+|-----------|-------------|
+| [tune-server-linux](https://github.com/renesenses/tune-server-linux) | Server (Python/FastAPI) — Linux, macOS, Windows |
+| [tune-web-client](https://github.com/renesenses/tune-web-client) | Web client (Svelte 5) — responsive desktop/tablet/mobile |
+| [tune-server-ipados](https://github.com/renesenses/tune-server-ipados) | Native iPadOS/iOS app (SwiftUI + GRDB) — embedded server or remote |
+| [tune-server-flutter](https://github.com/renesenses/tune-server-flutter) | Flutter cross-platform app (iOS/Android) |
+| [tune-server-macos](https://github.com/renesenses/tune-server-macos) | macOS distribution + Homebrew formula |
+| [tune-server-win](https://github.com/renesenses/tune-server-win) | Windows distribution (PyInstaller) |
+| [tune-connector-tidal](https://github.com/renesenses/tune-connector-tidal) | Tidal streaming connector (standalone plugin) |
+| [tune-connector-qobuz](https://github.com/renesenses/tune-connector-qobuz) | Qobuz streaming connector (standalone plugin) |
+| [tune-connector-youtube](https://github.com/renesenses/tune-connector-youtube) | YouTube Music connector (standalone plugin) |
+| [tune-connector-amazon](https://github.com/renesenses/tune-connector-amazon) | Amazon Music connector (standalone plugin) |
+| [tune-connector-deezer](https://github.com/renesenses/tune-connector-deezer) | Deezer connector (standalone plugin) |
 
 ## License
 
