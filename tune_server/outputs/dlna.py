@@ -64,11 +64,17 @@ def _build_didl_lite(
     if channels:
         res_attrs += f' nrAudioChannels="{channels}"'
 
-    # Album art
+    # Album art — convertit les chemins locaux en URL HTTP accessibles par le renderer
     art_tag = ""
     if track.cover_path:
-        art_url = xml_escape(track.cover_path)
-        art_tag = f'<upnp:albumArtURI>{art_url}</upnp:albumArtURI>'
+        cover = track.cover_path
+        if not cover.startswith("http"):
+            from tune_server.config import settings
+            from tune_server.utils.network import get_local_ip
+            filename = cover.rsplit("/", 1)[-1] if "/" in cover else cover
+            ip = get_local_ip() or "localhost"
+            cover = f"http://{ip}:{settings.api_port}/api/v1/library/artwork/{filename}"
+        art_tag = f'<upnp:albumArtURI>{xml_escape(cover)}</upnp:albumArtURI>'
 
     # Use audioBroadcast class for radio streams
     upnp_class = (
