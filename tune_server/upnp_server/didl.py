@@ -44,7 +44,11 @@ def track_to_didl(
 ) -> str:
     fmt = AudioFormat(track.format) if track.format else AudioFormat.FLAC
     mime = mime_type_for_format(fmt)
-    audio_url = f"http://{server_ip}:{http_port}/upnp/audio/{track.id}"
+    # Tracks locaux → servir via notre handler; tracks distants (UPnP) → URL directe
+    if track.file_path and track.file_path.startswith("http"):
+        audio_url = track.file_path
+    else:
+        audio_url = f"http://{server_ip}:{http_port}/upnp/audio/{track.id}"
     parent_id = f"album/{track.album_id}" if track.album_id else "tracks"
 
     res_attrs = f'protocolInfo="http-get:*:{mime}:*"'

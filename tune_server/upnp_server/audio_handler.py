@@ -28,6 +28,10 @@ def register_audio_routes(app: web.Application) -> None:
         if not track or not track.file_path:
             return web.Response(status=404)
 
+        # Fichier distant (UPnP, streaming) → redirect
+        if track.file_path.startswith("http"):
+            raise web.HTTPFound(track.file_path)
+
         file_path = Path(track.file_path)
         if not file_path.exists():
             return web.Response(status=404)
