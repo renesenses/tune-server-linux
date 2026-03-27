@@ -123,6 +123,23 @@ class TuneServer:
         )
         await self._http_streamer.start()
 
+        # UPnP MediaServer — mount on the HTTP streamer's aiohttp app
+        self._upnp_server = None
+        if settings.upnp_server_enabled and self._http_streamer.app:
+            from tune_server.upnp_server.server import UpnpMediaServer
+            self._upnp_server = UpnpMediaServer(
+                server_ip=self._server_ip,
+                http_port=settings.stream_port,
+                api_port=settings.api_port,
+                aiohttp_app=self._http_streamer.app,
+                track_repo=self._track_repo,
+                album_repo=self._album_repo,
+                artist_repo=self._artist_repo,
+                event_bus=self._event_bus,
+                friendly_name=settings.upnp_server_name,
+            )
+            await self._upnp_server.start()
+
         # Register output factories
         await self._register_output_factories()
 
@@ -377,6 +394,9 @@ class TuneServer:
 
         if self._zone_manager:
             await self._safe_stop("zone_manager", self._zone_manager.cleanup())
+
+        if self._upnp_server:
+            await self._safe_stop("upnp_server", self._upnp_server.stop())
 
         if self._http_streamer:
             await self._safe_stop("http_streamer", self._http_streamer.stop())

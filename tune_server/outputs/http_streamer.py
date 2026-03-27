@@ -89,6 +89,11 @@ class HttpAudioStreamer:
         self._port = port
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
+
+    @property
+    def app(self) -> web.Application | None:
+        """Expose the aiohttp app for mounting additional routes (e.g., UPnP)."""
+        return self._app
         self._sessions: dict[str, StreamSession] = {}
         self._file_paths: dict[str, str] = {}  # stream_id -> file_path for passthrough
         self._proxy_urls: dict[str, str] = {}  # stream_id -> upstream HTTPS URL for proxy
