@@ -1,10 +1,20 @@
 """DIDL-Lite XML generation for UPnP ContentDirectory responses."""
 from __future__ import annotations
 
+import re
 from xml.sax.saxutils import escape
 
 from tune_server.audio.formats import mime_type_for_format
 from tune_server.models import Album, Artist, AudioFormat, Track
+
+# Strip characters illegal in XML 1.0 (control chars except \t \n \r)
+_XML_ILLEGAL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _xml_safe(text: str | None) -> str:
+    if not text:
+        return ""
+    return _XML_ILLEGAL_RE.sub("", text)
 
 DIDL_HEADER = (
     '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
@@ -66,10 +76,10 @@ def track_to_didl(
 
     return (
         f'<item id="track/{track.id}" parentID="{escape(parent_id)}" restricted="true">'
-        f"<dc:title>{escape(track.title)}</dc:title>"
-        f"<dc:creator>{escape(track.artist_name or '')}</dc:creator>"
-        f"<upnp:artist>{escape(track.artist_name or '')}</upnp:artist>"
-        f"<upnp:album>{escape(track.album_title or '')}</upnp:album>"
+        f"<dc:title>{escape(_xml_safe(track.title))}</dc:title>"
+        f"<dc:creator>{escape(_xml_safe(track.artist_name))}</dc:creator>"
+        f"<upnp:artist>{escape(_xml_safe(track.artist_name))}</upnp:artist>"
+        f"<upnp:album>{escape(_xml_safe(track.album_title))}</upnp:album>"
         f"<upnp:originalTrackNumber>{track.track_number or 0}</upnp:originalTrackNumber>"
         f"{art_tag}"
         f"<upnp:class>object.item.audioItem.musicTrack</upnp:class>"
@@ -89,9 +99,9 @@ def album_to_didl(
 
     return (
         f'<container id="album/{album.id}" parentID="{escape(parent_id)}" '
-        f'childCount="{album.track_count}" restricted="true">'
-        f"<dc:title>{escape(album.title)}</dc:title>"
-        f"<upnp:artist>{escape(album.artist_name or '')}</upnp:artist>"
+        f'childCount="{album.track_count or 0}" restricted="true">'
+        f"<dc:title>{escape(_xml_safe(album.title))}</dc:title>"
+        f"<upnp:artist>{escape(_xml_safe(album.artist_name))}</upnp:artist>"
         f"{art_tag}"
         f"<upnp:class>object.container.album.musicAlbum</upnp:class>"
         f"</container>"
@@ -101,7 +111,7 @@ def album_to_didl(
 def artist_to_didl(artist: Artist, parent_id: str = "artists") -> str:
     return (
         f'<container id="artist/{artist.id}" parentID="{escape(parent_id)}" restricted="true">'
-        f"<dc:title>{escape(artist.name)}</dc:title>"
+        f"<dc:title>{escape(_xml_safe(artist.name))}</dc:title>"
         f"<upnp:class>object.container.person.musicArtist</upnp:class>"
         f"</container>"
     )
