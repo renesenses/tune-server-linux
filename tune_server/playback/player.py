@@ -42,6 +42,7 @@ class Player:
         self._queue_persist_cb: QueuePersistCallback | None = None
         self._volume_change_cb: Callable | None = None
         self._recording_hook: Callable | None = None  # Called with (zone_id, track) before playback
+        self._icy_poller_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -208,6 +209,15 @@ class Player:
 
             # Monitor track end for auto-advance
             self._playback_task = asyncio.create_task(self._direct_url_monitor(track))
+
+            # For radio on DLNA: start ICY metadata poller in background
+            # (the pipeline is bypassed so FFmpeg ICY parsing doesn't run)
+            if track.source == Source.RADIO and track.file_path:
+                icy_cb = self._make_icy_callback(track)
+                self._icy_poller_task = asyncio.create_task(
+                    self._poll_icy_metadata(track.file_path, icy_cb)
+                )
+
             # Preload next track for gapless (SetNextAVTransportURI)
             await self._preload_next()
             return
@@ -641,7 +651,55 @@ class Player:
 
         return on_icy_metadata
 
+    async def _poll_icy_metadata(self, stream_url: str, callback) -> None:
+        """Poll ICY metadata from a radio stream URL independently of the audio pipeline."""
+        import aiohttp
+        try:
+            headers = {"Icy-MetaData": "1", "User-Agent": "TuneServer/1.0"}
+            timeout = aiohttp.ClientTimeout(total=0)  # no timeout for radio
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(stream_url, headers=headers) as resp:
+                    metaint = int(resp.headers.get("icy-metaint", "0"))
+                    if metaint == 0:
+                        return  # no ICY support
+
+                    audio_bytes = 0
+                    async for chunk in resp.content.iter_any():
+                        if self._state not in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+                            break
+
+                        # Skip audio data, just track byte count for metadata boundaries
+                        audio_bytes += len(chunk)
+                        while audio_bytes >= metaint:
+                            # We've passed a metadata boundary — read next metadata block
+                            audio_bytes -= metaint
+                            # Read the metadata length byte
+                            meta_len_data = await resp.content.readexactly(1)
+                            meta_len = meta_len_data[0] * 16
+                            if meta_len > 0:
+                                meta_data = await resp.content.readexactly(meta_len)
+                                meta_str = meta_data.decode("utf-8", errors="ignore").rstrip("\x00")
+                                # Parse StreamTitle='Artist - Title';
+                                for part in meta_str.split(";"):
+                                    part = part.strip()
+                                    if part.lower().startswith("streamtitle="):
+                                        title = part.split("=", 1)[1].strip("'\"")
+                                        if title:
+                                            artist, track_title = "", title
+                                            if " - " in title:
+                                                artist, track_title = title.split(" - ", 1)
+                                            callback({"title": track_title.strip(), "artist": artist.strip()})
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("icy_poller_stopped", zone_id=self._zone_id)
+
     async def _stop_pipeline(self) -> None:
+        # Stop ICY poller
+        if self._icy_poller_task:
+            self._icy_poller_task.cancel()
+            self._icy_poller_task = None
+
         if self._gapless:
             await self._gapless.cancel()
 
