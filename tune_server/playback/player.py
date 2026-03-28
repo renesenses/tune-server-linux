@@ -43,6 +43,7 @@ class Player:
         self._volume_change_cb: Callable | None = None
         self._recording_hook: Callable | None = None  # Called with (zone_id, track) before playback
         self._icy_poller_task: asyncio.Task | None = None
+        self._radio_poller = None
         self._lock = asyncio.Lock()
 
     @property
@@ -210,13 +211,15 @@ class Player:
             # Monitor track end for auto-advance
             self._playback_task = asyncio.create_task(self._direct_url_monitor(track))
 
-            # For radio on DLNA: start ICY metadata poller in background
+            # For radio on DLNA: start metadata poller (RadioFrance API or ICY)
             # (the pipeline is bypassed so FFmpeg ICY parsing doesn't run)
             if track.source == Source.RADIO and track.file_path:
                 icy_cb = self._make_icy_callback(track)
-                self._icy_poller_task = asyncio.create_task(
-                    self._poll_icy_metadata(track.file_path, icy_cb)
+                from tune_server.streaming.radio_metadata import RadioMetadataPoller
+                self._radio_poller = RadioMetadataPoller(
+                    self._event_bus, self._zone_id, track_callback=icy_cb,
                 )
+                self._radio_poller.start(track.file_path)
 
             # Preload next track for gapless (SetNextAVTransportURI)
             await self._preload_next()
@@ -695,10 +698,13 @@ class Player:
             logger.debug("icy_poller_stopped", zone_id=self._zone_id)
 
     async def _stop_pipeline(self) -> None:
-        # Stop ICY poller
+        # Stop ICY/radio metadata pollers
         if self._icy_poller_task:
             self._icy_poller_task.cancel()
             self._icy_poller_task = None
+        if self._radio_poller:
+            self._radio_poller.stop()
+            self._radio_poller = None
 
         if self._gapless:
             await self._gapless.cancel()
