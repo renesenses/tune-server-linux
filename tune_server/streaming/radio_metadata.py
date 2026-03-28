@@ -102,7 +102,11 @@ class RadioMetadataPoller:
 
                     # Update track in player memory (so zone API reflects it)
                     if self._track_callback:
-                        self._track_callback({"title": np.title, "artist": np.artist})
+                        self._track_callback({
+                            "title": np.title,
+                            "artist": np.artist,
+                            "cover_url": np.cover_url,
+                        })
 
                     self._event_bus.emit_nowait(Event(
                         type=EventType.PLAYBACK_METADATA,

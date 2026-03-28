@@ -637,6 +637,11 @@ class Player:
 
             current.album_title = station_name  # keep station name accessible
 
+            # Update cover if provided (RadioFrance API)
+            cover_url = meta.get("cover_url")
+            if cover_url:
+                current.cover_path = cover_url
+
             logger.info("icy_metadata_update", station=station_name, title=icy_title, artist=icy_artist)
 
             # Emit event so WebSocket clients can update
