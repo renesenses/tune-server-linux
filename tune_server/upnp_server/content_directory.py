@@ -112,6 +112,10 @@ class ContentDirectoryHandler:
         elif object_id.startswith("artists/@"):
             letter = object_id[9:]
             xml = container_to_didl(object_id, letter, "artists")
+        elif object_id.startswith("tracks/@"):
+            letter = object_id[8:]
+            cnt = await self._tracks.count_by_letter(letter)
+            xml = container_to_didl(object_id, letter, "tracks", cnt)
         elif object_id == "genres":
             xml = container_to_didl("genres", "Genres", "0")
         elif object_id.startswith("album/"):
@@ -189,8 +193,17 @@ class ContentDirectoryHandler:
                     break
 
         elif object_id == "tracks":
-            tracks = await self._tracks.list(limit=count, offset=start)
-            total = await self._tracks.count()
+            # Alphabetical index
+            letters = await self._tracks.list_initial_letters()
+            total = len(letters)
+            for letter, cnt in letters[start:start + count]:
+                items_xml += container_to_didl(f"tracks/@{letter}", letter, "tracks", cnt)
+                returned += 1
+
+        elif object_id.startswith("tracks/@"):
+            letter = object_id[8:]
+            tracks = await self._tracks.list_by_letter(letter, limit=count, offset=start)
+            total = await self._tracks.count_by_letter(letter)
             for t in tracks:
                 items_xml += track_to_didl(t, self._ip, self._http_port, self._api_port)
                 returned += 1

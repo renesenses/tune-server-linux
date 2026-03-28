@@ -416,6 +416,41 @@ class TrackRepo:
         row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM tracks")
         return row["cnt"]
 
+    async def list_initial_letters(self) -> list[tuple[str, int]]:
+        rows = await self._db.fetchall(
+            """SELECT
+                 CASE WHEN UPPER(SUBSTR(title, 1, 1)) BETWEEN 'A' AND 'Z'
+                      THEN UPPER(SUBSTR(title, 1, 1)) ELSE '#' END AS letter,
+                 COUNT(*) AS cnt
+               FROM tracks GROUP BY letter ORDER BY letter""",
+        )
+        return [(r["letter"], r["cnt"]) for r in rows]
+
+    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0) -> list[Track]:
+        if letter == "#":
+            where = "UPPER(SUBSTR(t.title, 1, 1)) NOT BETWEEN 'A' AND 'Z'"
+            params: tuple = (limit, offset)
+        else:
+            where = "UPPER(SUBSTR(t.title, 1, 1)) = ?"
+            params = (letter.upper(), limit, offset)
+        rows = await self._db.fetchall(
+            f"{self._SELECT} WHERE {where} ORDER BY t.title LIMIT ? OFFSET ?",
+            params,
+        )
+        return [_row_to_track(r) for r in rows]
+
+    async def count_by_letter(self, letter: str) -> int:
+        if letter == "#":
+            row = await self._db.fetchone(
+                "SELECT COUNT(*) as cnt FROM tracks WHERE UPPER(SUBSTR(title, 1, 1)) NOT BETWEEN 'A' AND 'Z'",
+            )
+        else:
+            row = await self._db.fetchone(
+                "SELECT COUNT(*) as cnt FROM tracks WHERE UPPER(SUBSTR(title, 1, 1)) = ?",
+                (letter.upper(),),
+            )
+        return row["cnt"]
+
     async def create(self, track: Track) -> int:
         cursor = await self._db.execute(
             """INSERT INTO tracks (title, album_id, artist_id, disc_number,
