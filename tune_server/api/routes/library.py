@@ -66,7 +66,7 @@ async def get_album_tracks(album_id: int):
 
 
 @router.get("/artists", response_model=list[Artist])
-async def list_artists(limit: int = Query(100, le=500), offset: int = Query(0, ge=0)):
+async def list_artists(limit: int = Query(100, le=5000), offset: int = Query(0, ge=0)):
     return await deps.artist_repo.list(limit=limit, offset=offset)
 
 
