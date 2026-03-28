@@ -83,6 +83,29 @@ class ArtistRepo:
         row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM artists")
         return row["cnt"]
 
+    async def list_initial_letters(self) -> list[tuple[str, int]]:
+        rows = await self._db.fetchall(
+            """SELECT
+                 CASE WHEN UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) BETWEEN 'A' AND 'Z'
+                      THEN UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) ELSE '#' END AS letter,
+                 COUNT(*) AS cnt
+               FROM artists GROUP BY letter ORDER BY letter""",
+        )
+        return [(r["letter"], r["cnt"]) for r in rows]
+
+    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0) -> list[Artist]:
+        if letter == "#":
+            where = "UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) NOT BETWEEN 'A' AND 'Z'"
+            params: tuple = (limit, offset)
+        else:
+            where = "UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) = ?"
+            params = (letter.upper(), limit, offset)
+        rows = await self._db.fetchall(
+            f"SELECT * FROM artists WHERE {where} ORDER BY sort_name, name LIMIT ? OFFSET ?",
+            params,
+        )
+        return [_row_to_artist(r) for r in rows]
+
     async def create(self, artist: Artist) -> int:
         cursor = await self._db.execute(
             """INSERT INTO artists (name, sort_name, musicbrainz_id, discogs_id, bio, image_path)
@@ -184,6 +207,44 @@ class AlbumRepo:
 
     async def count(self) -> int:
         row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM albums")
+        return row["cnt"]
+
+    async def list_initial_letters(self) -> list[tuple[str, int]]:
+        """Return (letter, count) for alphabetical navigation. Non-alpha grouped as '#'."""
+        rows = await self._db.fetchall(
+            """SELECT
+                 CASE WHEN UPPER(SUBSTR(title, 1, 1)) BETWEEN 'A' AND 'Z'
+                      THEN UPPER(SUBSTR(title, 1, 1)) ELSE '#' END AS letter,
+                 COUNT(*) AS cnt
+               FROM albums GROUP BY letter ORDER BY letter""",
+        )
+        return [(r["letter"], r["cnt"]) for r in rows]
+
+    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0) -> list[Album]:
+        if letter == "#":
+            where = "UPPER(SUBSTR(al.title, 1, 1)) NOT BETWEEN 'A' AND 'Z'"
+            params: tuple = (limit, offset)
+        else:
+            where = "UPPER(SUBSTR(al.title, 1, 1)) = ?"
+            params = (letter.upper(), limit, offset)
+        rows = await self._db.fetchall(
+            f"""SELECT al.*, ar.name as artist_name
+                FROM albums al LEFT JOIN artists ar ON al.artist_id = ar.id
+                WHERE {where} ORDER BY al.title LIMIT ? OFFSET ?""",
+            params,
+        )
+        return [_row_to_album(r) for r in rows]
+
+    async def count_by_letter(self, letter: str) -> int:
+        if letter == "#":
+            row = await self._db.fetchone(
+                "SELECT COUNT(*) as cnt FROM albums WHERE UPPER(SUBSTR(title, 1, 1)) NOT BETWEEN 'A' AND 'Z'",
+            )
+        else:
+            row = await self._db.fetchone(
+                "SELECT COUNT(*) as cnt FROM albums WHERE UPPER(SUBSTR(title, 1, 1)) = ?",
+                (letter.upper(),),
+            )
         return row["cnt"]
 
     async def create(self, album: Album) -> int:

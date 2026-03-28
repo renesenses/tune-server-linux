@@ -105,6 +105,13 @@ class ContentDirectoryHandler:
         elif object_id == "tracks":
             total = await self._tracks.count()
             xml = container_to_didl("tracks", "All Tracks", "0", total)
+        elif object_id.startswith("albums/@"):
+            letter = object_id[8:]
+            cnt = await self._albums.count_by_letter(letter)
+            xml = container_to_didl(object_id, letter, "albums", cnt)
+        elif object_id.startswith("artists/@"):
+            letter = object_id[9:]
+            xml = container_to_didl(object_id, letter, "artists")
         elif object_id == "genres":
             xml = container_to_didl("genres", "Genres", "0")
         elif object_id.startswith("album/"):
@@ -148,18 +155,38 @@ class ContentDirectoryHandler:
                 returned += 1
 
         elif object_id == "albums":
-            albums = await self._albums.list(limit=count, offset=start)
-            total = await self._albums.count()
+            # Alphabetical index: A, B, C, ..., Z, #
+            letters = await self._albums.list_initial_letters()
+            total = len(letters)
+            for letter, cnt in letters[start:start + count]:
+                items_xml += container_to_didl(f"albums/@{letter}", letter, "albums", cnt)
+                returned += 1
+
+        elif object_id.startswith("albums/@"):
+            letter = object_id[8:]  # "albums/@A" -> "A"
+            albums = await self._albums.list_by_letter(letter, limit=count, offset=start)
+            total = await self._albums.count_by_letter(letter)
             for a in albums:
-                items_xml += album_to_didl(a, self._ip, self._api_port)
+                items_xml += album_to_didl(a, self._ip, self._api_port, parent_id=object_id)
                 returned += 1
 
         elif object_id == "artists":
-            artists = await self._artists.list(limit=count, offset=start)
-            total = await self._artists.count()
-            for a in artists:
-                items_xml += artist_to_didl(a)
+            # Alphabetical index
+            letters = await self._artists.list_initial_letters()
+            total = len(letters)
+            for letter, cnt in letters[start:start + count]:
+                items_xml += container_to_didl(f"artists/@{letter}", letter, "artists", cnt)
                 returned += 1
+
+        elif object_id.startswith("artists/@"):
+            letter = object_id[9:]  # "artists/@A" -> "A"
+            artists = await self._artists.list_by_letter(letter, limit=count, offset=start)
+            total = len(artists)
+            for a in artists[start:]:
+                items_xml += artist_to_didl(a, parent_id=object_id)
+                returned += 1
+                if returned >= count:
+                    break
 
         elif object_id == "tracks":
             tracks = await self._tracks.list(limit=count, offset=start)
