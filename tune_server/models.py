@@ -204,6 +204,24 @@ class RadioImportResult(BaseModel):
     errors: list[str]
 
 
+class RadioFavorite(BaseModel):
+    id: Optional[int] = None
+    title: str
+    artist: str = ""
+    station_name: str = ""
+    cover_url: Optional[str] = None
+    stream_url: Optional[str] = None
+    saved_at: Optional[str] = None
+
+
+class RadioFavoriteCreate(BaseModel):
+    title: str
+    artist: str = ""
+    station_name: str = ""
+    cover_url: Optional[str] = None
+    stream_url: Optional[str] = None
+
+
 # --- API request/response models ---
 
 

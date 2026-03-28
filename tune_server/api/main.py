@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from tune_server.api.deps import deps
-from tune_server.api.routes import devices, library, network, playback, playlists, radios, search, streaming, system, zones
+from tune_server.api.routes import devices, library, network, playback, playlists, radio_favorites, radios, search, streaming, system, zones
 from tune_server.api.websocket import WebSocketManager
 from tune_server.config import settings
 
@@ -64,6 +64,7 @@ def create_api_app() -> FastAPI:
     app.include_router(system.router, prefix="/api/v1")
     app.include_router(network.router, prefix="/api/v1")
     app.include_router(radios.router, prefix="/api/v1")
+    app.include_router(radio_favorites.router, prefix="/api/v1")
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
         global _ws_manager

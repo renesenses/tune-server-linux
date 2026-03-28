@@ -15,6 +15,7 @@ from tune_server.db.repository import (
     ArtistRepo,
     PlaylistRepo,
     PlayQueueRepo,
+    RadioFavoriteRepo,
     RadioStationRepo,
     TrackRepo,
     ZoneRepo,
@@ -103,6 +104,8 @@ class TuneServer:
         zone_repo = ZoneRepo(self._db)
         playlist_repo = PlaylistRepo(self._db)
         radio_repo = RadioStationRepo(self._db)
+        radio_fav_repo = RadioFavoriteRepo(self._db)
+        await radio_fav_repo.ensure_table()
 
         # Library scanner
         self._scanner = LibraryScanner(self._db, self._event_bus)
@@ -185,6 +188,7 @@ class TuneServer:
         deps.queue_repo = queue_repo
         deps.zone_repo = zone_repo
         deps.radio_repo = radio_repo
+        deps.radio_fav_repo = radio_fav_repo
 
         # WebSocket manager
         self._ws_manager = await setup_websocket_manager(self._event_bus)

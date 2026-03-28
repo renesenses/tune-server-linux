@@ -160,3 +160,16 @@ CREATE TRIGGER IF NOT EXISTS artists_au AFTER UPDATE ON artists BEGIN
     INSERT INTO artists_fts(artists_fts, rowid, name) VALUES ('delete', old.id, old.name);
     INSERT INTO artists_fts(rowid, name) VALUES (new.id, new.name);
 END;
+
+-- Radio favorites (tracks heard on radio, saved by the user)
+CREATE TABLE IF NOT EXISTS radio_favorites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL DEFAULT '',
+    station_name TEXT NOT NULL DEFAULT '',
+    cover_url TEXT,
+    stream_url TEXT,
+    saved_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_radio_favorites_dedup
+    ON radio_favorites(title, artist);

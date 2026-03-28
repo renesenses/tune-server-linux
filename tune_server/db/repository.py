@@ -857,3 +857,90 @@ async def full_text_search(db: Database, query: str, limit: int = 50) -> SearchR
     artists = await artist_repo.search(query, limit)
 
     return SearchResult(tracks=tracks, albums=albums, artists=artists)
+
+
+# ---------------------------------------------------------------------------
+# RadioFavoriteRepo
+# ---------------------------------------------------------------------------
+
+class RadioFavoriteRepo:
+    def __init__(self, db):
+        self._db = db
+
+    async def ensure_table(self) -> None:
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS radio_favorites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                artist TEXT NOT NULL DEFAULT '',
+                station_name TEXT NOT NULL DEFAULT '',
+                cover_url TEXT,
+                stream_url TEXT,
+                saved_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        await self._db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_radio_favorites_dedup
+            ON radio_favorites(title, artist)
+        """)
+        await self._db.commit()
+
+    async def list(self, limit: int = 200, offset: int = 0) -> list[dict]:
+        rows = await self._db.fetchall(
+            "SELECT * FROM radio_favorites ORDER BY saved_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        return [dict(r) for r in rows]
+
+    async def count(self) -> int:
+        row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM radio_favorites")
+        return row["cnt"]
+
+    async def save(self, title: str, artist: str, station_name: str = "",
+                   cover_url: str | None = None, stream_url: str | None = None) -> dict | None:
+        """Save a radio favorite. Deduplicates by (title, artist)."""
+        if not title:
+            return None
+        try:
+            await self._db.execute(
+                """INSERT OR IGNORE INTO radio_favorites
+                   (title, artist, station_name, cover_url, stream_url)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (title, artist, station_name, cover_url, stream_url),
+            )
+            await self._db.commit()
+            row = await self._db.fetchone(
+                "SELECT * FROM radio_favorites WHERE title = ? AND artist = ?",
+                (title, artist),
+            )
+            return dict(row) if row else None
+        except Exception:
+            return None
+
+    async def is_favorite(self, title: str, artist: str) -> bool:
+        row = await self._db.fetchone(
+            "SELECT 1 FROM radio_favorites WHERE title = ? AND artist = ?",
+            (title, artist),
+        )
+        return row is not None
+
+    async def delete(self, fav_id: int) -> None:
+        await self._db.execute("DELETE FROM radio_favorites WHERE id = ?", (fav_id,))
+        await self._db.commit()
+
+    async def clear(self) -> None:
+        await self._db.execute("DELETE FROM radio_favorites")
+        await self._db.commit()
+
+    async def export_csv(self) -> str:
+        """Export favorites as CSV (Artist,Title format for Soundiiz)."""
+        rows = await self._db.fetchall(
+            "SELECT artist, title, station_name, saved_at FROM radio_favorites ORDER BY saved_at DESC"
+        )
+        lines = ["Artist,Title,Station,Date"]
+        for r in rows:
+            artist = str(r["artist"]).replace('"', '""')
+            title = str(r["title"]).replace('"', '""')
+            station = str(r["station_name"]).replace('"', '""')
+            lines.append(f'"{artist}","{title}","{station}","{r["saved_at"]}"')
+        return "\n".join(lines)
