@@ -614,6 +614,7 @@ class Player:
         zone_id = self._zone_id
         event_bus = self._event_bus
         station_name = track.title  # original station name
+        station_cover = track.cover_path  # original station logo (fallback)
 
         def on_icy_metadata(meta: dict[str, str]) -> None:
             current = self._queue.current
@@ -637,10 +638,9 @@ class Player:
 
             current.album_title = station_name  # keep station name accessible
 
-            # Update cover if provided (RadioFrance API)
+            # Update cover: use RadioFrance cover if available, else station logo
             cover_url = meta.get("cover_url")
-            if cover_url:
-                current.cover_path = cover_url
+            current.cover_path = cover_url or station_cover
 
             logger.info("icy_metadata_update", station=station_name, title=icy_title, artist=icy_artist)
 
