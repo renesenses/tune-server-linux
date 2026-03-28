@@ -349,6 +349,8 @@ class Player:
         try:
             duration_ms = track.duration_ms or 0
 
+            is_radio = track.source == Source.RADIO if hasattr(track, 'source') else False
+
             while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
                 await asyncio.sleep(1)
                 if self._state == PlaybackState.PAUSED:
@@ -358,7 +360,9 @@ class Player:
                 output_pos = await self._output.get_position_ms() if self._output else -1
 
                 # -2 = renderer has stopped (track finished)
-                if output_pos == -2:
+                # But NOT for radio streams — DLNA renderers may report STOPPED
+                # briefly during stream buffering
+                if output_pos == -2 and not is_radio:
                     break
 
                 pos = output_pos if output_pos >= 0 else self.position_ms
@@ -366,7 +370,8 @@ class Player:
                 if duration_ms and pos >= duration_ms:
                     break
                 # No duration but output signals completion (pos >= 1)
-                if not duration_ms and output_pos >= 1:
+                # Skip for radio (no duration, runs indefinitely)
+                if not duration_ms and output_pos >= 1 and not is_radio:
                     break
 
             if self._state == PlaybackState.PLAYING:
