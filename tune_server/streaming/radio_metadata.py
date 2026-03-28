@@ -56,11 +56,9 @@ async def _fetch_radiofrance(station: str) -> NowPlaying | None:
                 artist = now.get("secondLine", "")
                 if not title:
                     return None
-                cover_uuid = now.get("cover")
-                cover_url = None
-                if cover_uuid:
-                    cover_url = f"https://www.radiofrance.fr/s3/cruiser-production/{cover_uuid}/200x200_rf_omm_0001903544_dnc.0099.jpg"
-                return NowPlaying(title=title, artist=artist, cover_url=cover_url)
+                # RadioFrance S3 covers are 403-blocked — skip cover URL
+                # The station logo will be used as fallback by the player callback
+                return NowPlaying(title=title, artist=artist, cover_url=None)
     except Exception:
         return None
 
