@@ -44,6 +44,7 @@ class Player:
         self._recording_hook: Callable | None = None  # Called with (zone_id, track) before playback
         self._icy_poller_task: asyncio.Task | None = None
         self._radio_poller = None
+        self._skip_in_progress = False
         self._lock = asyncio.Lock()
 
     @property
@@ -308,6 +309,8 @@ class Player:
                 if self._state == PlaybackState.PAUSED:
                     await asyncio.sleep(0.1)
                     continue
+                if not self._pipeline or not self._pipeline.output_buffer:
+                    break  # Pipeline destroyed (seek/skip in progress)
                 chunk = await self._pipeline.output_buffer.get()
                 if chunk is None:
                     # Track finished — try gapless transition
@@ -538,15 +541,19 @@ class Player:
             ))
 
     async def skip_next(self) -> None:
-        async with self._lock:
-            next_track = self._queue.next()
+        if self._skip_in_progress:
+            return
+        self._skip_in_progress = True
+        try:
+            async with self._lock:
+                next_track = self._queue.next()
+                if next_track:
+                    await self._persist_queue()
+                    await self._stop_pipeline()
             if next_track:
-                await self._persist_queue()
-                # Stop current playback quickly
-                await self._stop_pipeline()
-        # Start new track outside lock to avoid blocking other commands
-        if next_track:
-            await self._start_track(next_track)
+                await self._start_track(next_track)
+        finally:
+            self._skip_in_progress = False
         else:
             async with self._lock:
                 await self._stop_pipeline()
@@ -561,24 +568,32 @@ class Player:
                 ))
 
     async def skip_previous(self) -> None:
-        # CD player behavior: if past 3 seconds, restart current track;
-        # if in the first 3 seconds, go to previous track
-        if self.position_ms > 3000 and self._queue.current:
-            track = self._queue.current
-            async with self._lock:
-                await self._stop_pipeline()
-            await self._start_track(track)
+        if self._skip_in_progress:
             return
+        self._skip_in_progress = True
+        try:
+            # CD player behavior: if past 3 seconds, restart current track;
+            # if in the first 3 seconds, go to previous track
+            if self.position_ms > 3000 and self._queue.current:
+                track = self._queue.current
+                async with self._lock:
+                    await self._stop_pipeline()
+                await self._start_track(track)
+                return
 
-        async with self._lock:
-            prev_track = self._queue.previous()
+            async with self._lock:
+                prev_track = self._queue.previous()
+                if prev_track:
+                    await self._persist_queue()
+                    await self._stop_pipeline()
             if prev_track:
-                await self._persist_queue()
-                await self._stop_pipeline()
-        if prev_track:
-            await self._start_track(prev_track)
+                await self._start_track(prev_track)
+        finally:
+            self._skip_in_progress = False
 
     async def seek(self, position_ms: int) -> None:
+        if self._skip_in_progress:
+            return
         track = self._queue.current
         if not track:
             return
@@ -588,12 +603,15 @@ class Player:
         if track.duration_ms and position_ms > track.duration_ms:
             position_ms = track.duration_ms
 
-        async with self._lock:
-            was_playing = self._state == PlaybackState.PLAYING
-            await self._stop_pipeline()
-        # Restart outside lock for responsiveness
-        if was_playing:
-            await self._start_track(track, seek_ms=position_ms)
+        self._skip_in_progress = True
+        try:
+            async with self._lock:
+                was_playing = self._state == PlaybackState.PLAYING
+                await self._stop_pipeline()
+            if was_playing:
+                await self._start_track(track, seek_ms=position_ms)
+        finally:
+            self._skip_in_progress = False
 
     async def set_volume(self, volume: float) -> None:
         async with self._lock:

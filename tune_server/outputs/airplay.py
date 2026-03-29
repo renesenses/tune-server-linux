@@ -38,7 +38,12 @@ class AirPlayOutput(OutputTarget):
         return self._available
 
     def supports_direct_url(self, track: Track) -> bool:
-        """AirPlay streams files natively via pyatv — always bypass the pipeline."""
+        """AirPlay streams local files natively via pyatv — not streaming URLs."""
+        if not track.file_path:
+            return False
+        # Streaming URLs need the pipeline to decode
+        if track.file_path.startswith("http://") or track.file_path.startswith("https://"):
+            return False
         return True
 
     async def start(self, stream_info: AudioStreamInfo, track: Track | None = None) -> None:
