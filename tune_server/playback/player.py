@@ -552,20 +552,20 @@ class Player:
                     await self._stop_pipeline()
             if next_track:
                 await self._start_track(next_track)
+            else:
+                async with self._lock:
+                    await self._stop_pipeline()
+                    self._state = PlaybackState.STOPPED
+                    self._position_ms = 0
+                    if self._output:
+                        await self._output.stop()
+                    await self._event_bus.emit(Event(
+                        type=EventType.PLAYBACK_STOPPED,
+                        data={"zone_id": self._zone_id},
+                        source="player",
+                    ))
         finally:
             self._skip_in_progress = False
-        else:
-            async with self._lock:
-                await self._stop_pipeline()
-                self._state = PlaybackState.STOPPED
-                self._position_ms = 0
-                if self._output:
-                    await self._output.stop()
-                await self._event_bus.emit(Event(
-                    type=EventType.PLAYBACK_STOPPED,
-                    data={"zone_id": self._zone_id},
-                    source="player",
-                ))
 
     async def skip_previous(self) -> None:
         if self._skip_in_progress:
