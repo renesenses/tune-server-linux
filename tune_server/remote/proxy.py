@@ -85,7 +85,7 @@ def create_remote_app(remote_base: str) -> FastAPI:
             for i, d in enumerate(sd.query_devices()):
                 if d["max_output_channels"] > 0:
                     name = d["name"]
-                    if name.lower() in _ALSA_ALIASES or d["max_output_channels"] > 32:
+                    if name.lower() in _ALSA_ALIASES or d["max_output_channels"] > 32 or "hdmi" in name.lower():
                         continue
                     result.append({
                         "id": str(i),

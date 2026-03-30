@@ -55,6 +55,9 @@ async def list_audio_devices():
             # Skip channels > 32 (virtual mixers like sysdefault)
             if d["max_output_channels"] > 32:
                 continue
+            # Skip HDMI outputs (rarely used for music)
+            if "hdmi" in name.lower():
+                continue
             result.append(
                 LocalAudioDevice(
                     id=str(i),
