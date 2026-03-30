@@ -71,6 +71,24 @@ def create_remote_app(remote_base: str) -> FastAPI:
         return {"status": "connected", "remote_host": f"{host}:{port}",
                 "message": "Restart Tune Server to apply"}
 
+    # ── Local audio devices (served from THIS machine, not remote) ──────
+    @app.get("/api/v1/devices/audio")
+    async def local_audio_devices():
+        try:
+            import sounddevice as sd
+            result = []
+            for i, d in enumerate(sd.query_devices()):
+                if d["max_output_channels"] > 0:
+                    result.append({
+                        "id": str(i),
+                        "name": d["name"],
+                        "channels": d["max_output_channels"],
+                        "sample_rate": int(d["default_samplerate"]),
+                    })
+            return result
+        except Exception:
+            return []
+
     # ── WebSocket proxy ─────────────────────────────────────────────────
     @app.websocket("/ws")
     async def ws_proxy(ws: WebSocket):
