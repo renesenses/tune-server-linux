@@ -74,14 +74,22 @@ def create_remote_app(remote_base: str) -> FastAPI:
     # ── Local audio devices (served from THIS machine, not remote) ──────
     @app.get("/api/v1/devices/audio")
     async def local_audio_devices():
+        _ALSA_ALIASES = {
+            "sysdefault", "default", "front", "surround40", "surround51",
+            "surround71", "iec958", "spdif", "hdmi", "dmix", "dsnoop",
+            "plug", "pulse", "pipewire",
+        }
         try:
             import sounddevice as sd
             result = []
             for i, d in enumerate(sd.query_devices()):
                 if d["max_output_channels"] > 0:
+                    name = d["name"]
+                    if name.lower() in _ALSA_ALIASES or d["max_output_channels"] > 32:
+                        continue
                     result.append({
                         "id": str(i),
-                        "name": d["name"],
+                        "name": name,
                         "channels": d["max_output_channels"],
                         "sample_rate": int(d["default_samplerate"]),
                     })

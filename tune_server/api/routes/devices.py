@@ -38,13 +38,27 @@ async def list_devices():
 async def list_audio_devices():
     import sounddevice as sd
 
+    # ALSA aliases and virtual devices to hide
+    _ALSA_ALIASES = {
+        "sysdefault", "default", "front", "surround40", "surround51",
+        "surround71", "iec958", "spdif", "hdmi", "dmix", "dsnoop",
+        "plug", "pulse", "pipewire",
+    }
+
     result = []
     for i, d in enumerate(sd.query_devices()):
         if d["max_output_channels"] > 0:
+            name = d["name"]
+            # Skip ALSA aliases (Linux) — keep only real hardware devices
+            if name.lower() in _ALSA_ALIASES:
+                continue
+            # Skip channels > 32 (virtual mixers like sysdefault)
+            if d["max_output_channels"] > 32:
+                continue
             result.append(
                 LocalAudioDevice(
                     id=str(i),
-                    name=d["name"],
+                    name=name,
                     channels=d["max_output_channels"],
                     sample_rate=int(d["default_samplerate"]),
                 )
