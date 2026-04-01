@@ -12,8 +12,7 @@ from tune_server.api.deps import deps
 from tune_server.config import settings
 from tune_server.db.repository import full_text_search
 from tune_server.event_bus import Event, EventType
-from tune_server.library.artwork import copy_cover_to_album_folder, fetch_cover_from_musicbrainz, get_album_artwork, save_artwork
-from tune_server.library.metadata_reader import write_tags
+from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork, save_artwork
 from tune_server.models import (
     Album,
     AlbumUpdateRequest,
@@ -35,7 +34,7 @@ router = APIRouter(prefix="/library", tags=["library"])
 
 
 @router.get("/tracks", response_model=list[Track])
-async def list_tracks(limit: int = Query(100, le=50000), offset: int = Query(0, ge=0)):
+async def list_tracks(limit: int = Query(100, le=500), offset: int = Query(0, ge=0)):
     return await deps.track_repo.list(limit=limit, offset=offset)
 
 
@@ -47,24 +46,8 @@ async def get_track(track_id: int):
     return track
 
 
-
-@router.get("/tracks/{track_id}/audio")
-async def stream_track_audio(track_id: int):
-    from tune_server.api.deps import deps
-    track = await deps.track_repo.get(track_id)
-    if not track or not track.file_path:
-        raise HTTPException(status_code=404, detail="Track not found")
-    filepath = Path(track.file_path)
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    suffix = filepath.suffix.lower()
-    mt = {".flac": "audio/flac", ".mp3": "audio/mpeg", ".wav": "audio/wav",
-          ".aac": "audio/aac", ".m4a": "audio/mp4", ".ogg": "audio/ogg",
-          ".opus": "audio/opus", ".aiff": "audio/aiff", ".dsf": "audio/dsf"}
-    return FileResponse(filepath, media_type=mt.get(suffix, "application/octet-stream"), filename=filepath.name)
-
 @router.get("/albums", response_model=list[Album])
-async def list_albums(limit: int = Query(100, le=50000), offset: int = Query(0, ge=0)):
+async def list_albums(limit: int = Query(100, le=500), offset: int = Query(0, ge=0)):
     return await deps.album_repo.list(limit=limit, offset=offset)
 
 
@@ -82,17 +65,8 @@ async def get_album_tracks(album_id: int):
 
 
 @router.get("/artists", response_model=list[Artist])
-async def list_artists(limit: int = Query(100, le=5000), offset: int = Query(0, ge=0)):
+async def list_artists(limit: int = Query(100, le=500), offset: int = Query(0, ge=0)):
     return await deps.artist_repo.list(limit=limit, offset=offset)
-
-
-@router.post("/artists", response_model=Artist, status_code=201)
-async def create_artist(req: ArtistUpdateRequest):
-    if not req.name:
-        raise HTTPException(status_code=400, detail="Name is required")
-    artist = Artist(name=req.name, sort_name=req.sort_name, bio=req.bio)
-    artist_id = await deps.artist_repo.create(artist)
-    return await deps.artist_repo.get(artist_id)
 
 
 @router.get("/artists/{artist_id}", response_model=Artist)
@@ -133,19 +107,6 @@ async def update_track(track_id: int, req: TrackUpdateRequest):
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")
     updates = req.model_dump(exclude_none=True)
-
-    # Write tags to file if relevant fields changed
-    if track.file_path and track.source == "local":
-        tag_updates = {}
-        if req.title is not None:
-            tag_updates["title"] = req.title
-        if req.artist_id is not None:
-            artist = await deps.artist_repo.get(req.artist_id)
-            if artist:
-                tag_updates["artist"] = artist.name
-        if tag_updates:
-            await asyncio.to_thread(write_tags, track.file_path, **tag_updates)
-
     for field, value in updates.items():
         setattr(track, field, value)
     await deps.track_repo.update(track)
@@ -166,14 +127,6 @@ async def update_album(album_id: int, req: AlbumUpdateRequest):
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
     updates = req.model_dump(exclude_none=True)
-
-    # Write album tag to all tracks in the album
-    if req.title is not None:
-        tracks = await deps.track_repo.list_by_album(album_id)
-        for t in tracks:
-            if t.file_path and t.source == "local":
-                await asyncio.to_thread(write_tags, t.file_path, album=req.title)
-
     for field, value in updates.items():
         setattr(album, field, value)
     await deps.album_repo.update(album)
@@ -223,8 +176,6 @@ async def completeness_stats():
         albums_without_year=await deps.album_repo.count_without_year(),
         total_artists=await deps.artist_repo.count(),
         artists_without_image=await deps.artist_repo.count_without_image(),
-        total_tracks=await deps.track_repo.count(),
-        tracks_without_artist=await deps.track_repo.count_without_artist(),
     )
 
 
@@ -250,12 +201,6 @@ async def upload_album_artwork(album_id: int, file: UploadFile):
 
     album.cover_path = cover_path
     await deps.album_repo.update(album)
-
-    # Copy cover.jpg to album folder
-    tracks = await deps.track_repo.list_by_album(album_id)
-    if tracks and tracks[0].file_path:
-        await asyncio.to_thread(copy_cover_to_album_folder, cover_path, tracks[0].file_path)
-
     return await deps.album_repo.get(album_id)
 
 
@@ -286,11 +231,6 @@ async def rescan_album_artwork(album_id: int):
     if cover_path:
         album.cover_path = cover_path
         await deps.album_repo.update(album)
-
-        # Copy cover.jpg to album folder
-        if tracks and tracks[0].file_path:
-            await asyncio.to_thread(copy_cover_to_album_folder, cover_path, tracks[0].file_path)
-
         return {"status": "found", "cover_path": cover_path}
 
     return {"status": "not_found", "cover_path": None}
@@ -330,10 +270,6 @@ async def _rescan_artwork_task() -> None:
                 album.cover_path = cover_path
                 await deps.album_repo.update(album)
                 found += 1
-
-                # Copy cover.jpg to album folder
-                if tracks and tracks[0].file_path:
-                    await asyncio.to_thread(copy_cover_to_album_folder, cover_path, tracks[0].file_path)
 
             # Emit progress every album
             await deps.event_bus.emit(Event(
@@ -380,25 +316,6 @@ async def get_artwork(filename: str):
     return FileResponse(filepath, media_type=media_type)
 
 
-
-
-@router.get("/artwork/{filename}")
-async def serve_artwork(filename: str):
-    from tune_server.api.deps import deps
-    art_dir = getattr(deps.settings, "artwork_cache_dir", "artwork_cache")
-    filepath = Path(art_dir) / filename
-    if not filepath.exists():
-        filepath = Path("artwork_cache") / filename
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail="Artwork not found")
-    suffix = filepath.suffix.lower()
-    mt = dict()
-    mt[".jpg"] = "image/jpeg"
-    mt[".jpeg"] = "image/jpeg"
-    mt[".png"] = "image/png"
-    mt[".webp"] = "image/webp"
-    return FileResponse(filepath, media_type=mt.get(suffix, "image/jpeg"))
-
 # --- Browse by directory ---
 
 
@@ -418,28 +335,12 @@ def _is_path_under_roots(path: str) -> str | None:
 @router.get("/browse", response_model=BrowseRootsResponse)
 async def browse_roots():
     """List configured music directories with track counts."""
-    # Build mount_path → friendly name from network mounts + discovered devices
-    mount_display: dict[str, str] = {}
-    if deps.mount_manager:
-        mounts = await deps.mount_manager.list_mounts()
-        # host → device name from discovered DLNA renderers
-        device_names: dict[str, str] = {}
-        if deps.discovery_manager:
-            for dev in deps.discovery_manager.list_devices():
-                if dev.host:
-                    device_names[dev.host] = dev.name
-        for m in mounts:
-            if m.status == "mounted":
-                name = device_names.get(m.host, m.host)
-                mount_display[m.mount_path] = name
-
     roots = []
     for music_dir in settings.music_dirs:
-        resolved = str(Path(music_dir).resolve()).replace("\\", "/")
+        resolved = str(Path(music_dir).resolve())
         count = await deps.track_repo.count_by_root(resolved)
-        name = mount_display.get(resolved, Path(resolved).name)
         roots.append(BrowseRootEntry(
-            name=name,
+            name=Path(resolved).name,
             path=resolved,
             track_count=count,
         ))

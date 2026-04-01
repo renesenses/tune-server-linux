@@ -15,7 +15,6 @@ from tune_server.db.repository import (
     ArtistRepo,
     PlaylistRepo,
     PlayQueueRepo,
-    RadioStationRepo,
     TrackRepo,
     ZoneRepo,
 )
@@ -78,8 +77,7 @@ class TuneServer:
 
     async def start(self) -> None:
         _configure_logging()
-        from tune_server import __version__
-        logger.info("tune_server_starting", version=__version__)
+        logger.info("tune_server_starting", version="0.1.0")
 
         # Startup validation
         from pathlib import Path
@@ -102,7 +100,6 @@ class TuneServer:
         queue_repo = PlayQueueRepo(self._db)
         zone_repo = ZoneRepo(self._db)
         playlist_repo = PlaylistRepo(self._db)
-        radio_repo = RadioStationRepo(self._db)
 
         # Library scanner
         self._scanner = LibraryScanner(self._db, self._event_bus)
@@ -121,31 +118,7 @@ class TuneServer:
             host=settings.stream_host,
             port=settings.stream_port,
         )
-
-
-        # UPnP MediaServer
-        self._upnp_server = None
-        if settings.upnp_server_enabled:
-            from tune_server.upnp_server.server import UpnpMediaServer
-            self._upnp_server = UpnpMediaServer(
-                server_ip=self._server_ip,
-                http_port=settings.stream_port,
-                api_port=settings.api_port,
-                aiohttp_app=None,
-                track_repo=deps.track_repo,
-                album_repo=deps.album_repo,
-                artist_repo=deps.artist_repo,
-                event_bus=self._event_bus,
-                friendly_name=settings.upnp_server_name,
-            )
-            self._http_streamer.on_app_created(self._upnp_server.register_routes)
-
         await self._http_streamer.start()
-
-        if self._upnp_server:
-            await self._upnp_server.start()
-
-
 
         # Register output factories
         await self._register_output_factories()
@@ -169,18 +142,6 @@ class TuneServer:
         # Initialize zones from DB (now devices should be available)
         await self._zone_manager.initialize()
 
-        # Retry unavailable zones after discovery has had more time
-        async def _retry_zones():
-            await asyncio.sleep(60)
-            await self._zone_manager.retry_pending_zones()
-        asyncio.create_task(_retry_zones())
-
-        # Recording service
-        from tune_server.recording.recorder import RecordingService
-        self._recording_service = RecordingService(self._event_bus, settings.recording_dir)
-        await self._recording_service.start()
-        deps.recording_service = self._recording_service
-
         # Streaming services
         self._setup_streaming_services()
         await self._restore_streaming_auth()
@@ -199,7 +160,6 @@ class TuneServer:
         deps.playlist_repo = playlist_repo
         deps.queue_repo = queue_repo
         deps.zone_repo = zone_repo
-        deps.radio_repo = radio_repo
 
         # WebSocket manager
         self._ws_manager = await setup_websocket_manager(self._event_bus)
@@ -213,7 +173,6 @@ class TuneServer:
                 settings.music_dirs, self._scanner, self._db, self._event_bus
             )
             await self._watcher.start()
-            deps.watcher = self._watcher
 
         # Metadata enricher
         self._enricher = MetadataEnricher(self._db)
@@ -257,17 +216,7 @@ class TuneServer:
                 logger.warning("dlna_factory_device_not_found", device_id=device_id,
                              available=list(self._discovery_manager.ssdp._dmr_devices.keys()))
                 return None
-            # Pass device info for DSD detection
-            disc_device = self._discovery_manager.ssdp.devices.get(device_id)
-            caps = disc_device.capabilities if disc_device else {}
-            device_ip = disc_device.host if disc_device else None
-            return DlnaOutput(
-                dmr, self._http_streamer, self._server_ip,
-                sink_protocols=caps.get("sink_protocols", []),
-                device_name=caps.get("device_name", ""),
-                device_model=caps.get("model", ""),
-                device_ip=device_ip,
-            )
+            return DlnaOutput(dmr, self._http_streamer, self._server_ip)
 
         async def create_airplay_output(device_id: str | None):
             if not device_id or not self._discovery_manager or not self._discovery_manager.mdns:
@@ -277,21 +226,6 @@ class TuneServer:
                 return None
             try:
                 import pyatv
-
-                # Load saved credentials from DB
-                if self._db:
-                    row = await self._db.execute(
-                        "SELECT credentials FROM device_credentials WHERE device_id = ?",
-                        (device_id,),
-                    )
-                    cred_row = await row.fetchone()
-                    if cred_row and cred_row[0]:
-                        creds = cred_row[0]
-                        for protocol in [pyatv.Protocol.AirPlay, pyatv.Protocol.RAOP, pyatv.Protocol.Companion]:
-                            if config.get_service(protocol) is not None:
-                                config.set_credentials(protocol, creds)
-                        logger.info("airplay_credentials_loaded", device_id=device_id)
-
                 atv = await pyatv.connect(config, asyncio.get_running_loop())
                 device = self._discovery_manager.get_device(device_id)
                 name = device.name if device else "AirPlay"
@@ -303,17 +237,9 @@ class TuneServer:
         async def create_local_output(device_id: str | None):
             return LocalOutput(device_name=device_id)
 
-        async def create_recorder_output(device_id: str | None):
-            from tune_server.outputs.recorder import RecorderOutput
-            return RecorderOutput(
-                event_bus=self._event_bus,
-                output_dir=settings.recording_dir,
-            )
-
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
         self._zone_manager.register_output_factory(OutputType.AIRPLAY, create_airplay_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
-        self._zone_manager.register_output_factory(OutputType.RECORDER, create_recorder_output)
 
     def _setup_streaming_services(self) -> None:
         if settings.tidal_enabled:
@@ -335,16 +261,6 @@ class TuneServer:
             from tune_server.streaming.amazon import AmazonMusicService
             deps.streaming_services["amazon"] = AmazonMusicService()
             logger.info("amazon_service_enabled")
-
-        if settings.spotify_enabled:
-            from tune_server.streaming.spotify import SpotifyService
-            deps.streaming_services["spotify"] = SpotifyService()
-            logger.info("spotify_service_enabled")
-
-        if settings.deezer_enabled:
-            from tune_server.streaming.deezer import DeezerService
-            deps.streaming_services["deezer"] = DeezerService()
-            logger.info("deezer_service_enabled")
 
     async def _restore_streaming_auth(self) -> None:
         """Restore streaming service auth tokens from DB."""
@@ -368,12 +284,10 @@ class TuneServer:
 
         deps.stream_url_resolver = _resolve_stream_url
 
-        # Set resolver and recording hook on all existing zones
+        # Set resolver on all existing zones
         if self._zone_manager:
             for zone in self._zone_manager.list_zones():
                 zone.player.set_stream_url_resolver(_resolve_stream_url)
-                if self._recording_service:
-                    zone.player.set_recording_hook(self._recording_service.set_track_info)
             self._zone_manager.set_stream_url_resolver(_resolve_stream_url)
 
     async def _safe_stop(self, name: str, coro) -> None:

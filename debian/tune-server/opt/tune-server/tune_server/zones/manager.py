@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import structlog
 
 from tune_server.db.engine import Database
@@ -23,7 +25,6 @@ class ZoneManager:
         self._queue_repo = PlayQueueRepo(db)
         self._zones: dict[int, ZoneInstance] = {}
         self._output_factory: dict[OutputType, callable] = {}
-        self._pending_zones: list = []
         self._stream_url_resolver = None
 
     def set_stream_url_resolver(self, resolver) -> None:
@@ -51,10 +52,8 @@ class ZoneManager:
                         event_bus=self._event_bus,
                         queue_repo=self._queue_repo,
                         zone_repo=self._zone_repo,
-                        output_device_id=row.get("output_device_id"),
                     )
                     zone.group_id = row.get("group_id")
-                    zone.sync_delay_ms = row.get("sync_delay_ms", 0) or 0
                     if self._stream_url_resolver:
                         zone.player.set_stream_url_resolver(self._stream_url_resolver)
 
@@ -69,64 +68,19 @@ class ZoneManager:
                     self._zones[zone_id] = zone
                     logger.info("zone_loaded", id=zone_id, name=row["name"])
                 else:
-                    # Output device not available — retry later
-                    logger.warning("zone_output_unavailable", id=zone_id, name=row["name"],
+                    # Output device not available — remove stale zone from DB
+                    logger.warning("zone_stale_removed", id=zone_id, name=row["name"],
                                    output_type=output_type, device=row.get("output_device_id"))
-                    self._pending_zones.append(row)
+                    await self._zone_repo.delete(zone_id)
             except Exception:
                 logger.exception("zone_load_error", id=row["id"])
-
-    async def retry_pending_zones(self) -> None:
-        """Retry loading zones whose output was not available at startup."""
-        if not self._pending_zones:
-            return
-        remaining = []
-        for row in self._pending_zones:
-            try:
-                zone_id = row["id"]
-                if zone_id in self._zones:
-                    continue
-                output_type = OutputType(row["output_type"])
-                output = await self._create_output(output_type, row.get("output_device_id"))
-                if output:
-                    zone = ZoneInstance(
-                        zone_id=zone_id, name=row["name"], output_type=output_type,
-                        output=output, event_bus=self._event_bus,
-                        queue_repo=self._queue_repo, zone_repo=self._zone_repo,
-                        output_device_id=row.get("output_device_id"),
-                    )
-                    zone.group_id = row.get("group_id")
-                    zone.sync_delay_ms = row.get("sync_delay_ms", 0) or 0
-                    if self._stream_url_resolver:
-                        zone.player.set_stream_url_resolver(self._stream_url_resolver)
-                    saved_volume = row.get("volume", 0.5)
-                    if saved_volume is not None and saved_volume != 0.5:
-                        await zone.player.set_volume(saved_volume)
-                    await zone.restore_queue()
-                    self._zones[zone_id] = zone
-                    logger.info("zone_loaded_retry", id=zone_id, name=row["name"])
-                else:
-                    remaining.append(row)
-            except Exception:
-                remaining.append(row)
-        self._pending_zones = remaining
 
     async def create_zone(
         self,
         name: str,
         output_type: OutputType,
         output_device_id: str | None = None,
-        sync_delay_ms: int = 0,
     ) -> ZoneInstance:
-        # Prevent duplicate device assignment
-        if output_device_id:
-            for zone in self._zones.values():
-                if (zone.output_type == output_type
-                        and zone.output_device_id == output_device_id):
-                    raise ValueError(
-                        f"Device already in use by zone '{zone.name}'"
-                    )
-
         # Create output FIRST — only persist to DB if it succeeds
         output = await self._create_output(output_type, output_device_id)
         if not output:
@@ -134,8 +88,6 @@ class ZoneManager:
 
         # Persist to DB
         zone_id = await self._zone_repo.create(name, output_type.value, output_device_id)
-        if sync_delay_ms:
-            await self._zone_repo.update(zone_id, sync_delay_ms=sync_delay_ms)
 
         zone = ZoneInstance(
             zone_id=zone_id,
@@ -145,9 +97,7 @@ class ZoneManager:
             event_bus=self._event_bus,
             queue_repo=self._queue_repo,
             zone_repo=self._zone_repo,
-            output_device_id=output_device_id,
         )
-        zone.sync_delay_ms = sync_delay_ms
         if self._stream_url_resolver:
             zone.player.set_stream_url_resolver(self._stream_url_resolver)
         self._zones[zone_id] = zone
@@ -162,39 +112,17 @@ class ZoneManager:
         return zone
 
     async def rename_zone(self, zone_id: int, name: str) -> ZoneInstance:
-        return await self.update_zone(zone_id, name=name)
-
-    async def update_zone(
-        self,
-        zone_id: int,
-        name: str | None = None,
-        sync_delay_ms: int | None = None,
-    ) -> ZoneInstance:
         zone = self._zones.get(zone_id)
         if not zone:
             raise KeyError(f"Zone {zone_id} not found")
-
-        db_updates: dict = {}
-        event_data: dict = {"zone_id": zone_id}
-
-        if name is not None:
-            zone.name = name
-            db_updates["name"] = name
-            event_data["name"] = name
-
-        if sync_delay_ms is not None:
-            zone.sync_delay_ms = sync_delay_ms
-            db_updates["sync_delay_ms"] = sync_delay_ms
-            event_data["sync_delay_ms"] = sync_delay_ms
-
-        if db_updates:
-            await self._zone_repo.update(zone_id, **db_updates)
-            await self._event_bus.emit(Event(
-                type=EventType.ZONE_UPDATED,
-                data=event_data,
-                source="zone_manager",
-            ))
-            logger.info("zone_updated", id=zone_id, **db_updates)
+        zone.name = name
+        await self._zone_repo.update(zone_id, name=name)
+        await self._event_bus.emit(Event(
+            type=EventType.ZONE_UPDATED,
+            data={"zone_id": zone_id, "name": name},
+            source="zone_manager",
+        ))
+        logger.info("zone_renamed", id=zone_id, name=name)
         return zone
 
     async def delete_zone(self, zone_id: int) -> None:
@@ -209,7 +137,7 @@ class ZoneManager:
             source="zone_manager",
         ))
 
-    def get_zone(self, zone_id: int) -> ZoneInstance | None:
+    def get_zone(self, zone_id: int) -> Optional[ZoneInstance]:
         return self._zones.get(zone_id)
 
     def list_zones(self) -> list[ZoneInstance]:
@@ -217,7 +145,7 @@ class ZoneManager:
 
     async def _create_output(
         self, output_type: OutputType, device_id: str | None
-    ) -> OutputTarget | None:
+    ) -> Optional[OutputTarget]:
         # Check registered factories first
         if output_type in self._output_factory:
             return await self._output_factory[output_type](device_id)

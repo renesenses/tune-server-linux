@@ -285,7 +285,7 @@ class Player:
 
     async def _preload_next(self) -> None:
         """Preload the next track in queue for gapless playback."""
-        if not self._gapless:
+        if not self._gapless or not self._output.capabilities.supports_gapless:
             return
         next_track = self._queue.peek_next()
         if not next_track:
@@ -435,6 +435,13 @@ class Player:
 
         await self._persist_queue()
 
+        # Notify recording hook for gapless track (same as normal playback)
+        if self._recording_hook:
+            try:
+                self._recording_hook(self._zone_id, next_track)
+            except Exception:
+                pass
+
         await self._event_bus.emit(Event(
             type=EventType.PLAYBACK_TRACK_CHANGED,
             data={
@@ -453,9 +460,11 @@ class Player:
 
     async def _advance_track(self) -> None:
         # Check if current track failed prematurely (stream URL expired)
+        # Skip for outputs that download instantly (recorder)
         current = self._queue.current
         if (current and current.source_id and self._stream_url_resolver
-                and current.duration_ms and self.position_ms < current.duration_ms * 0.9):
+                and current.duration_ms and self.position_ms < current.duration_ms * 0.9
+                and not self._output.supports_direct_url(current)):
             try:
                 new_url = await asyncio.wait_for(
                     self._stream_url_resolver(current), timeout=10
