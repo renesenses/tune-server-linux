@@ -175,12 +175,6 @@ class TuneServer:
             await self._zone_manager.retry_pending_zones()
         asyncio.create_task(_retry_zones())
 
-        # Recording service
-        from tune_server.recording.recorder import RecordingService
-        self._recording_service = RecordingService(self._event_bus, settings.recording_dir)
-        await self._recording_service.start()
-        deps.recording_service = self._recording_service
-
         # Streaming services
         self._setup_streaming_services()
         await self._restore_streaming_auth()
@@ -303,17 +297,9 @@ class TuneServer:
         async def create_local_output(device_id: str | None):
             return LocalOutput(device_name=device_id)
 
-        async def create_recorder_output(device_id: str | None):
-            from tune_server.outputs.recorder import RecorderOutput
-            return RecorderOutput(
-                event_bus=self._event_bus,
-                output_dir=settings.recording_dir,
-            )
-
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
         self._zone_manager.register_output_factory(OutputType.AIRPLAY, create_airplay_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
-        self._zone_manager.register_output_factory(OutputType.RECORDER, create_recorder_output)
 
     def _setup_streaming_services(self) -> None:
         if settings.tidal_enabled:
@@ -368,12 +354,10 @@ class TuneServer:
 
         deps.stream_url_resolver = _resolve_stream_url
 
-        # Set resolver and recording hook on all existing zones
+        # Set resolver on all existing zones
         if self._zone_manager:
             for zone in self._zone_manager.list_zones():
                 zone.player.set_stream_url_resolver(_resolve_stream_url)
-                if self._recording_service:
-                    zone.player.set_recording_hook(self._recording_service.set_track_info)
             self._zone_manager.set_stream_url_resolver(_resolve_stream_url)
 
     async def _safe_stop(self, name: str, coro) -> None:

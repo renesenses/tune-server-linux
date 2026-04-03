@@ -75,6 +75,10 @@ class Album(BaseModel):
     cover_path: Optional[str] = None
     source: Source = Source.LOCAL
     source_id: Optional[str] = None
+    sample_rate: Optional[int] = None
+    bit_depth: Optional[int] = None
+    format: Optional[str] = None
+    quality: Optional[str] = None  # "hi-res", "cd", "lossy"
 
 
 class Track(BaseModel):

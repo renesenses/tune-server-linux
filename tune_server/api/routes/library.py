@@ -63,9 +63,14 @@ async def stream_track_audio(track_id: int):
           ".opus": "audio/opus", ".aiff": "audio/aiff", ".dsf": "audio/dsf"}
     return FileResponse(filepath, media_type=mt.get(suffix, "application/octet-stream"), filename=filepath.name)
 
-@router.get("/albums", response_model=list[Album])
-async def list_albums(limit: int = Query(100, le=50000), offset: int = Query(0, ge=0)):
-    return await deps.album_repo.list(limit=limit, offset=offset)
+@router.get("/albums")
+async def list_albums(
+    limit: int = Query(100, le=50000),
+    offset: int = Query(0, ge=0),
+    quality: str | None = Query(None, description="Filter by quality: hi-res, cd, lossy"),
+):
+    albums = await deps.album_repo.list(limit=limit, offset=offset, quality=quality)
+    return [a.model_dump(exclude_none=False) for a in albums]
 
 
 @router.get("/albums/{album_id}", response_model=Album)

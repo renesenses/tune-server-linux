@@ -22,12 +22,26 @@ def _row_to_artist(row) -> Artist:
     )
 
 
+def _quality_from_audio(sample_rate: int | None, bit_depth: int | None, fmt: str | None) -> str:
+    if sample_rate and sample_rate > 44100:
+        return "hi-res"
+    if bit_depth and bit_depth > 16:
+        return "hi-res"
+    if fmt and fmt in ("mp3", "aac", "ogg", "opus", "wma"):
+        return "lossy"
+    return "cd"
+
+
 def _row_to_album(row) -> Album:
+    keys = row.keys()
+    sr = row["max_sample_rate"] if "max_sample_rate" in keys else None
+    bd = row["max_bit_depth"] if "max_bit_depth" in keys else None
+    fmt = row["dominant_format"] if "dominant_format" in keys else None
     return Album(
         id=row["id"],
         title=row["title"],
         artist_id=row["artist_id"],
-        artist_name=row["artist_name"] if "artist_name" in row.keys() else None,
+        artist_name=row["artist_name"] if "artist_name" in keys else None,
         year=row["year"],
         genre=row["genre"],
         disc_count=row["disc_count"],
@@ -35,6 +49,10 @@ def _row_to_album(row) -> Album:
         cover_path=row["cover_path"],
         source=row["source"],
         source_id=row["source_id"],
+        sample_rate=sr,
+        bit_depth=bd,
+        format=fmt,
+        quality=_quality_from_audio(sr, bd, fmt) if sr or bd or fmt else None,
     )
 
 
@@ -154,50 +172,61 @@ class ArtistRepo:
 
 
 class AlbumRepo:
+    _SELECT = """SELECT al.*, ar.name as artist_name,
+               tq.max_sample_rate, tq.max_bit_depth, tq.dominant_format
+               FROM albums al
+               LEFT JOIN artists ar ON al.artist_id = ar.id
+               LEFT JOIN (
+                   SELECT album_id,
+                          MAX(sample_rate) as max_sample_rate,
+                          MAX(bit_depth) as max_bit_depth,
+                          (SELECT format FROM tracks t2 WHERE t2.album_id = t.album_id
+                           GROUP BY format ORDER BY COUNT(*) DESC LIMIT 1) as dominant_format
+                   FROM tracks t WHERE album_id IS NOT NULL
+                   GROUP BY album_id
+               ) tq ON tq.album_id = al.id"""
+
     def __init__(self, db: Database) -> None:
         self._db = db
 
     async def get(self, album_id: int) -> Optional[Album]:
         row = await self._db.fetchone(
-            """SELECT al.*, ar.name as artist_name
-               FROM albums al LEFT JOIN artists ar ON al.artist_id = ar.id
-               WHERE al.id = ?""",
+            f"{self._SELECT} WHERE al.id = ?",
             (album_id,),
         )
         return _row_to_album(row) if row else None
 
     async def get_by_title_and_artist(self, title: str, artist_id: int) -> Optional[Album]:
         row = await self._db.fetchone(
-            """SELECT al.*, ar.name as artist_name
-               FROM albums al LEFT JOIN artists ar ON al.artist_id = ar.id
-               WHERE al.title = ? AND al.artist_id = ?""",
+            f"{self._SELECT} WHERE al.title = ? AND al.artist_id = ?",
             (title, artist_id),
         )
         return _row_to_album(row) if row else None
 
     async def get_by_title(self, title: str) -> Album | None:
         row = await self._db.fetchone(
-            """SELECT al.*, ar.name as artist_name
-               FROM albums al LEFT JOIN artists ar ON al.artist_id = ar.id
-               WHERE al.title = ? LIMIT 1""",
+            f"{self._SELECT} WHERE al.title = ? LIMIT 1",
             (title,),
         )
         return _row_to_album(row) if row else None
 
-    async def list(self, limit: int = 100, offset: int = 0) -> list[Album]:
+    async def list(self, limit: int = 100, offset: int = 0, quality: str | None = None) -> list[Album]:
+        if quality:
+            rows = await self._db.fetchall(
+                f"{self._SELECT} ORDER BY al.title LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
+            albums = [_row_to_album(r) for r in rows]
+            return [a for a in albums if a.quality == quality]
         rows = await self._db.fetchall(
-            """SELECT al.*, ar.name as artist_name
-               FROM albums al LEFT JOIN artists ar ON al.artist_id = ar.id
-               ORDER BY al.title LIMIT ? OFFSET ?""",
+            f"{self._SELECT} ORDER BY al.title LIMIT ? OFFSET ?",
             (limit, offset),
         )
         return [_row_to_album(r) for r in rows]
 
     async def list_by_artist(self, artist_id: int) -> list[Album]:
         rows = await self._db.fetchall(
-            """SELECT DISTINCT al.*, ar.name as artist_name
-               FROM albums al
-               LEFT JOIN artists ar ON al.artist_id = ar.id
+            f"""{self._SELECT}
                WHERE al.artist_id = ?
                   OR al.id IN (SELECT DISTINCT album_id FROM tracks WHERE artist_id = ?)
                ORDER BY al.year""",
