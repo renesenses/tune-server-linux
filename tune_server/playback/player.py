@@ -424,13 +424,6 @@ class Player:
 
         await self._persist_queue()
 
-        # Notify recording hook for gapless track (same as normal playback)
-        if self._recording_hook:
-            try:
-                self._recording_hook(self._zone_id, next_track)
-            except Exception:
-                pass
-
         await self._event_bus.emit(Event(
             type=EventType.PLAYBACK_TRACK_CHANGED,
             data={
@@ -449,7 +442,7 @@ class Player:
 
     async def _advance_track(self) -> None:
         # Check if current track failed prematurely (stream URL expired)
-        # Skip for outputs that download instantly (recorder)
+        # Skip for outputs that handle URLs directly
         current = self._queue.current
         if (current and current.source_id and self._stream_url_resolver
                 and current.duration_ms and self.position_ms < current.duration_ms * 0.9
