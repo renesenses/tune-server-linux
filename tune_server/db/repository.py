@@ -23,6 +23,10 @@ def _row_to_artist(row) -> Artist:
 
 
 def _quality_from_audio(sample_rate: int | None, bit_depth: int | None, fmt: str | None) -> str:
+    if fmt and fmt in ("dsd", "dsf", "dff"):
+        return "dsd"
+    if sample_rate and sample_rate >= 2_000_000:
+        return "dsd"
     if sample_rate and sample_rate > 44100:
         return "hi-res"
     if bit_depth and bit_depth > 16:
