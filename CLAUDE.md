@@ -77,7 +77,9 @@ TUNE_LOG_LEVEL=DEBUG
 
 ## Build & Release
 
-No PyInstaller spec in this repo. Release workflow (`.github/workflows/release.yml`) creates **source archives** (tar.gz for Linux/macOS, zip for Windows) triggered by `v*` tags:
+Release workflow (`.github/workflows/release.yml`) builds PyInstaller binaries triggered by `v*` tags or `workflow_dispatch`.
+
+**Windows build MUST include:** `tune-server.exe`, `ffmpeg.exe`, `ffprobe.exe`, `start-tune-server.bat`. These are bundled in the workflow — never remove the FFmpeg download step or bat creation.
 
 ```bash
 git tag v0.2.3 && git push origin v0.2.3
