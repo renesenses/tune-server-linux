@@ -174,6 +174,14 @@ class DlnaOutput(OutputTarget):
         return fmt in _DLNA_DIRECT_FORMATS
 
     async def start(self, stream_info: AudioStreamInfo, track: Track | None = None) -> None:
+        # Stop current playback first — some renderers (Micromega) ignore new URI without explicit Stop
+        try:
+            await self._dmr_call("async_stop")
+        except Exception:
+            pass
+        if self._stream_id:
+            self._streamer.remove_session(self._stream_id)
+            self._stream_id = None
         self._direct_url = False
 
         try:

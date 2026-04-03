@@ -20,6 +20,24 @@ logger = structlog.get_logger()
 AUDIO_HASH_SAMPLE_SIZE = 64 * 1024  # 64KB sample for audio hash
 
 
+def _quality_suffix(sample_rate: int | None, bit_depth: int | None) -> str:
+    """Return a human-readable quality suffix like '96kHz/24bit'."""
+    if not sample_rate:
+        return ""
+    sr = sample_rate / 1000  # e.g. 44.1, 48, 96, 192
+    sr_str = f"{sr:g}kHz"
+    if bit_depth and bit_depth > 16:
+        return f"{sr_str}/{bit_depth}bit"
+    return sr_str
+
+
+def _same_quality_tier(sr1: int | None, sr2: int | None) -> bool:
+    """Check if two sample rates belong to the same quality tier."""
+    if sr1 is None or sr2 is None:
+        return True  # Can't compare — assume same
+    return sr1 == sr2
+
+
 def compute_audio_hash(file_path: str) -> str | None:
     """Compute MD5 hash of a 64KB audio sample from the middle of the file.
 
@@ -214,23 +232,34 @@ class LibraryScanner:
             artist_name = metadata.album_artist or metadata.artist
             artist = await self._artist_repo.get_or_create(artist_name)
 
-            # Get or create album
+            # Get or create album — separate albums when sample rates differ
+            base_title = metadata.album
             if metadata.album_artist:
-                album = await self._album_repo.get_or_create(
-                    title=metadata.album,
-                    artist_id=artist.id,
-                    year=metadata.year,
-                    genre=metadata.genre,
-                )
+                album = await self._album_repo.get_by_title_and_artist(base_title, artist.id)
             else:
-                album = await self._album_repo.get_by_title(metadata.album)
-                if not album:
+                album = await self._album_repo.get_by_title(base_title)
+
+            if album:
+                # Check if existing album has a different sample rate
+                dominant_sr = await self._album_repo.get_dominant_sample_rate(album.id)
+                if not _same_quality_tier(dominant_sr, metadata.sample_rate):
+                    # Different quality — create a suffixed album for the new track
+                    suffix = _quality_suffix(metadata.sample_rate, metadata.bit_depth)
+                    qualified_title = f"{base_title} ({suffix})" if suffix else base_title
                     album = await self._album_repo.get_or_create(
-                        title=metadata.album,
+                        title=qualified_title,
                         artist_id=artist.id,
                         year=metadata.year,
                         genre=metadata.genre,
                     )
+                    logger.info("album_quality_split", base=base_title, new_title=qualified_title)
+            else:
+                album = await self._album_repo.get_or_create(
+                    title=base_title,
+                    artist_id=artist.id,
+                    year=metadata.year,
+                    genre=metadata.genre,
+                )
 
             # Create track
             track = Track(

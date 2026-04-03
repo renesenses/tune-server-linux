@@ -279,6 +279,16 @@ class AlbumRepo:
         )
         await self._db.commit()
 
+    async def get_dominant_sample_rate(self, album_id: int) -> int | None:
+        """Return the most common sample_rate among an album's tracks, or None if empty."""
+        row = await self._db.fetchone(
+            """SELECT sample_rate FROM tracks
+               WHERE album_id = ? AND sample_rate IS NOT NULL
+               GROUP BY sample_rate ORDER BY COUNT(*) DESC LIMIT 1""",
+            (album_id,),
+        )
+        return row["sample_rate"] if row else None
+
     async def update_track_count(self, album_id: int) -> None:
         await self._db.execute(
             """UPDATE albums SET track_count = (
