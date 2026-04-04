@@ -995,6 +995,27 @@ async def full_text_search(db: Database, query: str, limit: int = 50) -> SearchR
     albums = await album_repo.search(query, limit)
     artists = await artist_repo.search(query, limit)
 
+    # Enrich: also fetch albums/tracks for matching artists
+    seen_album_ids = {a.id for a in albums if a.id}
+    seen_track_ids = {t.id for t in tracks if t.id}
+    for artist in artists:
+        if not artist.id:
+            continue
+        artist_albums = await album_repo.list_by_artist(artist.id)
+        for al in artist_albums:
+            if al.id and al.id not in seen_album_ids:
+                albums.append(al)
+                seen_album_ids.add(al.id)
+        artist_tracks = await track_repo.list_by_artist(artist.id)
+        for tr in artist_tracks:
+            if tr.id and tr.id not in seen_track_ids:
+                tracks.append(tr)
+                seen_track_ids.add(tr.id)
+        if len(albums) >= limit and len(tracks) >= limit:
+            break
+    tracks = tracks[:limit]
+    albums = albums[:limit]
+
     return SearchResult(tracks=tracks, albums=albums, artists=artists)
 
 
