@@ -73,12 +73,38 @@ class PostgresDatabase:
         pass  # asyncpg auto-commits; transactions handled per-statement
 
     async def executescript(self, sql: str) -> None:
+        statements = self._split_sql(sql)
         async with self._pool.acquire() as conn:
             async with conn.transaction():
-                for statement in sql.split(";"):
-                    statement = statement.strip()
-                    if statement and not statement.startswith("--"):
-                        await conn.execute(statement)
+                for statement in statements:
+                    await conn.execute(statement)
+
+    @staticmethod
+    def _split_sql(sql: str) -> list[str]:
+        """Split SQL script into statements, respecting $$ blocks and strings."""
+        statements = []
+        current = []
+        in_dollar = False
+        lines = sql.split("\n")
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("--"):
+                continue
+            # Track $$ dollar-quoted blocks
+            count = stripped.count("$$")
+            current.append(line)
+            if count % 2 == 1:
+                in_dollar = not in_dollar
+            if not in_dollar and stripped.endswith(";"):
+                stmt = "\n".join(current).strip().rstrip(";").strip()
+                if stmt:
+                    statements.append(stmt)
+                current = []
+        if current:
+            stmt = "\n".join(current).strip().rstrip(";").strip()
+            if stmt:
+                statements.append(stmt)
+        return statements
 
     # ------------------------------------------------------------------
     # Schema

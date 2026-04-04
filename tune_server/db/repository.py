@@ -166,12 +166,21 @@ class ArtistRepo:
         return row["cnt"]
 
     async def search(self, query: str, limit: int = 50) -> list[Artist]:
-        rows = await self._db.fetchall(
-            """SELECT a.* FROM artists a
-               JOIN artists_fts fts ON a.id = fts.rowid
-               WHERE artists_fts MATCH ? LIMIT ?""",
-            (query + "*", limit),
-        )
+        if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
+            rows = await self._db.fetchall(
+                """SELECT a.* FROM artists a
+                   WHERE a.fts_vector @@ plainto_tsquery('simple', ?)
+                   ORDER BY ts_rank(a.fts_vector, plainto_tsquery('simple', ?)) DESC
+                   LIMIT ?""",
+                (query, query, limit),
+            )
+        else:
+            rows = await self._db.fetchall(
+                """SELECT a.* FROM artists a
+                   JOIN artists_fts fts ON a.id = fts.rowid
+                   WHERE artists_fts MATCH ? LIMIT ?""",
+                (query + "*", limit),
+            )
         return [_row_to_artist(r) for r in rows]
 
 
@@ -347,8 +356,12 @@ class AlbumRepo:
 
     async def merge_duplicates(self) -> int:
         """Merge albums with the same title: reassign tracks, delete dupes."""
+        if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
+            agg = "STRING_AGG(id::text, ',')"
+        else:
+            agg = "GROUP_CONCAT(id)"
         rows = await self._db.fetchall(
-            """SELECT title, MIN(id) as keep_id, GROUP_CONCAT(id) as all_ids
+            f"""SELECT title, MIN(id) as keep_id, {agg} as all_ids
                FROM albums GROUP BY title HAVING COUNT(*) > 1""",
         )
         merged = 0
@@ -399,13 +412,23 @@ class AlbumRepo:
         return [_row_to_album(r) for r in rows]
 
     async def search(self, query: str, limit: int = 50) -> list[Album]:
-        rows = await self._db.fetchall(
-            """SELECT al.*, ar.name as artist_name FROM albums al
-               LEFT JOIN artists ar ON al.artist_id = ar.id
-               JOIN albums_fts fts ON al.id = fts.rowid
-               WHERE albums_fts MATCH ? LIMIT ?""",
-            (query + "*", limit),
-        )
+        if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
+            rows = await self._db.fetchall(
+                """SELECT al.*, ar.name as artist_name FROM albums al
+                   LEFT JOIN artists ar ON al.artist_id = ar.id
+                   WHERE al.fts_vector @@ plainto_tsquery('simple', ?)
+                   ORDER BY ts_rank(al.fts_vector, plainto_tsquery('simple', ?)) DESC
+                   LIMIT ?""",
+                (query, query, limit),
+            )
+        else:
+            rows = await self._db.fetchall(
+                """SELECT al.*, ar.name as artist_name FROM albums al
+                   LEFT JOIN artists ar ON al.artist_id = ar.id
+                   JOIN albums_fts fts ON al.id = fts.rowid
+                   WHERE albums_fts MATCH ? LIMIT ?""",
+                (query + "*", limit),
+            )
         return [_row_to_album(r) for r in rows]
 
 
@@ -580,15 +603,27 @@ class TrackRepo:
         return {r["file_path"] for r in rows}
 
     async def search(self, query: str, limit: int = 50) -> list[Track]:
-        rows = await self._db.fetchall(
-            f"""SELECT t.*, al.title as album_title, ar.name as artist_name
-                FROM tracks t
-                LEFT JOIN albums al ON t.album_id = al.id
-                LEFT JOIN artists ar ON t.artist_id = ar.id
-                JOIN tracks_fts fts ON t.id = fts.rowid
-                WHERE tracks_fts MATCH ? LIMIT ?""",
-            (query + "*", limit),
-        )
+        if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
+            rows = await self._db.fetchall(
+                """SELECT t.*, al.title as album_title, ar.name as artist_name
+                    FROM tracks t
+                    LEFT JOIN albums al ON t.album_id = al.id
+                    LEFT JOIN artists ar ON t.artist_id = ar.id
+                    WHERE t.fts_vector @@ plainto_tsquery('simple', ?)
+                    ORDER BY ts_rank(t.fts_vector, plainto_tsquery('simple', ?)) DESC
+                    LIMIT ?""",
+                (query, query, limit),
+            )
+        else:
+            rows = await self._db.fetchall(
+                """SELECT t.*, al.title as album_title, ar.name as artist_name
+                    FROM tracks t
+                    LEFT JOIN albums al ON t.album_id = al.id
+                    LEFT JOIN artists ar ON t.artist_id = ar.id
+                    JOIN tracks_fts fts ON t.id = fts.rowid
+                    WHERE tracks_fts MATCH ? LIMIT ?""",
+                (query + "*", limit),
+            )
         return [_row_to_track(r) for r in rows]
 
     async def get_multiple(self, track_ids: list[int]) -> list[Track]:
@@ -1028,17 +1063,30 @@ class RadioFavoriteRepo:
         self._db = db
 
     async def ensure_table(self) -> None:
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS radio_favorites (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                artist TEXT NOT NULL DEFAULT '',
-                station_name TEXT NOT NULL DEFAULT '',
-                cover_url TEXT,
-                stream_url TEXT,
-                saved_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
+            await self._db.execute("""
+                CREATE TABLE IF NOT EXISTS radio_favorites (
+                    id SERIAL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    artist TEXT NOT NULL DEFAULT '',
+                    station_name TEXT NOT NULL DEFAULT '',
+                    cover_url TEXT,
+                    stream_url TEXT,
+                    saved_at TEXT NOT NULL DEFAULT (NOW()::text)
+                )
+            """)
+        else:
+            await self._db.execute("""
+                CREATE TABLE IF NOT EXISTS radio_favorites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    artist TEXT NOT NULL DEFAULT '',
+                    station_name TEXT NOT NULL DEFAULT '',
+                    cover_url TEXT,
+                    stream_url TEXT,
+                    saved_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
         await self._db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_radio_favorites_dedup
             ON radio_favorites(title, artist)

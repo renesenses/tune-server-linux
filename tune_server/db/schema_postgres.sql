@@ -119,5 +119,64 @@ CREATE TABLE IF NOT EXISTS radio_favorites (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_radio_favorites_dedup
     ON radio_favorites(title, artist);
 
--- Note: FTS (Full-Text Search) for PostgreSQL will be added in Phase 2
--- using tsvector/tsquery with GIN indexes.
+-- Full-Text Search using tsvector + GIN indexes
+
+-- Add tsvector columns (idempotent via DO block)
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN fts_vector tsvector;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE albums ADD COLUMN fts_vector tsvector;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE artists ADD COLUMN fts_vector tsvector;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- GIN indexes for fast search
+CREATE INDEX IF NOT EXISTS idx_tracks_fts ON tracks USING GIN(fts_vector);
+CREATE INDEX IF NOT EXISTS idx_albums_fts ON albums USING GIN(fts_vector);
+CREATE INDEX IF NOT EXISTS idx_artists_fts ON artists USING GIN(fts_vector);
+
+-- Populate existing rows
+UPDATE tracks SET fts_vector = to_tsvector('simple', COALESCE(title, '')) WHERE fts_vector IS NULL;
+UPDATE albums SET fts_vector = to_tsvector('simple', COALESCE(title, '')) WHERE fts_vector IS NULL;
+UPDATE artists SET fts_vector = to_tsvector('simple', COALESCE(name, '')) WHERE fts_vector IS NULL;
+
+-- Triggers to maintain tsvector on INSERT/UPDATE
+CREATE OR REPLACE FUNCTION tracks_fts_trigger() RETURNS trigger AS $$
+BEGIN
+    NEW.fts_vector := to_tsvector('simple', COALESCE(NEW.title, ''));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION albums_fts_trigger() RETURNS trigger AS $$
+BEGIN
+    NEW.fts_vector := to_tsvector('simple', COALESCE(NEW.title, ''));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION artists_fts_trigger() RETURNS trigger AS $$
+BEGIN
+    NEW.fts_vector := to_tsvector('simple', COALESCE(NEW.name, ''));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_tracks_fts ON tracks;
+CREATE TRIGGER trg_tracks_fts BEFORE INSERT OR UPDATE OF title ON tracks
+    FOR EACH ROW EXECUTE FUNCTION tracks_fts_trigger();
+
+DROP TRIGGER IF EXISTS trg_albums_fts ON albums;
+CREATE TRIGGER trg_albums_fts BEFORE INSERT OR UPDATE OF title ON albums
+    FOR EACH ROW EXECUTE FUNCTION albums_fts_trigger();
+
+DROP TRIGGER IF EXISTS trg_artists_fts ON artists;
+CREATE TRIGGER trg_artists_fts BEFORE INSERT OR UPDATE OF name ON artists
+    FOR EACH ROW EXECUTE FUNCTION artists_fts_trigger();
