@@ -46,3 +46,4 @@ testpaths = ["tests"]
 
 [project.scripts]
 tune-server = "tune_server.__main__:main"
+tune-migrate-db = "tune_server.db.migrate:main"

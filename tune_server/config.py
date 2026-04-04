@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     db_path: str = "tune_server.db"
     db_engine: str = "sqlite"  # "sqlite" or "postgres"
     db_url: str | None = None  # PostgreSQL URL, e.g. "postgresql://user:pass@localhost/tune"
+    db_pool_min: int = 2  # PostgreSQL connection pool min size
+    db_pool_max: int = 10  # PostgreSQL connection pool max size
 
     # Security
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])

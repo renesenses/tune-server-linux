@@ -12,5 +12,7 @@ def create_database(config) -> DatabaseProtocol:
         db_url = getattr(config, "db_url", None)
         if not db_url:
             raise ValueError("TUNE_DB_URL is required when TUNE_DB_ENGINE='postgres'")
-        return PostgresDatabase(db_url)
+        pool_min = getattr(config, "db_pool_min", 2)
+        pool_max = getattr(config, "db_pool_max", 10)
+        return PostgresDatabase(db_url, pool_min=pool_min, pool_max=pool_max)
     return SQLiteDatabase(config.db_path)

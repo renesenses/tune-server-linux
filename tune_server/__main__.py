@@ -6,6 +6,13 @@ import sys
 
 
 def main() -> None:
+    # Handle subcommands
+    if len(sys.argv) > 1 and sys.argv[1] == "migrate-db":
+        sys.argv = [sys.argv[0]] + sys.argv[2:]  # Strip subcommand for argparse
+        from tune_server.db.migrate import main as migrate_main
+        migrate_main()
+        return
+
     from tune_server.app import run_server
 
     async def _run() -> None:

@@ -15,15 +15,19 @@ _SCHEMA_PATH = Path(__file__).parent / "schema_postgres.sql"
 class PostgresDatabase:
     engine_name = "postgres"
 
-    def __init__(self, db_url: str) -> None:
+    def __init__(self, db_url: str, pool_min: int = 2, pool_max: int = 10) -> None:
         self._db_url = db_url
+        self._pool_min = pool_min
+        self._pool_max = pool_max
         self._pool = None
 
     async def connect(self) -> None:
         import asyncpg
 
         logger.info("database_connecting", url=self._db_url.split("@")[-1], engine="postgres")
-        self._pool = await asyncpg.create_pool(self._db_url, min_size=2, max_size=10)
+        self._pool = await asyncpg.create_pool(
+            self._db_url, min_size=self._pool_min, max_size=self._pool_max,
+        )
         await self._init_schema()
         logger.info("database_connected", engine="postgres")
 
