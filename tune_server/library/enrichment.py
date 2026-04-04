@@ -9,6 +9,35 @@ from tune_server.db.repository import AlbumRepo, ArtistRepo
 
 logger = structlog.get_logger()
 
+# Normalize MusicBrainz tags to Discogs-style genres
+_GENRE_NORMALIZE = {
+    "rock": "Rock", "pop": "Pop", "jazz": "Jazz", "blues": "Blues",
+    "electronic": "Electronic", "classical": "Classical", "hip hop": "Hip-Hop",
+    "hip-hop": "Hip-Hop", "rap": "Hip-Hop", "soul": "Soul / R&B", "r&b": "Soul / R&B",
+    "funk": "Funk", "reggae": "Reggae", "world": "World", "latin": "Latin",
+    "country": "Country", "folk": "Folk", "metal": "Metal", "punk": "Punk",
+    "alternative": "Rock", "indie": "Rock", "alternative rock": "Rock",
+    "hard rock": "Rock", "progressive rock": "Rock", "classic rock": "Rock",
+    "chanson": "Chanson Française", "chanson française": "Chanson Française",
+    "french pop": "Chanson Française", "bossa nova": "Jazz", "bebop": "Jazz",
+    "swing": "Jazz", "big band": "Jazz", "smooth jazz": "Jazz",
+    "ambient": "Electronic", "house": "Electronic", "techno": "Electronic",
+    "downtempo": "Electronic", "trip hop": "Electronic", "electro": "Electronic",
+    "opera": "Classical", "baroque": "Classical", "romantic": "Classical",
+    "symphony": "Classical", "chamber music": "Classical",
+    "soundtrack": "Soundtrack", "score": "Soundtrack",
+    "disco": "Pop", "new wave": "Pop",
+}
+
+
+def normalize_genre(raw: str) -> str:
+    """Normalize a raw genre tag to a Discogs-style genre."""
+    lower = raw.lower().strip()
+    if lower in _GENRE_NORMALIZE:
+        return _GENRE_NORMALIZE[lower]
+    # Capitalize if not found
+    return raw.title()
+
 
 class MetadataEnricher:
     """Background enrichment from MusicBrainz and Discogs."""
@@ -109,7 +138,7 @@ class MetadataEnricher:
                         tags = mb.get("tag-list", [])
                         if tags:
                             top_tag = sorted(tags, key=lambda t: int(t.get("count", 0)), reverse=True)[0]
-                            genre = top_tag.get("name", "").title()
+                            genre = normalize_genre(top_tag.get("name", ""))
                             if genre:
                                 updates["genre"] = genre
                         if updates:
