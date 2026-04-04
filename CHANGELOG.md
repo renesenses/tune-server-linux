@@ -2,6 +2,15 @@
 
 All notable changes to Tune Server.
 
+## v0.3.1 — 2026-04-04
+
+### Fixed
+- **Startup crash**: fixed AttributeError on startup that affected v0.3.0 binary builds
+- **Library search**: searching by artist name now returns their albums and tracks
+
+### Web Client
+- **Artists pagination**: library view now loads all artists instead of truncating at 500
+
 ## v0.2.2 — 2026-03-26
 
 ### Fixed
@@ -18,7 +27,6 @@ All notable changes to Tune Server.
 - **Mobile bottom tab bar**: Zone selector, Home, Library, Search, Streaming, Plus (drawer with all remaining views)
 - **Mini-player**: compact transport bar on mobile, tap to open full-screen Now Playing
 - **Zone selector**: accessible on mobile and tablet via sheet overlay
-- **Record button**: Now Playing view includes recording controls
 - **Dynamic version**: no more hardcoded client version
 
 ---
