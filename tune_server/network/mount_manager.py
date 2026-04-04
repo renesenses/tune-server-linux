@@ -76,9 +76,9 @@ class MountManager:
 
         # Persist to DB first
         try:
-            cursor = await self._db.execute(
+            result = await self._db.execute(
                 """INSERT INTO network_mounts (host, share_name, protocol, mount_path, username, password, auto_mount, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'unmounted')""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'unmounted') RETURNING id""",
                 (
                     request.host,
                     request.share_name,
@@ -90,7 +90,7 @@ class MountManager:
                 ),
             )
             await self._db.commit()
-            mount_id = cursor.lastrowid
+            mount_id = result.lastrowid
         except Exception as e:
             # Unique constraint violation — already exists
             row = await self._db.fetchone(

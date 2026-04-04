@@ -9,7 +9,7 @@ import uvicorn
 from tune_server.api.deps import deps
 from tune_server.api.main import create_api_app, setup_websocket_manager
 from tune_server.config import settings
-from tune_server.db.engine import Database
+from tune_server.db.factory import create_database
 from tune_server.db.repository import (
     AlbumRepo,
     ArtistRepo,
@@ -92,7 +92,7 @@ class TuneServer:
                 hint="Install with: sudo apt install ffmpeg")
 
         # Database
-        self._db = Database(settings.db_path)
+        self._db = create_database(settings)
         await self._db.connect()
 
         # Repos

@@ -330,8 +330,8 @@ class AmazonMusicService(StreamingService):
                 "device_id": self._device_id,
             })
             await db.execute(
-                "INSERT OR REPLACE INTO streaming_auth (service, token_data, updated_at) "
-                "VALUES (?, ?, CURRENT_TIMESTAMP)",
+                "INSERT INTO streaming_auth (service, token_data, updated_at) "
+                "VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT (service) DO UPDATE SET token_data = EXCLUDED.token_data, updated_at = CURRENT_TIMESTAMP",
                 ("amazon", token_data),
             )
             await db.commit()

@@ -1,19 +1,52 @@
 from __future__ import annotations
 
+import dataclasses
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
 
 import aiosqlite
 import structlog
 
 logger = structlog.get_logger()
 
-_SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+_SCHEMA_PATH = Path(__file__).parent / "schema_sqlite.sql"
 _MAX_BACKUPS = 5
 
 
-class Database:
+# ---------------------------------------------------------------------------
+# Database Protocol & Result
+# ---------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class ExecuteResult:
+    """Result of an execute() call, portable across engines."""
+    lastrowid: int | None = None
+    rowcount: int = 0
+
+
+@runtime_checkable
+class DatabaseProtocol(Protocol):
+    @property
+    def engine_name(self) -> str: ...
+    async def connect(self) -> None: ...
+    async def close(self) -> None: ...
+    async def execute(self, sql: str, params: tuple = ()) -> ExecuteResult: ...
+    async def executemany(self, sql: str, params_seq: list[tuple]) -> None: ...
+    async def fetchone(self, sql: str, params: tuple = ()) -> Any | None: ...
+    async def fetchall(self, sql: str, params: tuple = ()) -> list[Any]: ...
+    async def commit(self) -> None: ...
+    async def executescript(self, sql: str) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# SQLite Implementation
+# ---------------------------------------------------------------------------
+
+class SQLiteDatabase:
+    engine_name = "sqlite"
+
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._db: aiosqlite.Connection | None = None
@@ -25,7 +58,7 @@ class Database:
         return self._db
 
     async def connect(self) -> None:
-        logger.info("database_connecting", path=self._db_path)
+        logger.info("database_connecting", path=self._db_path, engine="sqlite")
 
         # Backup database before any schema changes
         self._backup_database()
@@ -39,7 +72,118 @@ class Database:
         await self._db.execute("PRAGMA synchronous=NORMAL")
 
         await self._init_schema()
-        logger.info("database_connected", path=self._db_path)
+        logger.info("database_connected", path=self._db_path, engine="sqlite")
+
+    async def close(self) -> None:
+        if self._db:
+            await self._db.close()
+            self._db = None
+            logger.info("database_closed")
+
+    async def execute(self, sql: str, params: tuple = ()) -> ExecuteResult:
+        cursor = await self.connection.execute(sql, params)
+        lastrowid = cursor.lastrowid
+        rowcount = cursor.rowcount
+        # RETURNING clause produces rows that must be consumed before commit
+        if "RETURNING" in sql.upper():
+            row = await cursor.fetchone()
+            if row and lastrowid is None:
+                lastrowid = row[0]
+        return ExecuteResult(lastrowid=lastrowid, rowcount=rowcount)
+
+    async def executemany(self, sql: str, params_seq: list[tuple]) -> None:
+        await self.connection.executemany(sql, params_seq)
+
+    async def fetchone(self, sql: str, params: tuple = ()) -> aiosqlite.Row | None:
+        cursor = await self.connection.execute(sql, params)
+        return await cursor.fetchone()
+
+    async def fetchall(self, sql: str, params: tuple = ()) -> list[aiosqlite.Row]:
+        cursor = await self.connection.execute(sql, params)
+        return await cursor.fetchall()
+
+    async def commit(self) -> None:
+        await self.connection.commit()
+
+    async def executescript(self, sql: str) -> None:
+        await self.connection.executescript(sql)
+
+    # ------------------------------------------------------------------
+    # Schema
+    # ------------------------------------------------------------------
+
+    async def _init_schema(self) -> None:
+        schema_sql = _SCHEMA_PATH.read_text()
+        await self.executescript(schema_sql)
+        await self.commit()
+        await self._run_migrations()
+        logger.info("database_schema_initialized")
+
+    async def _run_migrations(self) -> None:
+        """Run safe column additions and table creations for schema evolution."""
+        migrations = [
+            "ALTER TABLE tracks ADD COLUMN file_mtime REAL",
+            "ALTER TABLE zones ADD COLUMN queue_json TEXT",
+            "ALTER TABLE tracks ADD COLUMN audio_hash TEXT",
+            "ALTER TABLE zones ADD COLUMN sync_delay_ms INTEGER DEFAULT 0",
+        ]
+        for sql in migrations:
+            try:
+                await self.connection.execute(sql)
+                await self.commit()
+            except Exception:
+                pass  # Column already exists
+
+        # Table migrations (idempotent via IF NOT EXISTS)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS network_mounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                host TEXT NOT NULL,
+                share_name TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                mount_path TEXT NOT NULL,
+                username TEXT,
+                password TEXT,
+                auto_mount INTEGER DEFAULT 1,
+                status TEXT DEFAULT 'unmounted',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(host, share_name, protocol)
+            )
+        """)
+        await self.commit()
+
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS device_credentials (
+                device_id TEXT PRIMARY KEY,
+                device_name TEXT,
+                credentials TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.commit()
+
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS radio_stations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                stream_url TEXT NOT NULL,
+                logo_url TEXT,
+                genre TEXT,
+                tags TEXT,
+                codec TEXT,
+                country TEXT,
+                homepage_url TEXT,
+                favorite INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.commit()
+
+    # ------------------------------------------------------------------
+    # Backup (SQLite-specific, file-based)
+    # ------------------------------------------------------------------
 
     def _backup_database(self) -> None:
         """Create a timestamped backup of the database, keeping last N backups."""
@@ -71,7 +215,6 @@ class Database:
             old = backups.pop(0)
             try:
                 old.unlink()
-                # Remove associated WAL/SHM files
                 for suffix in ("-wal", "-shm"):
                     wal = old.with_name(old.name + suffix)
                     if wal.exists():
@@ -117,12 +260,10 @@ class Database:
             return False
 
         try:
-            # Close current connection
             if self._db:
                 await self._db.close()
                 self._db = None
 
-            # Copy backup over current DB (remove WAL/SHM first for clean state)
             for suffix in ("-wal", "-shm"):
                 wal = db_file.with_name(db_file.name + suffix)
                 if wal.exists():
@@ -131,106 +272,16 @@ class Database:
             shutil.copy2(str(backup_path), str(db_file))
             logger.info("database_restored", backup=filename)
 
-            # Reconnect
             await self.connect()
             return True
         except Exception:
             logger.exception("database_restore_error", backup=filename)
-            # Try to reconnect anyway
             try:
                 await self.connect()
             except Exception:
                 pass
             return False
 
-    async def _init_schema(self) -> None:
-        schema_sql = _SCHEMA_PATH.read_text()
-        await self._db.executescript(schema_sql)
-        await self._db.commit()
-        await self._run_migrations()
-        logger.info("database_schema_initialized")
 
-    async def _run_migrations(self) -> None:
-        """Run safe column additions and table creations for schema evolution."""
-        migrations = [
-            "ALTER TABLE tracks ADD COLUMN file_mtime REAL",
-            "ALTER TABLE zones ADD COLUMN queue_json TEXT",
-            "ALTER TABLE tracks ADD COLUMN audio_hash TEXT",
-            "ALTER TABLE zones ADD COLUMN sync_delay_ms INTEGER DEFAULT 0",
-        ]
-        for sql in migrations:
-            try:
-                await self._db.execute(sql)
-                await self._db.commit()
-            except Exception:
-                pass  # Column already exists
-
-        # Table migrations (idempotent via IF NOT EXISTS)
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS network_mounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                host TEXT NOT NULL,
-                share_name TEXT NOT NULL,
-                protocol TEXT NOT NULL,
-                mount_path TEXT NOT NULL,
-                username TEXT,
-                password TEXT,
-                auto_mount INTEGER DEFAULT 1,
-                status TEXT DEFAULT 'unmounted',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(host, share_name, protocol)
-            )
-        """)
-        await self._db.commit()
-
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS device_credentials (
-                device_id TEXT PRIMARY KEY,
-                device_name TEXT,
-                credentials TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await self._db.commit()
-
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS radio_stations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                stream_url TEXT NOT NULL,
-                logo_url TEXT,
-                genre TEXT,
-                tags TEXT,
-                codec TEXT,
-                country TEXT,
-                homepage_url TEXT,
-                favorite INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await self._db.commit()
-
-    async def close(self) -> None:
-        if self._db:
-            await self._db.close()
-            self._db = None
-            logger.info("database_closed")
-
-    async def execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor:
-        return await self.connection.execute(sql, params)
-
-    async def executemany(self, sql: str, params_seq: list[tuple]) -> aiosqlite.Cursor:
-        return await self.connection.executemany(sql, params_seq)
-
-    async def fetchone(self, sql: str, params: tuple = ()) -> aiosqlite.Row | None:
-        cursor = await self.connection.execute(sql, params)
-        return await cursor.fetchone()
-
-    async def fetchall(self, sql: str, params: tuple = ()) -> list[aiosqlite.Row]:
-        cursor = await self.connection.execute(sql, params)
-        return await cursor.fetchall()
-
-    async def commit(self) -> None:
-        await self.connection.commit()
+# Backward-compatible alias
+Database = SQLiteDatabase

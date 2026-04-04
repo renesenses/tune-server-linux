@@ -318,8 +318,8 @@ class YouTubeService(StreamingService):
                 "token_expiry": self._token_expiry,
             })
             await db.execute(
-                "INSERT OR REPLACE INTO streaming_auth (service, token_data, updated_at) "
-                "VALUES (?, ?, CURRENT_TIMESTAMP)",
+                "INSERT INTO streaming_auth (service, token_data, updated_at) "
+                "VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT (service) DO UPDATE SET token_data = EXCLUDED.token_data, updated_at = CURRENT_TIMESTAMP",
                 ("youtube", token_data),
             )
             await db.commit()

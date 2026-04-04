@@ -129,14 +129,14 @@ class ArtistRepo:
         return [_row_to_artist(r) for r in rows]
 
     async def create(self, artist: Artist) -> int:
-        cursor = await self._db.execute(
+        result = await self._db.execute(
             """INSERT INTO artists (name, sort_name, musicbrainz_id, discogs_id, bio, image_path)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
             (artist.name, artist.sort_name, artist.musicbrainz_id,
              artist.discogs_id, artist.bio, artist.image_path),
         )
         await self._db.commit()
-        return cursor.lastrowid
+        return result.lastrowid
 
     async def get_or_create(self, name: str) -> Artist:
         existing = await self.get_by_name(name)
@@ -281,16 +281,16 @@ class AlbumRepo:
         return row["cnt"]
 
     async def create(self, album: Album) -> int:
-        cursor = await self._db.execute(
+        result = await self._db.execute(
             """INSERT INTO albums (title, artist_id, year, genre, disc_count,
                track_count, cover_path, source, source_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (album.title, album.artist_id, album.year, album.genre,
              album.disc_count, album.track_count, album.cover_path,
              album.source, album.source_id),
         )
         await self._db.commit()
-        return cursor.lastrowid
+        return result.lastrowid
 
     async def get_or_create(self, title: str, artist_id: int, **kwargs) -> Album:
         existing = await self.get_by_title_and_artist(title, artist_id)
@@ -495,18 +495,18 @@ class TrackRepo:
         return row["cnt"]
 
     async def create(self, track: Track) -> int:
-        cursor = await self._db.execute(
+        result = await self._db.execute(
             """INSERT INTO tracks (title, album_id, artist_id, disc_number,
                track_number, duration_ms, file_path, format, sample_rate,
                bit_depth, channels, source, source_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (track.title, track.album_id, track.artist_id, track.disc_number,
              track.track_number, track.duration_ms, track.file_path,
              track.format, track.sample_rate, track.bit_depth,
              track.channels, track.source, track.source_id),
         )
         await self._db.commit()
-        return cursor.lastrowid
+        return result.lastrowid
 
     async def update(self, track: Track) -> None:
         await self._db.execute(
@@ -760,12 +760,12 @@ class ZoneRepo:
         return [dict(r) for r in rows]
 
     async def create(self, name: str, output_type: str, output_device_id: str = None) -> int:
-        cursor = await self._db.execute(
-            "INSERT INTO zones (name, output_type, output_device_id) VALUES (?, ?, ?)",
+        result = await self._db.execute(
+            "INSERT INTO zones (name, output_type, output_device_id) VALUES (?, ?, ?) RETURNING id",
             (name, output_type, output_device_id),
         )
         await self._db.commit()
-        return cursor.lastrowid
+        return result.lastrowid
 
     async def update(self, zone_id: int, **kwargs) -> None:
         sets = ", ".join(f"{k} = ?" for k in kwargs)
@@ -793,12 +793,12 @@ class PlaylistRepo:
         self._db = db
 
     async def create(self, name: str, description: Optional[str] = None) -> int:
-        cursor = await self._db.execute(
-            "INSERT INTO playlists (name, description) VALUES (?, ?)",
+        result = await self._db.execute(
+            "INSERT INTO playlists (name, description) VALUES (?, ?) RETURNING id",
             (name, description),
         )
         await self._db.commit()
-        return cursor.lastrowid
+        return result.lastrowid
 
     async def get(self, playlist_id: int) -> Optional[Playlist]:
         row = await self._db.fetchone(
@@ -928,15 +928,15 @@ class RadioStationRepo:
         self._db = db
 
     async def create(self, station: RadioStationCreate) -> int:
-        cursor = await self._db.execute(
+        result = await self._db.execute(
             """INSERT INTO radio_stations (name, stream_url, logo_url, genre, tags, codec, country, homepage_url, favorite)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (station.name, station.stream_url, station.logo_url, station.genre,
              station.tags, station.codec, station.country, station.homepage_url,
              int(station.favorite)),
         )
         await self._db.commit()
-        return cursor.lastrowid
+        return result.lastrowid
 
     async def get(self, station_id: int) -> Optional[RadioStation]:
         row = await self._db.fetchone("SELECT * FROM radio_stations WHERE id = ?", (station_id,))
@@ -1063,9 +1063,10 @@ class RadioFavoriteRepo:
             return None
         try:
             await self._db.execute(
-                """INSERT OR IGNORE INTO radio_favorites
+                """INSERT INTO radio_favorites
                    (title, artist, station_name, cover_url, stream_url)
-                   VALUES (?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (title, artist) DO NOTHING""",
                 (title, artist, station_name, cover_url, stream_url),
             )
             await self._db.commit()

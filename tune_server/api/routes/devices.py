@@ -165,7 +165,8 @@ async def submit_pairing_pin(device_id: str, req: PairPinRequest):
                 device = deps.discovery_manager.get_device(device_id) if deps.discovery_manager else None
                 name = device.name if device else device_id
                 await deps.db.execute(
-                    "INSERT OR REPLACE INTO device_credentials (device_id, device_name, credentials) VALUES (?, ?, ?)",
+                    "INSERT INTO device_credentials (device_id, device_name, credentials) VALUES (?, ?, ?) "
+                    "ON CONFLICT (device_id) DO UPDATE SET device_name = EXCLUDED.device_name, credentials = EXCLUDED.credentials",
                     (device_id, name, str(credentials)),
                 )
                 await deps.db.commit()
