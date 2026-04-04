@@ -415,6 +415,12 @@ class SystemConfigResponse(BaseModel):
     sync_drift_threshold_ms: int = 500
     sync_correction_cooldown_s: float = 15.0
     sync_dlna_default_buffer_s: float = 3.0
+    # Database
+    db_engine: str = "sqlite"
+    db_path: str | None = None
+    db_pool_min: int | None = None
+    db_pool_max: int | None = None
+    db_connected: bool = True
 
 
 class MusicDirRequest(BaseModel):

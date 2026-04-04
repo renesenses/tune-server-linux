@@ -54,7 +54,24 @@ async def get_config():
         sync_drift_threshold_ms=settings.sync_drift_threshold_ms,
         sync_correction_cooldown_s=settings.sync_correction_cooldown_s,
         sync_dlna_default_buffer_s=settings.sync_dlna_default_buffer_s,
+        db_engine=settings.db_engine,
+        db_path=settings.db_path if settings.db_engine == "sqlite" else None,
+        db_pool_min=settings.db_pool_min if settings.db_engine == "postgres" else None,
+        db_pool_max=settings.db_pool_max if settings.db_engine == "postgres" else None,
+        db_connected=deps.db is not None,
     )
+
+
+@router.post("/database/test")
+async def test_database():
+    """Test the current database connection."""
+    if not deps.db:
+        return {"ok": False, "error": "Database not available"}
+    try:
+        row = await deps.db.fetchone("SELECT 1")
+        return {"ok": row is not None, "engine": settings.db_engine}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @router.post("/scan", status_code=202)
