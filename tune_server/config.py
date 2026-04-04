@@ -73,7 +73,7 @@ class Settings(BaseSettings):
 
     # Playback
     stream_url_resolve_timeout: int = 15  # seconds
-    pipeline_start_timeout: int = 30  # seconds
+    pipeline_start_timeout: int = 15  # seconds
 
     # Multi-room sync
     sync_poll_playing_interval: float = 1.0       # seconds, when groups are playing

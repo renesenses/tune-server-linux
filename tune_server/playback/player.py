@@ -594,6 +594,15 @@ class Player:
         if track.duration_ms and position_ms > track.duration_ms:
             position_ms = track.duration_ms
 
+        # Try native output seek first (DLNA Seek(REL_TIME) — no pipeline restart)
+        if self._output and self._state == PlaybackState.PLAYING:
+            if await self._output.seek(position_ms):
+                self._position_ms = position_ms
+                self._position_start_time = time.monotonic()
+                logger.info("native_seek", zone_id=self._zone_id, position_ms=position_ms)
+                return
+
+        # Fallback: full pipeline restart
         self._skip_in_progress = True
         try:
             async with self._lock:

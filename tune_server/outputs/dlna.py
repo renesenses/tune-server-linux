@@ -338,6 +338,23 @@ class DlnaOutput(OutputTarget):
             self._streamer.remove_session(self._stream_id)
             self._stream_id = None
 
+    async def seek(self, position_ms: int) -> bool:
+        """Native DLNA seek via Seek(REL_TIME). Works when renderer supports it."""
+        dmr = self._device
+        if not getattr(dmr, "can_seek_rel_time", False):
+            return False
+        total_s, ms = divmod(position_ms, 1000)
+        hours, rem = divmod(total_s, 3600)
+        minutes, seconds = divmod(rem, 60)
+        target = f"{hours}:{minutes:02d}:{seconds:02d}"
+        try:
+            await asyncio.wait_for(dmr.async_seek_rel_time(target), timeout=5)
+            logger.info("dlna_native_seek", device=self.name, position=target)
+            return True
+        except Exception:
+            logger.debug("dlna_native_seek_failed", device=self.name)
+            return False
+
     async def set_volume(self, volume: float) -> None:
         self._volume = volume
         if self._is_micromega and self._device_ip:

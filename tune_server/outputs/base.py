@@ -71,6 +71,10 @@ class OutputTarget(ABC):
         """For gapless: set the next track (DLNA SetNextAVTransportURI). Returns True if supported."""
         return False
 
+    async def seek(self, position_ms: int) -> bool:
+        """Seek to position without pipeline restart. Returns True if supported."""
+        return False
+
     async def get_position_ms(self) -> int:
         """Get current playback position. Returns -1 if not supported."""
         return -1

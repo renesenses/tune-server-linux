@@ -209,6 +209,7 @@ class TestSeekValidation:
             return_value=MagicMock(max_sample_rate=192000, max_bit_depth=24,
                                    supported_formats=[AudioFormat.FLAC])
         )
+        output.seek = AsyncMock(return_value=False)  # native seek not supported
         player.set_output(output)
         return player
 
@@ -261,7 +262,7 @@ class TestTimeoutConfigDefaults:
     def test_pipeline_start_timeout_default(self):
         from tune_server.config import Settings
         s = Settings()
-        assert s.pipeline_start_timeout == 30
+        assert s.pipeline_start_timeout == 15
 
 
 # ===========================================================================
