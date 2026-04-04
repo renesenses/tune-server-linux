@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from tune_server.db.repository import AlbumRepo, ArtistRepo, PlaylistRepo, PlayQueueRepo, RadioFavoriteRepo, RadioStationRepo, TrackRepo, ZoneRepo
     from tune_server.discovery.manager import DiscoveryManager
     from tune_server.event_bus import EventBus
+    from tune_server.library.enrichment import MetadataEnricher
     from tune_server.library.scanner import LibraryScanner
     from tune_server.library.watcher import FileSystemWatcher
     from tune_server.network.mount_manager import MountManager
@@ -28,6 +29,7 @@ class AppDeps:
         self.mount_manager: MountManager | None = None
         self.streaming_services: dict[str, StreamingService] = {}
         self.watcher: FileSystemWatcher | None = None
+        self.enricher: MetadataEnricher | None = None
         self.stream_url_resolver: object | None = None  # StreamUrlResolver callable
 
         # Repos (set after DB init)

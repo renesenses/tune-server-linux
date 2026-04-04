@@ -224,6 +224,15 @@ async def set_mode(request: dict):
     }
 
 
+@router.post("/enrich", status_code=202)
+async def trigger_enrich():
+    """Trigger one immediate pass of the metadata enricher (MusicBrainz)."""
+    if not deps.enricher:
+        raise HTTPException(status_code=503, detail="Enricher not available")
+    await deps.enricher.enrich_now()
+    return {"status": "started"}
+
+
 @router.get("/discover-servers")
 async def discover_servers():
     """Discover Tune Servers on the LAN."""

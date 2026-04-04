@@ -212,6 +212,7 @@ class TuneServer:
         # Metadata enricher
         self._enricher = MetadataEnricher(self._db)
         await self._enricher.start()
+        deps.enricher = self._enricher
 
         # Initial scan
         if settings.scan_on_startup:

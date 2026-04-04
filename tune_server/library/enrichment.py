@@ -35,6 +35,98 @@ class MetadataEnricher:
                 pass
             self._task = None
 
+    async def enrich_now(self) -> None:
+        """Trigger one immediate enrichment pass in the background."""
+        asyncio.create_task(self._single_pass())
+        logger.info("metadata_enrichment_triggered")
+
+    async def _single_pass(self) -> None:
+        """Run one enrichment pass (same logic as the loop body)."""
+        try:
+            import musicbrainzngs
+            musicbrainzngs.set_useragent("TuneServer", "0.1.0", "")
+        except ImportError:
+            logger.warning("musicbrainzngs_not_installed")
+            return
+
+        try:
+            # Enrich artists
+            artists = await self._artist_repo.list(limit=50)
+            for artist in artists:
+                if artist.musicbrainz_id:
+                    continue
+                try:
+                    result = await asyncio.to_thread(
+                        musicbrainzngs.search_artists, artist=artist.name, limit=1
+                    )
+                    mb_artists = result.get("artist-list", [])
+                    if mb_artists:
+                        mb = mb_artists[0]
+                        artist.musicbrainz_id = mb.get("id")
+                        artist.sort_name = mb.get("sort-name", artist.sort_name)
+                        if not artist.bio:
+                            artist.bio = mb.get("disambiguation")
+                        await self._artist_repo.update(artist)
+                        logger.debug("artist_enriched", name=artist.name, mb_id=artist.musicbrainz_id)
+                except Exception:
+                    logger.debug("musicbrainz_lookup_failed", artist=artist.name)
+                await asyncio.sleep(1.2)
+
+            # Enrich albums
+            albums = await self._db.fetchall(
+                "SELECT id, title, artist_id FROM albums WHERE (year IS NULL OR genre IS NULL) LIMIT 50",
+            )
+            for album_row in albums:
+                album_id = album_row["id"]
+                album_title = album_row["title"]
+                artist_id = album_row["artist_id"]
+                if not album_title:
+                    continue
+                artist_name = ""
+                if artist_id:
+                    a = await self._artist_repo.get(artist_id)
+                    if a:
+                        artist_name = a.name
+                try:
+                    query = f'release:"{album_title}"'
+                    if artist_name:
+                        query = f'artist:"{artist_name}" AND {query}'
+                    result = await asyncio.to_thread(
+                        musicbrainzngs.search_releases, query=query, limit=1
+                    )
+                    releases = result.get("release-list", [])
+                    if releases:
+                        mb = releases[0]
+                        updates = {}
+                        date_str = mb.get("date", "")
+                        if date_str and len(date_str) >= 4:
+                            try:
+                                year = int(date_str[:4])
+                                if 1900 <= year <= 2030:
+                                    updates["year"] = year
+                            except ValueError:
+                                pass
+                        tags = mb.get("tag-list", [])
+                        if tags:
+                            top_tag = sorted(tags, key=lambda t: int(t.get("count", 0)), reverse=True)[0]
+                            genre = top_tag.get("name", "").title()
+                            if genre:
+                                updates["genre"] = genre
+                        if updates:
+                            album = await self._album_repo.get(album_id)
+                            if album:
+                                if "year" in updates and not album.year:
+                                    album.year = updates["year"]
+                                if "genre" in updates and not album.genre:
+                                    album.genre = updates["genre"]
+                                await self._album_repo.update(album)
+                                logger.debug("album_enriched", title=album_title, **updates)
+                except Exception:
+                    logger.debug("album_enrichment_failed", title=album_title)
+                await asyncio.sleep(1.2)
+        except Exception:
+            logger.exception("single_pass_enrichment_error")
+
     async def _enrich_loop(self) -> None:
         try:
             import musicbrainzngs
