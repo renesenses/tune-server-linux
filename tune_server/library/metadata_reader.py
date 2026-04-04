@@ -193,7 +193,9 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
 
 
 def write_tags(file_path: str, *, title: str | None = None, artist: str | None = None,
-               album: str | None = None) -> bool:
+               album: str | None = None, album_artist: str | None = None,
+               genre: str | None = None, year: str | None = None,
+               track_number: int | None = None, disc_number: int | None = None) -> bool:
     """Write metadata tags to an audio file. Returns True on success."""
     path = Path(file_path)
     if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
@@ -211,9 +213,19 @@ def write_tags(file_path: str, *, title: str | None = None, artist: str | None =
                 audio["artist"] = artist
             if album is not None:
                 audio["album"] = album
+            if album_artist is not None:
+                audio["albumartist"] = album_artist
+            if genre is not None:
+                audio["genre"] = genre
+            if year is not None:
+                audio["date"] = year
+            if track_number is not None:
+                audio["tracknumber"] = str(track_number)
+            if disc_number is not None:
+                audio["discnumber"] = str(disc_number)
 
         elif isinstance(audio, MP3):
-            from mutagen.id3 import TIT2, TPE1, TALB
+            from mutagen.id3 import TIT2, TPE1, TPE2, TALB, TCON, TDRC, TRCK, TPOS
             if audio.tags is None:
                 audio.add_tags()
             if title is not None:
@@ -222,6 +234,16 @@ def write_tags(file_path: str, *, title: str | None = None, artist: str | None =
                 audio.tags["TPE1"] = TPE1(encoding=3, text=[artist])
             if album is not None:
                 audio.tags["TALB"] = TALB(encoding=3, text=[album])
+            if album_artist is not None:
+                audio.tags["TPE2"] = TPE2(encoding=3, text=[album_artist])
+            if genre is not None:
+                audio.tags["TCON"] = TCON(encoding=3, text=[genre])
+            if year is not None:
+                audio.tags["TDRC"] = TDRC(encoding=3, text=[year])
+            if track_number is not None:
+                audio.tags["TRCK"] = TRCK(encoding=3, text=[str(track_number)])
+            if disc_number is not None:
+                audio.tags["TPOS"] = TPOS(encoding=3, text=[str(disc_number)])
 
         elif isinstance(audio, MP4):
             if title is not None:
@@ -230,6 +252,16 @@ def write_tags(file_path: str, *, title: str | None = None, artist: str | None =
                 audio["\xa9ART"] = [artist]
             if album is not None:
                 audio["\xa9alb"] = [album]
+            if album_artist is not None:
+                audio["aART"] = [album_artist]
+            if genre is not None:
+                audio["\xa9gen"] = [genre]
+            if year is not None:
+                audio["\xa9day"] = [year]
+            if track_number is not None:
+                audio["trkn"] = [(track_number, 0)]
+            if disc_number is not None:
+                audio["disk"] = [(disc_number, 0)]
 
         elif isinstance(audio, OggVorbis):
             if title is not None:
@@ -238,6 +270,16 @@ def write_tags(file_path: str, *, title: str | None = None, artist: str | None =
                 audio["artist"] = [artist]
             if album is not None:
                 audio["album"] = [album]
+            if album_artist is not None:
+                audio["albumartist"] = [album_artist]
+            if genre is not None:
+                audio["genre"] = [genre]
+            if year is not None:
+                audio["date"] = [year]
+            if track_number is not None:
+                audio["tracknumber"] = [str(track_number)]
+            if disc_number is not None:
+                audio["discnumber"] = [str(disc_number)]
 
         else:
             # Generic Vorbis-comment style
@@ -250,6 +292,16 @@ def write_tags(file_path: str, *, title: str | None = None, artist: str | None =
                 tags["artist"] = [artist]
             if album is not None:
                 tags["album"] = [album]
+            if album_artist is not None:
+                tags["albumartist"] = [album_artist]
+            if genre is not None:
+                tags["genre"] = [genre]
+            if year is not None:
+                tags["date"] = [year]
+            if track_number is not None:
+                tags["tracknumber"] = [str(track_number)]
+            if disc_number is not None:
+                tags["discnumber"] = [str(disc_number)]
 
         audio.save()
         logger.info("tags_written", path=file_path, title=title, artist=artist, album=album)

@@ -72,6 +72,69 @@ class MetadataEnricher:
                     # Rate limit: MusicBrainz allows 1 request per second
                     await asyncio.sleep(1.5)
 
+                # Enrich albums without year or genre
+                albums = await self._db.fetchall(
+                    "SELECT id, title, artist_id FROM albums WHERE (year IS NULL OR genre IS NULL) LIMIT 10",
+                )
+                for album_row in albums:
+                    if not self._running:
+                        break
+                    album_id = album_row["id"]
+                    album_title = album_row["title"]
+                    artist_id = album_row["artist_id"]
+                    if not album_title:
+                        continue
+
+                    # Get artist name for better search
+                    artist_name = ""
+                    if artist_id:
+                        a = await self._artist_repo.get(artist_id)
+                        if a:
+                            artist_name = a.name
+
+                    try:
+                        query = f'release:"{album_title}"'
+                        if artist_name:
+                            query = f'artist:"{artist_name}" AND {query}'
+                        result = await asyncio.to_thread(
+                            musicbrainzngs.search_releases,
+                            query=query,
+                            limit=1,
+                        )
+                        releases = result.get("release-list", [])
+                        if releases:
+                            mb = releases[0]
+                            updates = {}
+                            # Extract year from date
+                            date_str = mb.get("date", "")
+                            if date_str and len(date_str) >= 4:
+                                try:
+                                    year = int(date_str[:4])
+                                    if 1900 <= year <= 2030:
+                                        updates["year"] = year
+                                except ValueError:
+                                    pass
+                            # Extract genre from tags
+                            tags = mb.get("tag-list", [])
+                            if tags:
+                                top_tag = sorted(tags, key=lambda t: int(t.get("count", 0)), reverse=True)[0]
+                                genre = top_tag.get("name", "").title()
+                                if genre:
+                                    updates["genre"] = genre
+                            if updates:
+                                album = await self._album_repo.get(album_id)
+                                if album:
+                                    if "year" in updates and not album.year:
+                                        album.year = updates["year"]
+                                    if "genre" in updates and not album.genre:
+                                        album.genre = updates["genre"]
+                                    await self._album_repo.update(album)
+                                    logger.debug("album_enriched", title=album_title, **updates)
+                    except Exception:
+                        logger.debug("album_enrichment_failed", title=album_title)
+
+                    await asyncio.sleep(1.5)
+
             except asyncio.CancelledError:
                 raise
             except Exception:
