@@ -223,19 +223,28 @@ class AlbumRepo:
         )
         return _row_to_album(row) if row else None
 
-    async def list(self, limit: int = 100, offset: int = 0, quality: str | None = None) -> list[Album]:
-        if quality:
-            rows = await self._db.fetchall(
-                f"{self._SELECT} ORDER BY al.title LIMIT ? OFFSET ?",
-                (limit, offset),
-            )
-            albums = [_row_to_album(r) for r in rows]
-            return [a for a in albums if a.quality == quality]
+    async def list(self, limit: int = 100, offset: int = 0, quality: str | None = None,
+                   format: str | None = None, sample_rate: int | None = None) -> list[Album]:
+        where_clauses = []
+        params: list = []
+        if format:
+            where_clauses.append("tq.dominant_format = ?")
+            params.append(format.lower())
+        if sample_rate:
+            where_clauses.append("tq.max_sample_rate >= ?")
+            params.append(sample_rate)
+        where = ""
+        if where_clauses:
+            where = " WHERE " + " AND ".join(where_clauses)
+        params.extend([limit, offset])
         rows = await self._db.fetchall(
-            f"{self._SELECT} ORDER BY al.title LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"{self._SELECT}{where} ORDER BY al.title LIMIT ? OFFSET ?",
+            tuple(params),
         )
-        return [_row_to_album(r) for r in rows]
+        albums = [_row_to_album(r) for r in rows]
+        if quality:
+            albums = [a for a in albums if a.quality == quality]
+        return albums
 
     async def list_by_artist(self, artist_id: int) -> list[Album]:
         rows = await self._db.fetchall(

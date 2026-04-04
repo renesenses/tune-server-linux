@@ -17,6 +17,29 @@ import structlog
 
 logger = structlog.get_logger()
 
+
+def _convert_value(value, column: str, ts_columns: set[str], target_engine: str):
+    """Convert values between SQLite and PostgreSQL types."""
+    if value is None:
+        return value
+    # SQLite stores timestamps as strings; PostgreSQL needs datetime objects
+    if target_engine == "postgres" and column in ts_columns and isinstance(value, str):
+        from datetime import datetime
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+        return value  # Return as-is if no format matches
+    # PostgreSQL→SQLite: datetime to string
+    if target_engine == "sqlite" and column in ts_columns and not isinstance(value, str):
+        return str(value)
+    # PostgreSQL doesn't accept null bytes in text
+    if target_engine == "postgres" and isinstance(value, str) and "\x00" in value:
+        return value.replace("\x00", "")
+    return value
+
+
 # Tables in dependency order (foreign keys)
 TABLES_ORDERED = [
     "artists",
@@ -96,11 +119,14 @@ async def migrate(source_engine: str, target_engine: str) -> None:
             col_names = ", ".join(columns)
             insert_sql = f"INSERT INTO {table} ({col_names}) VALUES ({placeholders})"
 
+            # Detect timestamp columns for string→datetime conversion
+            ts_columns = {c for c in columns if c.endswith("_at") or c == "saved_at"}
+
             batch_size = 500
             count = 0
             for i in range(0, len(rows), batch_size):
                 batch = rows[i:i + batch_size]
-                params_seq = [tuple(row[c] for c in columns) for row in batch]
+                params_seq = [tuple(_convert_value(row[c], c, ts_columns, target_engine) for c in columns) for row in batch]
                 await target.executemany(insert_sql, params_seq)
                 await target.commit()
                 count += len(batch)

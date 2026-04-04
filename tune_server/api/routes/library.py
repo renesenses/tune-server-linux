@@ -67,10 +67,28 @@ async def stream_track_audio(track_id: int):
 async def list_albums(
     limit: int = Query(100, le=50000),
     offset: int = Query(0, ge=0),
-    quality: str | None = Query(None, description="Filter by quality: hi-res, cd, lossy"),
+    quality: str | None = Query(None, description="Filter by quality: hi-res, cd, lossy, dsd"),
+    format: str | None = Query(None, description="Filter by format: flac, mp3, aac, wav, dsd"),
+    sample_rate: int | None = Query(None, description="Filter by min sample rate in Hz (e.g. 96000)"),
 ):
-    albums = await deps.album_repo.list(limit=limit, offset=offset, quality=quality)
+    albums = await deps.album_repo.list(
+        limit=limit, offset=offset, quality=quality,
+        format=format, sample_rate=sample_rate,
+    )
     return [a.model_dump(exclude_none=False) for a in albums]
+
+
+@router.get("/albums/filters")
+async def get_album_filters():
+    """Return available format and sample rate values for filtering."""
+    rows = await deps.db.fetchall("""
+        SELECT DISTINCT format, sample_rate FROM tracks
+        WHERE format IS NOT NULL AND sample_rate IS NOT NULL
+        ORDER BY format, sample_rate
+    """)
+    formats = sorted({r["format"] for r in rows if r["format"]})
+    sample_rates = sorted({r["sample_rate"] for r in rows if r["sample_rate"]})
+    return {"formats": formats, "sample_rates": sample_rates}
 
 
 @router.get("/albums/{album_id}", response_model=Album)
