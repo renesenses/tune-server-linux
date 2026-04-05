@@ -651,36 +651,53 @@ class TrackRepo:
     async def list_by_directory(self, directory: str) -> list[Track]:
         """Return tracks directly in a directory (not in subdirectories)."""
         prefix = directory.replace("\\", "/").rstrip("/") + "/"
+        like_prefix = prefix + "%"
+        like_nested = prefix + "%/%"
         rows = await self._db.fetchall(
             f"""{self._SELECT}
-                WHERE t.file_path LIKE ? || '%'
-                AND t.file_path NOT LIKE ? || '%/%'
+                WHERE t.file_path LIKE ?
+                AND t.file_path NOT LIKE ?
                 ORDER BY t.file_path""",
-            (prefix, prefix),
+            (like_prefix, like_nested),
         )
         return [_row_to_track(r) for r in rows]
 
     async def list_subdirectories(self, directory: str) -> list[dict]:
         """Return immediate subdirectories with recursive track counts."""
         prefix = directory.replace("\\", "/").rstrip("/") + "/"
-        prefix_len = len(prefix) + 1  # SQL SUBSTR is 1-based
-        rows = await self._db.fetchall(
-            """SELECT
-                CASE
-                    WHEN INSTR(SUBSTR(file_path, ?), '/') > 0
-                    THEN SUBSTR(file_path, ?, INSTR(SUBSTR(file_path, ?), '/') - 1)
-                    ELSE SUBSTR(file_path, ?)
-                END AS dir_name,
-                COUNT(*) AS track_count
-               FROM tracks
-               WHERE file_path LIKE ? || '%'
-               AND LENGTH(file_path) > ?
-               GROUP BY dir_name
-               HAVING INSTR(SUBSTR(file_path, ?), '/') > 0
-               ORDER BY dir_name""",
-            (prefix_len, prefix_len, prefix_len, prefix_len,
-             prefix, len(prefix), prefix_len),
-        )
+        like_prefix = prefix + "%"
+        if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
+            rows = await self._db.fetchall(
+                """SELECT
+                    SPLIT_PART(SUBSTRING(file_path FROM ?), '/', 1) AS dir_name,
+                    COUNT(*) AS track_count
+                   FROM tracks
+                   WHERE file_path LIKE ?
+                   AND LENGTH(file_path) > ?
+                   AND POSITION('/' IN SUBSTRING(file_path FROM ?)) > 0
+                   GROUP BY dir_name
+                   ORDER BY dir_name""",
+                (len(prefix) + 1, like_prefix, len(prefix), len(prefix) + 1),
+            )
+        else:
+            prefix_len = len(prefix) + 1  # SQL SUBSTR is 1-based
+            rows = await self._db.fetchall(
+                """SELECT
+                    CASE
+                        WHEN INSTR(SUBSTR(file_path, ?), '/') > 0
+                        THEN SUBSTR(file_path, ?, INSTR(SUBSTR(file_path, ?), '/') - 1)
+                        ELSE SUBSTR(file_path, ?)
+                    END AS dir_name,
+                    COUNT(*) AS track_count
+                   FROM tracks
+                   WHERE file_path LIKE ?
+                   AND LENGTH(file_path) > ?
+                   GROUP BY dir_name
+                   HAVING INSTR(SUBSTR(file_path, ?), '/') > 0
+                   ORDER BY dir_name""",
+                (prefix_len, prefix_len, prefix_len, prefix_len,
+                 like_prefix, len(prefix), prefix_len),
+            )
         return [
             {"name": r["dir_name"], "path": prefix + r["dir_name"], "track_count": r["track_count"]}
             for r in rows
@@ -702,8 +719,8 @@ class TrackRepo:
         """Count all tracks under a root directory."""
         prefix = root_dir.replace("\\", "/").rstrip("/") + "/"
         row = await self._db.fetchone(
-            "SELECT COUNT(*) as cnt FROM tracks WHERE file_path LIKE ? || '%'",
-            (prefix,),
+            "SELECT COUNT(*) as cnt FROM tracks WHERE file_path LIKE ?",
+            (prefix + "%",),
         )
         return row["cnt"]
 
