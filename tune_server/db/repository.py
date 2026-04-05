@@ -669,12 +669,12 @@ class TrackRepo:
         if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
             rows = await self._db.fetchall(
                 """SELECT
-                    SPLIT_PART(SUBSTRING(file_path FROM ?), '/', 1) AS dir_name,
+                    SPLIT_PART(SUBSTR(file_path, ?), '/', 1) AS dir_name,
                     COUNT(*) AS track_count
                    FROM tracks
                    WHERE file_path LIKE ?
                    AND LENGTH(file_path) > ?
-                   AND POSITION('/' IN SUBSTRING(file_path FROM ?)) > 0
+                   AND POSITION('/' IN SUBSTR(file_path, ?)) > 0
                    GROUP BY dir_name
                    ORDER BY dir_name""",
                 (len(prefix) + 1, like_prefix, len(prefix), len(prefix) + 1),
