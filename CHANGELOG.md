@@ -2,6 +2,30 @@
 
 All notable changes to Tune Server.
 
+## v0.5.0 — 2026-04-05
+
+### Added
+- **User Profiles & Favorites**: multi-user profiles (Netflix-style), favorites for tracks/albums/artists per profile, heart buttons across all views
+- **Playlist Manager**: unified cross-service playlist view, import from streaming, transfer between services with fuzzy track matching, playlist diff/comparison, track availability recovery
+- **PostgreSQL Support**: full dual-engine support (SQLite + PostgreSQL), migration tool, tsvector FTS, connection pooling
+- **Album Filters**: filter by format (FLAC, WAV, MP3, DSD) and sample rate (44.1kHz+, 96kHz+, 192kHz+)
+- **Enhanced Metadata**: batch genre/year assignment, MusicBrainz enrichment, genre normalization (Discogs-style), extended tag writing (genre, year, albumartist, disc/track number)
+- **Database Settings UI**: engine badge, connection status, pool size in Settings
+
+### Improved
+- **DLNA Native Seek**: instant seek (<1s) via Seek(REL_TIME) when renderer supports it
+- **Artwork Performance**: thumbnail generation (?size=200), browser cache headers, lazy loading
+- **Browse Directories**: PostgreSQL-compatible directory browsing (SUBSTR/SPLIT_PART)
+- **Genre Cleanup**: 42 messy genres normalized to 15 clean Discogs-style categories
+
+### Web Client
+- **Profile Selector**: sidebar avatar, create/switch/delete profiles
+- **Favorites View**: dedicated section with tabs (tracks/albums/artists)
+- **Heart Buttons**: on album cards and track rows, with favorites filter chip
+- **Playlist Manager**: unified view, import dialog, transfer with report, diff comparison, recovery checker
+- **Metadata**: merge duplicates, batch operations, MusicBrainz enrich button, genre autocomplete
+- Renamed "Maintenance" → "Metadata"
+
 ## v0.3.1 — 2026-04-04
 
 ### Fixed
