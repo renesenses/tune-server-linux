@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 
 from fastapi import APIRouter, HTTPException
@@ -18,10 +19,14 @@ from tune_server.models import (
     PlaylistDiffResponse,
     PlaylistImportRequest,
     PlaylistImportResponse,
+    PlaylistRecoverResponse,
     PlaylistReorderRequest,
     PlaylistTransferRequest,
     PlaylistTransferResponse,
     PlaylistUpdateRequest,
+    RecoverApplyRequest,
+    RecoverApplyResponse,
+    RecoverTrackResult,
     StreamingTrackInfo,
     Track,
     TrackMatchRequest,
@@ -379,6 +384,219 @@ async def diff_playlists(body: PlaylistDiffRequest):
         only_in_target=only_in_target,
         in_both=in_both,
     )
+
+
+@router.post("/{playlist_id}/recover", response_model=PlaylistRecoverResponse)
+async def recover_playlist(playlist_id: int):
+    """Scan a local playlist for unavailable tracks and find alternatives."""
+    playlist = await deps.playlist_repo.get(playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    tracks = await deps.playlist_repo.get_tracks(playlist_id)
+    results: list[RecoverTrackResult] = []
+    available_count = 0
+    unavailable_count = 0
+    recovered_count = 0
+
+    for t in tracks:
+        source = t.source or "local"
+        result = RecoverTrackResult(
+            track_id=t.id,
+            title=t.title,
+            artist_name=t.artist_name,
+            status="available",
+            original_source=source,
+        )
+
+        is_available = True
+
+        if source == "local":
+            # Check if file exists on disk
+            if t.file_path and not os.path.exists(t.file_path):
+                is_available = False
+        else:
+            # Streaming track: search the same service by title+artist to verify
+            svc = deps.streaming_services.get(source)
+            if svc and svc.is_authenticated:
+                try:
+                    artist = t.artist_name or ""
+                    query = f"{artist} {t.title}"
+                    search_result = await svc.search(query, limit=3)
+                    # Check if any returned track matches well
+                    found = False
+                    for sr in search_result.tracks:
+                        quality = _fuzzy_match_track(
+                            t.title, artist, sr.title, sr.artist_name or ""
+                        )
+                        if quality:
+                            found = True
+                            break
+                    if not found:
+                        is_available = False
+                except Exception:
+                    logger.debug(
+                        "Recover: search on %s failed for '%s'", source, t.title,
+                        exc_info=True,
+                    )
+                    # If search fails, assume available (don't penalize network errors)
+
+        if not is_available:
+            result.status = "unavailable"
+            # Search alternatives on OTHER services
+            artist = t.artist_name or ""
+            query = f"{artist} {t.title}"
+            alternatives: list[dict] = []
+
+            async def _search_alt(name: str, svc_obj):
+                try:
+                    sr = await svc_obj.search(query, limit=5)
+                    for tr in sr.tracks:
+                        match_q = _fuzzy_match_track(
+                            t.title, artist, tr.title, tr.artist_name or ""
+                        )
+                        if match_q:
+                            return {
+                                "service": name,
+                                "source_id": tr.source_id,
+                                "title": tr.title,
+                                "artist_name": tr.artist_name,
+                                "quality": match_q,
+                            }
+                except Exception:
+                    logger.debug(
+                        "Recover alt search on %s failed", name, exc_info=True,
+                    )
+                return None
+
+            alt_tasks = []
+            for name, svc_obj in deps.streaming_services.items():
+                if name == source:
+                    continue
+                if not svc_obj.is_authenticated:
+                    continue
+                alt_tasks.append(_search_alt(name, svc_obj))
+
+            # Also check local library if original source is not local
+            if source != "local":
+                local_results = await deps.track_repo.search(query, limit=5)
+                for lr in local_results:
+                    match_q = _fuzzy_match_track(
+                        t.title, artist, lr.title, lr.artist_name or ""
+                    )
+                    if match_q:
+                        alternatives.append({
+                            "service": "local",
+                            "source_id": str(lr.id),
+                            "title": lr.title,
+                            "artist_name": lr.artist_name,
+                            "quality": match_q,
+                        })
+                        break
+
+            if alt_tasks:
+                alt_results = await asyncio.gather(*alt_tasks)
+                for alt in alt_results:
+                    if alt:
+                        alternatives.append(alt)
+
+            if alternatives:
+                result.status = "recovered"
+                result.alternatives = alternatives
+                recovered_count += 1
+            else:
+                unavailable_count += 1
+        else:
+            available_count += 1
+
+        results.append(result)
+
+    return PlaylistRecoverResponse(
+        playlist_name=playlist.name,
+        total_tracks=len(tracks),
+        available=available_count,
+        unavailable=unavailable_count,
+        recovered=recovered_count,
+        tracks=results,
+    )
+
+
+@router.post("/{playlist_id}/recover/apply", response_model=RecoverApplyResponse)
+async def apply_recovery(playlist_id: int, body: RecoverApplyRequest):
+    """Apply track replacements from recovery results."""
+    playlist = await deps.playlist_repo.get(playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    replaced = 0
+    failed = 0
+
+    for repl in body.replacements:
+        try:
+            old_track_id = repl["track_id"]
+            new_source = repl["new_source"]
+            new_source_id = repl["new_source_id"]
+
+            # Resolve or create the new track
+            if new_source == "local":
+                # source_id is the local track id
+                new_track_id = int(new_source_id)
+            else:
+                existing = await deps.track_repo.get_by_source(new_source, new_source_id)
+                if existing:
+                    new_track_id = existing.id
+                else:
+                    # Search the service to get full track info
+                    svc = deps.streaming_services.get(new_source)
+                    if not svc or not svc.is_authenticated:
+                        failed += 1
+                        continue
+
+                    # Find the track by searching
+                    old_track = await deps.track_repo.get(old_track_id)
+                    if not old_track:
+                        failed += 1
+                        continue
+
+                    track_obj = Track(
+                        title=old_track.title,
+                        artist_name=old_track.artist_name,
+                        source=new_source,
+                        source_id=new_source_id,
+                    )
+                    new_track_id = await deps.track_repo.create(track_obj)
+
+            # Replace in playlist_tracks: update the track_id at the same position
+            await deps.playlist_repo._db.execute(
+                "UPDATE playlist_tracks SET track_id = ? WHERE playlist_id = ? AND track_id = ?",
+                (new_track_id, playlist_id, old_track_id),
+            )
+            await deps.playlist_repo._db.commit()
+
+            # Check if old track is orphaned (not in any playlist)
+            orphan_row = await deps.playlist_repo._db.fetchone(
+                "SELECT COUNT(*) as cnt FROM playlist_tracks WHERE track_id = ?",
+                (old_track_id,),
+            )
+            if orphan_row and orphan_row["cnt"] == 0:
+                # Also check it's not a local file (don't delete local library tracks)
+                old_track = await deps.track_repo.get(old_track_id)
+                if old_track and old_track.source != "local":
+                    await deps.track_repo.delete(old_track_id)
+
+            replaced += 1
+        except Exception:
+            logger.error("Recovery apply failed for replacement %s", repl, exc_info=True)
+            failed += 1
+
+    if replaced > 0:
+        deps.event_bus.emit_nowait(Event(
+            type=EventType.PLAYLIST_TRACKS_CHANGED,
+            data={"playlist_id": playlist_id},
+            source="playlists",
+        ))
+
+    return RecoverApplyResponse(replaced=replaced, failed=failed)
 
 
 @router.post("", response_model=Playlist, status_code=201)

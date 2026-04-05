@@ -406,7 +406,7 @@ async def get_artwork(filename: str):
 
 
 @router.get("/artwork/{filename}")
-async def serve_artwork(filename: str):
+async def serve_artwork(filename: str, size: int | None = Query(None, description="Thumbnail size (e.g. 200)")):
     from tune_server.api.deps import deps
     art_dir = getattr(deps.settings, "artwork_cache_dir", "artwork_cache")
     filepath = Path(art_dir) / filename
@@ -414,13 +414,26 @@ async def serve_artwork(filename: str):
         filepath = Path("artwork_cache") / filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Artwork not found")
+
+    # Serve thumbnail if size requested
+    if size and size < 600:
+        thumb_dir = Path(art_dir) / "thumbs"
+        thumb_dir.mkdir(exist_ok=True)
+        thumb_path = thumb_dir / f"{filepath.stem}_{size}{filepath.suffix}"
+        if not thumb_path.exists():
+            try:
+                from PIL import Image
+                img = Image.open(filepath)
+                img.thumbnail((size, size), Image.LANCZOS)
+                img.save(thumb_path, quality=80)
+            except Exception:
+                thumb_path = filepath  # Fallback to original
+        filepath = thumb_path
+
     suffix = filepath.suffix.lower()
-    mt = dict()
-    mt[".jpg"] = "image/jpeg"
-    mt[".jpeg"] = "image/jpeg"
-    mt[".png"] = "image/png"
-    mt[".webp"] = "image/webp"
-    return FileResponse(filepath, media_type=mt.get(suffix, "image/jpeg"))
+    mt = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+    headers = {"Cache-Control": "public, max-age=86400, immutable"}
+    return FileResponse(filepath, media_type=mt.get(suffix, "image/jpeg"), headers=headers)
 
 # --- Browse by directory ---
 

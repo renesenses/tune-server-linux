@@ -414,6 +414,33 @@ class PlaylistDiffResponse(BaseModel):
     in_both: list[DiffTrackResult]
 
 
+class RecoverTrackResult(BaseModel):
+    track_id: int
+    title: str
+    artist_name: str | None = None
+    status: str  # "available", "unavailable", "recovered"
+    original_source: str
+    alternatives: list[dict] = Field(default_factory=list)  # [{service, source_id, title, artist_name, quality}]
+
+
+class PlaylistRecoverResponse(BaseModel):
+    playlist_name: str
+    total_tracks: int
+    available: int
+    unavailable: int
+    recovered: int  # alternatives found
+    tracks: list[RecoverTrackResult]
+
+
+class RecoverApplyRequest(BaseModel):
+    replacements: list[dict]  # [{track_id: int, new_source: str, new_source_id: str}]
+
+
+class RecoverApplyResponse(BaseModel):
+    replaced: int
+    failed: int
+
+
 class PlaylistReorderRequest(BaseModel):
     track_ids: list[int]  # Full ordered list
 
