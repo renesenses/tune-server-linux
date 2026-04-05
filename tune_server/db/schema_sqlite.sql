@@ -173,3 +173,25 @@ CREATE TABLE IF NOT EXISTS radio_favorites (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_radio_favorites_dedup
     ON radio_favorites(title, artist);
+
+-- User profiles & favorites
+CREATE TABLE IF NOT EXISTS user_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    avatar_color TEXT DEFAULT '#FF6B35',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_favorites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+    track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+    album_id INTEGER REFERENCES albums(id) ON DELETE CASCADE,
+    artist_id INTEGER REFERENCES artists(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_track ON user_favorites(user_id, track_id) WHERE track_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_album ON user_favorites(user_id, album_id) WHERE album_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_artist ON user_favorites(user_id, artist_id) WHERE artist_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_user_favorites_user ON user_favorites(user_id);

@@ -180,3 +180,25 @@ CREATE TRIGGER trg_albums_fts BEFORE INSERT OR UPDATE OF title ON albums
 DROP TRIGGER IF EXISTS trg_artists_fts ON artists;
 CREATE TRIGGER trg_artists_fts BEFORE INSERT OR UPDATE OF name ON artists
     FOR EACH ROW EXECUTE FUNCTION artists_fts_trigger();
+
+-- User profiles & favorites
+CREATE TABLE IF NOT EXISTS user_profiles (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    avatar_color TEXT DEFAULT '#FF6B35',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_favorites (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+    track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+    album_id INTEGER REFERENCES albums(id) ON DELETE CASCADE,
+    artist_id INTEGER REFERENCES artists(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_track ON user_favorites(user_id, track_id) WHERE track_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_album ON user_favorites(user_id, album_id) WHERE album_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_artist ON user_favorites(user_id, artist_id) WHERE artist_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_user_favorites_user ON user_favorites(user_id);

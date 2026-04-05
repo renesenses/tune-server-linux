@@ -181,6 +181,27 @@ class SQLiteDatabase:
         """)
         await self.commit()
 
+        # User profiles & favorites
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                avatar_color TEXT DEFAULT '#FF6B35',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS user_favorites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+                track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+                album_id INTEGER REFERENCES albums(id) ON DELETE CASCADE,
+                artist_id INTEGER REFERENCES artists(id) ON DELETE CASCADE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.commit()
+
     # ------------------------------------------------------------------
     # Backup (SQLite-specific, file-based)
     # ------------------------------------------------------------------

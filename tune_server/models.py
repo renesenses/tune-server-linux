@@ -601,3 +601,39 @@ class MediaServerBrowseResult(BaseModel):
     items: list[MediaServerItem] = Field(default_factory=list)
     total_matches: int = 0
     number_returned: int = 0
+
+
+# --- User Profiles & Favorites ---
+
+
+class UserProfile(BaseModel):
+    id: Optional[int] = None
+    name: str
+    avatar_color: str = "#FF6B35"
+    created_at: Optional[str] = None
+
+
+class UserProfileCreate(BaseModel):
+    name: str
+    avatar_color: str = "#FF6B35"
+
+
+class UserFavorite(BaseModel):
+    id: Optional[int] = None
+    user_id: int
+    track_id: Optional[int] = None
+    album_id: Optional[int] = None
+    artist_id: Optional[int] = None
+    created_at: Optional[str] = None
+
+
+class UserFavoriteAdd(BaseModel):
+    track_id: Optional[int] = None
+    album_id: Optional[int] = None
+    artist_id: Optional[int] = None
+
+
+class UserFavoritesResponse(BaseModel):
+    tracks: list[Track] = Field(default_factory=list)
+    albums: list[Album] = Field(default_factory=list)
+    artists: list[Artist] = Field(default_factory=list)
