@@ -21,7 +21,7 @@ async def list_profiles() -> list[UserProfile]:
     rows = await deps.db.fetchall(
         "SELECT * FROM user_profiles ORDER BY name"
     )
-    return [UserProfile(**dict(r)) for r in rows]
+    return [UserProfile(**_clean_row(r)) for r in rows]
 
 
 @router.post("", status_code=201)
@@ -32,7 +32,7 @@ async def create_profile(body: UserProfileCreate) -> UserProfile:
     )
     await deps.db.commit()
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (result.lastrowid,))
-    return UserProfile(**dict(row))
+    return UserProfile(**_clean_row(row))
 
 
 @router.get("/{profile_id}")
@@ -40,7 +40,7 @@ async def get_profile(profile_id: int) -> UserProfile:
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
     if not row:
         raise HTTPException(404, "Profile not found")
-    return UserProfile(**dict(row))
+    return UserProfile(**_clean_row(row))
 
 
 @router.put("/{profile_id}")
@@ -53,7 +53,7 @@ async def update_profile(profile_id: int, body: UserProfileCreate) -> UserProfil
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
     if not row:
         raise HTTPException(404, "Profile not found")
-    return UserProfile(**dict(row))
+    return UserProfile(**_clean_row(row))
 
 
 @router.delete("/{profile_id}", status_code=204)
@@ -194,6 +194,15 @@ async def check_favorite(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _clean_row(row) -> dict:
+    """Convert row to dict, stringify datetime fields for Pydantic."""
+    d = dict(row)
+    for k, v in d.items():
+        if v is not None and not isinstance(v, (str, int, float, bool)):
+            d[k] = str(v)
+    return d
+
 
 def _track_from_row(row) -> dict:
     d = dict(row)
