@@ -116,21 +116,24 @@ async def get_favorites(
 
 @router.post("/{profile_id}/favorites", status_code=201)
 async def add_favorite(profile_id: int, body: UserFavoriteAdd) -> dict:
-    if body.track_id:
-        await deps.db.execute(
-            "INSERT INTO user_favorites (user_id, track_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
-            (profile_id, body.track_id),
-        )
-    elif body.album_id:
-        await deps.db.execute(
-            "INSERT INTO user_favorites (user_id, album_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
-            (profile_id, body.album_id),
-        )
-    elif body.artist_id:
-        await deps.db.execute(
-            "INSERT INTO user_favorites (user_id, artist_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
-            (profile_id, body.artist_id),
-        )
+    try:
+        if body.track_id:
+            await deps.db.execute(
+                "INSERT INTO user_favorites (user_id, track_id) VALUES (?, ?)",
+                (profile_id, body.track_id),
+            )
+        elif body.album_id:
+            await deps.db.execute(
+                "INSERT INTO user_favorites (user_id, album_id) VALUES (?, ?)",
+                (profile_id, body.album_id),
+            )
+        elif body.artist_id:
+            await deps.db.execute(
+                "INSERT INTO user_favorites (user_id, artist_id) VALUES (?, ?)",
+                (profile_id, body.artist_id),
+            )
+    except Exception:
+        pass  # Duplicate — ignore
     else:
         raise HTTPException(400, "Provide track_id, album_id, or artist_id")
     await deps.db.commit()
