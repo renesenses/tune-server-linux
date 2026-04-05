@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from tune_server.api import deps
+from tune_server.api.deps import deps
 from tune_server.models import (
     Album, Artist, Track, UserFavoriteAdd, UserFavoritesResponse,
     UserProfile, UserProfileCreate,
