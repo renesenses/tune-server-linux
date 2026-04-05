@@ -342,6 +342,29 @@ class PlaylistAddTracksRequest(BaseModel):
     position: Optional[int] = None  # None = append
 
 
+class PlaylistImportRequest(BaseModel):
+    service: str
+    playlist_id: str
+    name: str | None = None
+
+
+class PlaylistImportResponse(BaseModel):
+    playlist_id: int
+    name: str
+    tracks_imported: int
+
+
+class UnifiedPlaylistsResponse(BaseModel):
+    local: list[Playlist] = Field(default_factory=list)
+    services: dict[str, list[StreamingPlaylist]] = Field(default_factory=dict)
+
+
+class TrackMatchRequest(BaseModel):
+    title: str
+    artist_name: str
+    services: list[str] = Field(default_factory=list)
+
+
 class PlaylistReorderRequest(BaseModel):
     track_ids: list[int]  # Full ordered list
 
