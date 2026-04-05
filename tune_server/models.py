@@ -365,6 +365,55 @@ class TrackMatchRequest(BaseModel):
     services: list[str] = Field(default_factory=list)
 
 
+class PlaylistTransferRequest(BaseModel):
+    source_service: str  # "qobuz", "tidal", "local"
+    source_playlist_id: str  # playlist ID on source
+    target_service: str  # "local", "qobuz", "tidal"
+    target_name: str | None = None  # name for new playlist
+
+
+class TransferTrackResult(BaseModel):
+    title: str
+    artist_name: str | None = None
+    status: str  # "matched", "not_found", "approximate"
+    source_id: str | None = None
+    target_id: str | None = None
+    target_service: str | None = None
+
+
+class PlaylistTransferResponse(BaseModel):
+    playlist_id: int | str | None = None
+    playlist_name: str
+    total_tracks: int
+    matched: int
+    not_found: int
+    approximate: int
+    tracks: list[TransferTrackResult]
+
+
+class PlaylistDiffRequest(BaseModel):
+    source_service: str
+    source_playlist_id: str
+    target_service: str
+    target_playlist_id: str
+
+
+class DiffTrackResult(BaseModel):
+    title: str
+    artist_name: str | None = None
+    in_source: bool
+    in_target: bool
+    match_quality: str | None = None  # "exact", "approximate", None
+
+
+class PlaylistDiffResponse(BaseModel):
+    source_name: str
+    target_name: str
+    only_in_source: list[DiffTrackResult]
+    only_in_target: list[DiffTrackResult]
+    in_both: list[DiffTrackResult]
+
+
 class PlaylistReorderRequest(BaseModel):
     track_ids: list[int]  # Full ordered list
 

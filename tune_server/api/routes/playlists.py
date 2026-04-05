@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -9,16 +10,22 @@ from fastapi.responses import JSONResponse
 from tune_server.api.deps import deps
 from tune_server.event_bus import Event, EventType
 from tune_server.models import (
+    DiffTrackResult,
     Playlist,
     PlaylistAddTracksRequest,
     PlaylistCreateRequest,
+    PlaylistDiffRequest,
+    PlaylistDiffResponse,
     PlaylistImportRequest,
     PlaylistImportResponse,
     PlaylistReorderRequest,
+    PlaylistTransferRequest,
+    PlaylistTransferResponse,
     PlaylistUpdateRequest,
     StreamingTrackInfo,
     Track,
     TrackMatchRequest,
+    TransferTrackResult,
     UnifiedPlaylistsResponse,
 )
 
@@ -154,6 +161,224 @@ async def match_track(body: TrackMatchRequest):
         results["local"] = local[0]
 
     return results
+
+
+def _normalize(s: str) -> str:
+    """Normalize for comparison: lowercase, strip feat/remix/remaster/parens."""
+    s = s.lower().strip()
+    s = re.sub(r'\(.*?\)', '', s)
+    s = re.sub(r'\[.*?\]', '', s)
+    s = re.sub(r'\s*-\s*(feat|ft|featuring|remix|remaster|deluxe|bonus).*', '', s, flags=re.IGNORECASE)
+    return s.strip()
+
+
+def _fuzzy_match_track(title1: str, artist1: str, title2: str, artist2: str) -> str | None:
+    """Returns 'exact', 'approximate', or None."""
+    t1 = _normalize(title1)
+    t2 = _normalize(title2)
+    a1 = _normalize(artist1)
+    a2 = _normalize(artist2)
+    if t1 == t2 and a1 == a2:
+        return "exact"
+    if t1 == t2 or (a1 == a2 and (t1 in t2 or t2 in t1)):
+        return "approximate"
+    return None
+
+
+async def _get_playlist_tracks_and_name(
+    service: str, playlist_id: str
+) -> tuple[list[Track], str]:
+    """Get tracks and name for a playlist from any service."""
+    if service == "local":
+        pid = int(playlist_id)
+        playlist = await deps.playlist_repo.get(pid)
+        if not playlist:
+            raise HTTPException(status_code=404, detail="Local playlist not found")
+        tracks = await deps.playlist_repo.get_tracks(pid)
+        return tracks, playlist.name
+    else:
+        svc = deps.streaming_services.get(service)
+        if not svc:
+            raise HTTPException(status_code=503, detail=f"{service} not configured")
+        if not svc.is_authenticated:
+            raise HTTPException(status_code=503, detail=f"{service} not authenticated")
+        tracks = await svc.get_playlist_tracks(playlist_id)
+        # Resolve name
+        playlists = await svc.get_user_playlists()
+        match = next((p for p in playlists if p.source_id == playlist_id), None)
+        name = match.name if match else f"Playlist from {service}"
+        return tracks, name
+
+
+@router.post("/transfer", response_model=PlaylistTransferResponse)
+async def transfer_playlist(body: PlaylistTransferRequest):
+    """Transfer a playlist from one service to another with track matching."""
+    # 1. Get source tracks
+    source_tracks, source_name = await _get_playlist_tracks_and_name(
+        body.source_service, body.source_playlist_id
+    )
+    target_name = body.target_name or source_name
+
+    # 2. For each track, search on target service
+    results: list[TransferTrackResult] = []
+    matched_track_ids: list[int] = []
+
+    target_svc = None
+    if body.target_service != "local":
+        target_svc = deps.streaming_services.get(body.target_service)
+        if not target_svc:
+            raise HTTPException(status_code=503, detail=f"{body.target_service} not configured")
+        if not target_svc.is_authenticated:
+            raise HTTPException(status_code=503, detail=f"{body.target_service} not authenticated")
+
+    for t in source_tracks:
+        artist = t.artist_name or ""
+        query = f"{artist} {t.title}"
+        result = TransferTrackResult(
+            title=t.title,
+            artist_name=t.artist_name,
+            status="not_found",
+            source_id=t.source_id or (str(t.id) if t.id else None),
+        )
+
+        try:
+            if body.target_service == "local":
+                # Search local library
+                local_results = await deps.track_repo.search(query, limit=5)
+                for lr in local_results:
+                    quality = _fuzzy_match_track(
+                        t.title, artist, lr.title, lr.artist_name or ""
+                    )
+                    if quality:
+                        result.status = "matched" if quality == "exact" else "approximate"
+                        result.target_id = str(lr.id)
+                        result.target_service = "local"
+                        matched_track_ids.append(lr.id)
+                        break
+            else:
+                # Search on target streaming service
+                search_result = await target_svc.search(query, limit=5)
+                for sr in search_result.tracks:
+                    quality = _fuzzy_match_track(
+                        t.title, artist, sr.title, sr.artist_name or ""
+                    )
+                    if quality:
+                        result.status = "matched" if quality == "exact" else "approximate"
+                        result.target_id = sr.source_id
+                        result.target_service = body.target_service
+                        break
+        except Exception:
+            logger.debug("Transfer search failed for '%s'", query, exc_info=True)
+
+        results.append(result)
+
+    # 3. Create local playlist with matched tracks
+    playlist_id = await deps.playlist_repo.create(target_name)
+
+    if body.target_service == "local":
+        # Add local track IDs directly
+        if matched_track_ids:
+            await deps.playlist_repo.add_tracks(playlist_id, matched_track_ids)
+    else:
+        # Upsert streaming tracks from target service into the playlist
+        upserted_ids: list[int] = []
+        for r in results:
+            if r.status in ("matched", "approximate") and r.target_id:
+                existing = await deps.track_repo.get_by_source(body.target_service, r.target_id)
+                if existing:
+                    upserted_ids.append(existing.id)
+                else:
+                    track_obj = Track(
+                        title=r.title,
+                        artist_name=r.artist_name,
+                        source=body.target_service,
+                        source_id=r.target_id,
+                    )
+                    track_id = await deps.track_repo.create(track_obj)
+                    upserted_ids.append(track_id)
+        if upserted_ids:
+            await deps.playlist_repo.add_tracks(playlist_id, upserted_ids)
+
+    deps.event_bus.emit_nowait(Event(
+        type=EventType.PLAYLIST_CREATED,
+        data={"playlist_id": playlist_id, "name": target_name},
+        source="playlists",
+    ))
+
+    matched_count = sum(1 for r in results if r.status == "matched")
+    approximate_count = sum(1 for r in results if r.status == "approximate")
+    not_found_count = sum(1 for r in results if r.status == "not_found")
+
+    return PlaylistTransferResponse(
+        playlist_id=playlist_id,
+        playlist_name=target_name,
+        total_tracks=len(source_tracks),
+        matched=matched_count,
+        not_found=not_found_count,
+        approximate=approximate_count,
+        tracks=results,
+    )
+
+
+@router.post("/diff", response_model=PlaylistDiffResponse)
+async def diff_playlists(body: PlaylistDiffRequest):
+    """Compare two playlists from any services and return a diff."""
+    source_tracks, source_name = await _get_playlist_tracks_and_name(
+        body.source_service, body.source_playlist_id
+    )
+    target_tracks, target_name = await _get_playlist_tracks_and_name(
+        body.target_service, body.target_playlist_id
+    )
+
+    in_both: list[DiffTrackResult] = []
+    only_in_source: list[DiffTrackResult] = []
+    target_matched: set[int] = set()  # indices of matched target tracks
+
+    for st in source_tracks:
+        found = False
+        for idx, tt in enumerate(target_tracks):
+            if idx in target_matched:
+                continue
+            quality = _fuzzy_match_track(
+                st.title, st.artist_name or "",
+                tt.title, tt.artist_name or "",
+            )
+            if quality:
+                in_both.append(DiffTrackResult(
+                    title=st.title,
+                    artist_name=st.artist_name,
+                    in_source=True,
+                    in_target=True,
+                    match_quality=quality,
+                ))
+                target_matched.add(idx)
+                found = True
+                break
+        if not found:
+            only_in_source.append(DiffTrackResult(
+                title=st.title,
+                artist_name=st.artist_name,
+                in_source=True,
+                in_target=False,
+            ))
+
+    only_in_target: list[DiffTrackResult] = []
+    for idx, tt in enumerate(target_tracks):
+        if idx not in target_matched:
+            only_in_target.append(DiffTrackResult(
+                title=tt.title,
+                artist_name=tt.artist_name,
+                in_source=False,
+                in_target=True,
+            ))
+
+    return PlaylistDiffResponse(
+        source_name=source_name,
+        target_name=target_name,
+        only_in_source=only_in_source,
+        only_in_target=only_in_target,
+        in_both=in_both,
+    )
 
 
 @router.post("", response_model=Playlist, status_code=201)
