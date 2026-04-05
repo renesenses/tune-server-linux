@@ -116,6 +116,8 @@ async def get_favorites(
 
 @router.post("/{profile_id}/favorites", status_code=201)
 async def add_favorite(profile_id: int, body: UserFavoriteAdd) -> dict:
+    if not body.track_id and not body.album_id and not body.artist_id:
+        raise HTTPException(400, "Provide track_id, album_id, or artist_id")
     try:
         if body.track_id:
             await deps.db.execute(
@@ -134,8 +136,6 @@ async def add_favorite(profile_id: int, body: UserFavoriteAdd) -> dict:
             )
     except Exception:
         pass  # Duplicate — ignore
-    else:
-        raise HTTPException(400, "Provide track_id, album_id, or artist_id")
     await deps.db.commit()
     return {"status": "added"}
 
