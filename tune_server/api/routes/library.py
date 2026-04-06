@@ -166,6 +166,18 @@ async def update_track(track_id: int, req: TrackUpdateRequest):
             artist = await deps.artist_repo.get(req.artist_id)
             if artist:
                 tag_updates["artist"] = artist.name
+        if req.genre is not None:
+            tag_updates["genre"] = req.genre
+        if req.year is not None:
+            tag_updates["year"] = req.year
+        if req.track_number is not None:
+            tag_updates["track_number"] = req.track_number
+        if req.disc_number is not None:
+            tag_updates["disc_number"] = req.disc_number
+        if req.album_id is not None:
+            album = await deps.album_repo.get(req.album_id)
+            if album:
+                tag_updates["album"] = album.title
         if tag_updates:
             await asyncio.to_thread(write_tags, track.file_path, **tag_updates)
 
