@@ -181,9 +181,31 @@ async def update_track(track_id: int, req: TrackUpdateRequest):
         if tag_updates:
             await asyncio.to_thread(write_tags, track.file_path, **tag_updates)
 
+    # Genre and year belong to the album, not the track
+    album_updates = {}
+    if "genre" in updates:
+        album_updates["genre"] = updates.pop("genre")
+    if "year" in updates:
+        year_val = updates.pop("year")
+        try:
+            album_updates["year"] = int(year_val) if year_val else None
+        except (ValueError, TypeError):
+            album_updates["year"] = None
+
     for field, value in updates.items():
         setattr(track, field, value)
     await deps.track_repo.update(track)
+
+    # Update album genre/year if provided
+    if album_updates and track.album_id:
+        album = await deps.album_repo.get(track.album_id)
+        if album:
+            if "genre" in album_updates:
+                album.genre = album_updates["genre"]
+            if "year" in album_updates:
+                album.year = album_updates["year"]
+            await deps.album_repo.update(album)
+
     return await deps.track_repo.get(track_id)
 
 
