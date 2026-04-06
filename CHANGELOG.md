@@ -2,6 +2,22 @@
 
 All notable changes to Tune Server.
 
+## v0.5.1 — 2026-04-06
+
+### Fixed
+- **Tidal playlists pagination**: fetch all own playlists + favorites (was limited to 50)
+- **Track edit genre/year**: fields now correctly update album table instead of track table
+- **Playlists loading indicator**: streaming playlists loading bar visible during fetch
+
+### Added
+- **Track metadata editing**: genre, year fields with write-through to file tags (FLAC/MP3/MP4/Ogg)
+
+### Web Client
+- **Playlist loading bar**: spinner with progressive counter while streaming playlists load
+- **Track edit improvements**: custom dropdown for artist/album, genre/year fields, no-crash on paste
+- **Heart button fixes**: always visible (opacity 0.4), present on both single-disc and multi-disc albums
+- **Transport bar**: triple refresh after playlist play to ensure state updates
+
 ## v0.5.0 — 2026-04-05
 
 ### Added
