@@ -54,6 +54,190 @@ A **multi-room music server** that unifies local libraries, network shares, and 
 
 ## 2. Technology Stack by Platform
 
+---
+
+## 1b. Use Cases — How Tune Fits Your Setup
+
+### Scenario 1: iPad only (standalone)
+
+```mermaid
+graph LR
+    IPAD["📱 iPad<br/>Tune Server Mode"] -->|DLNA/UPnP| DAC["🔊 TotalDAC<br/>d1-twelve"]
+    IPAD -->|Tidal / Qobuz| DAC
+    style IPAD fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- iPad runs Tune in **server mode** (embedded engine)
+- Scans local music (iPad storage + Apple Music library)
+- Connects to streaming services (Tidal, Qobuz)
+- Sends audio via **DLNA/UPnP** directly to your DAC
+- Controls playback from the iPad touchscreen
+- **Multi-room capable**: iPad discovers multiple DLNA renderers, can group zones for synchronized playback
+- **Best for**: simple setup, one or multiple rooms, audiophile on the go
+
+### Scenario 1b: iPhone only (portable audiophile)
+
+```mermaid
+graph LR
+    IP["📱 iPhone<br/>Tune Remote Mode<br/>+ Local Zone"] -->|DLNA/UPnP| DAC["🔊 TotalDAC<br/>d1-twelve"]
+    IP -->|Bluetooth| BT["🎧 Headphones"]
+    IP -->|AirPlay| AP["🔊 AirPlay Speaker"]
+    style IP fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- iPhone runs Tune in **remote mode** (connects to a server) or plays locally
+- Local zone streams from Tidal/Qobuz via the device
+- Can output to **DLNA renderers on the same network**, Bluetooth headphones, or AirPlay
+- Full control interface with library, search, playlists, favorites
+- **Best for**: portable listening, traveling audiophile, quick DLNA control
+
+### Scenario 2: Linux server + iPad/iPhone remote
+
+```mermaid
+graph LR
+    IPAD["📱 iPad / iPhone<br/>Remote"] -->|REST API + WS| SRV["🖥️ Linux Server<br/>NAS · Tidal · Qobuz<br/>22,000+ tracks"]
+    WEB["🌐 Web browser"] -->|REST API| SRV
+    SRV -->|DLNA| DAC["🔊 TotalDAC<br/>d1-twelve"]
+    SRV -->|DLNA| SONOS["🔊 Sonos<br/>Room 2"]
+    style SRV fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- Linux server (Intel NUC, Raspberry Pi, or any PC) runs **tune-server**
+- Scans NAS/SMB shares, local folders, streaming services
+- Full library with PostgreSQL, metadata enrichment, playlists
+- iPad/iPhone/Mac connects as **remote control** via WiFi (REST API + WebSocket)
+- Web browser access at `http://server:8888` for any device
+- Server sends audio to **multiple DLNA renderers** simultaneously (multi-room)
+- **Best for**: serious audiophile setup, large library, multi-room, NAS storage
+
+### Scenario 3: Linux server + multiple outputs
+
+```mermaid
+graph LR
+    CTRL["📱 Any control<br/>device"] -->|API| SRV["🖥️ Linux Server<br/>Multi-room sync"]
+    SRV -->|DLNA| TOT["🔊 TotalDAC<br/>Salon"]
+    SRV -->|DLNA| MICRO["🔊 Micromega<br/>Bureau"]
+    SRV -->|AirPlay| AP["🔊 AirPlay<br/>Cuisine"]
+    SRV -->|USB| USB["🎧 USB DAC<br/>Casque"]
+    style SRV fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style TOT fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- Same Linux server drives **multiple zones simultaneously**
+- Each zone has its own queue, volume, and output
+- Zones can be **grouped for synchronized playback** (multi-room)
+- Per-zone sync delay compensation for network latency
+- Mix of DLNA, AirPlay, and USB DAC outputs
+- **Best for**: whole-house audio, mixed equipment, audiophile + casual rooms
+
+### Scenario 4: Mac desktop (all-in-one)
+
+```mermaid
+graph LR
+    MAC["🖥️ Mac<br/>tune-server + Tune.app"] -->|USB| DAC["🔊 TotalDAC<br/>USB input"]
+    style MAC fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- Mac runs both **tune-server** (terminal) and **Tune.app** (native UI)
+- Direct USB output to DAC (sounddevice, exclusive mode planned)
+- Web UI accessible from any browser on the network
+- **Best for**: desktop audiophile, headphone setup, simple one-box solution
+
+### Scenario 5: Raspberry Pi (embedded audiophile)
+
+```mermaid
+graph LR
+    PHONE["📱 Phone / Web"] -->|WiFi| RPI["🍓 Raspberry Pi 5<br/>tune-server · headless<br/>SSD + NAS"]
+    RPI -->|USB| DAC["🔊 TotalDAC<br/>USB input"]
+    style RPI fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- Dedicated Raspberry Pi runs tune-server headless (no screen)
+- Music on USB SSD or mounted NAS
+- USB output to DAC (bit-perfect, exclusive mode)
+- Control from any phone/tablet/browser on the network
+- **Best for**: ultra-low-cost dedicated streamer, minimalist audiophile
+
+### Scenario 6: iPhone as remote + AirPlay
+
+```mermaid
+graph LR
+    IP["📱 iPhone<br/>remote"] -->|API| SRV["🖥️ Linux Server"]
+    SRV -->|AirPlay| HP["🔊 HomePod<br/>Kitchen"]
+    SRV -->|AirPlay| ATV["📺 Apple TV<br/>Living room"]
+    SRV -->|DLNA| DAC["🔊 TotalDAC<br/>Salon"]
+    style SRV fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- iPhone controls the server (native app or web)
+- Server streams to **AirPlay and DLNA simultaneously**
+- Mix Apple ecosystem + audiophile DLNA renderers
+- **Best for**: Apple household with high-end audio in one room
+
+### Scenario 7: Android phone + Flutter app
+
+```mermaid
+graph LR
+    AND["🤖 Android<br/>Tune app<br/>embedded server"] -->|DLNA| DAC["🔊 TotalDAC"]
+    style AND fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- Android runs Tune with embedded server (Flutter)
+- Direct DLNA output to DAC
+- Streaming services (Tidal, Qobuz)
+- **Best for**: Android users, portable setup
+
+### Scenario 8: Windows PC (office/studio)
+
+```mermaid
+graph LR
+    WIN["🖥️ Windows PC<br/>tune-server · tray app<br/>web UI :8888"] -->|USB / DLNA| DAC["🔊 TotalDAC"]
+    style WIN fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- Windows runs tune-server as tray application
+- USB or DLNA output
+- Web UI from any browser
+- **Best for**: studio/office, Windows-only environments
+
+### Scenario 9: Docker (NAS / homelab)
+
+```mermaid
+graph LR
+    NAS["🗄️ Synology NAS<br/>Docker · tune-server<br/>music on NAS"] -->|DLNA| DAC["🔊 TotalDAC"]
+    style NAS fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff
+```
+
+- Runs in Docker on NAS (Synology, QNAP, Unraid)
+- Music library already on the NAS — zero copy
+- DLNA output to any renderer on the network
+- **Best for**: existing NAS owners, zero-hardware solution
+
+### Quick Comparison
+
+| Setup | Hardware | Library | Multi-room | Audio Path | Complexity |
+|-------|----------|---------|------------|------------|------------|
+| **iPad only** | iPad | Local + streaming | Yes (DLNA) | iPad → DLNA → DAC(s) | ★☆☆ |
+| **Linux + remote** | Server + iPad | NAS + streaming | Yes | Server → DLNA → DAC | ★★☆ |
+| **Linux + multi** | Server + any | NAS + streaming | Yes (sync) | Server → multiple outputs | ★★★ |
+| **Mac desktop** | Mac | Local + streaming | Optional | Mac → USB → DAC | ★☆☆ |
+| **Raspberry Pi** | RPi + SSD | SSD/NAS + streaming | Optional | RPi → USB → DAC | ★★☆ |
+| **iPhone + AirPlay** | Server + iPhone | NAS + streaming | Yes | Server → AirPlay/DLNA | ★★☆ |
+| **Android** | Android phone | Local + streaming | No | Phone → DLNA → DAC | ★☆☆ |
+| **Windows** | PC | Local + streaming | Optional | PC → USB/DLNA → DAC | ★☆☆ |
+| **Docker / NAS** | NAS | NAS volumes | Yes | NAS → DLNA → DAC | ★★☆ |
+
+---
+
 ### Linux / macOS / Windows Server
 
 | Layer | Technology | Purpose |

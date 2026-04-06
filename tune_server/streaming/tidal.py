@@ -388,10 +388,42 @@ class TidalService(StreamingService):
             return []
         try:
             import tidalapi
+
+            def _fetch_all():
+                all_playlists = []
+                # Fetch user's own playlists
+                try:
+                    own = self._session.user.playlists()
+                    all_playlists.extend([p for p in own if isinstance(p, tidalapi.Playlist)])
+                except Exception:
+                    pass
+                # Fetch favorite playlists (paginated)
+                try:
+                    favs = self._session.user.favorites
+                    offset = 0
+                    while True:
+                        batch = favs.playlists(limit=100, offset=offset)
+                        if not batch:
+                            break
+                        all_playlists.extend([p for p in batch if isinstance(p, tidalapi.Playlist)])
+                        if len(batch) < 100:
+                            break
+                        offset += 100
+                except Exception:
+                    pass
+                # Deduplicate by ID
+                seen = set()
+                unique = []
+                for p in all_playlists:
+                    if p.id not in seen:
+                        seen.add(p.id)
+                        unique.append(p)
+                return unique
+
             playlists = await asyncio.wait_for(
-                asyncio.to_thread(self._session.user.playlist_and_favorite_playlists), timeout=60
+                asyncio.to_thread(_fetch_all), timeout=120
             )
-            return [self._map_playlist(p) for p in playlists if isinstance(p, tidalapi.Playlist)]
+            return [self._map_playlist(p) for p in playlists]
         except Exception:
             logger.exception("tidal_user_playlists_error")
             return []
