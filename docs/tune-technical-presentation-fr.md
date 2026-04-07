@@ -19,7 +19,7 @@ Ingénieur EPFL (Systèmes de Communication — convergence IT/Telecom, 1995). P
 | **Site web** | [mozaiklabs.fr](https://mozaiklabs.fr) |
 | **Localisation** | France |
 | **Produit** | Tune — Serveur Musical Multi-room |
-| **Statut** | Beta (v0.5.0, Avril 2026) |
+| **Statut** | Beta (v0.5.2, Avril 2026) |
 | **Beta testeurs** | Communauté active via [mozaiklabs.fr/forum](https://mozaiklabs.fr/forum) |
 
 **Équipement Audio :**
@@ -450,96 +450,86 @@ Groupe "Toute la Maison" (leader : Zone 1)
 
 ---
 
-## 6. Axes d'Amélioration pour un Son Parfait
+## 6. Excellence Audio
 
-### 6.1 Synchronisation d'Horloge (Critique pour l'Audiophile)
+### 6.1 Synchronisation d'Horloge
 
 **État actuel :** L'horloge audio est pilotée par l'horloge interne du renderer. Tune envoie les données via HTTP ; le renderer met en buffer et lit à son propre rythme d'horloge.
 
-**Améliorations proposées :**
+#### A. Support Word Clock Externe — *Planifié*
+- Support entrée/sortie word clock externe via le renderer DLNA
+- Négociation `ClockSource` dans UPnP GetProtocolInfo
 
-#### A. Support Word Clock Externe
-- Ajout du support entrée/sortie word clock externe via le renderer DLNA
-- Implémentation de la négociation `ClockSource` dans UPnP GetProtocolInfo
-- Permettre à Tune d'annoncer ses capacités d'horloge
-
-#### B. En-têtes de Timing Précis
-- Ajout d'en-têtes HTTP personnalisés pour un timing au sample près :
+#### B. En-têtes de Timing Précis — ✅ Implémenté (v0.5.2)
+- En-têtes HTTP personnalisés sur chaque flux audio :
   ```
   X-Tune-SampleRate: 192000
   X-Tune-BitDepth: 24
-  X-Tune-Timestamp: 1712345678.123456789
-  X-Tune-SampleOffset: 0
+  X-Tune-Timestamp: 1712345678.123456789 (précision nanoseconde)
+  X-Tune-BitPerfect: true
+  X-Tune-Format: flac
+  X-Tune-Channels: 2
   ```
 - Le renderer peut utiliser ces données pour une reconstruction sans jitter
 
-#### C. Sortie RAVENNA/AES67
-- Ajout du support protocole audio réseau RAVENNA/AES67
+#### C. Sortie RAVENNA/AES67 — *Planifié*
 - Synchronisation d'horloge PTP (IEEE 1588) — précision sub-microseconde
 - Transport audio réseau de qualité professionnelle
-- Intégration directe avec l'entrée réseau des DAC haut de gamme
 
-#### D. Protocole type RAAT (Roon)
-- Implémentation d'un transport audio personnalisé avec :
-  - Récupération d'horloge depuis les paquets réseau
-  - Gestion de buffer adaptative
-  - Élimination du jitter à l'étage de sortie
+#### D. Protocole type RAAT (Roon) — *Planifié*
+- Transport audio personnalisé avec récupération d'horloge, buffering adaptatif, élimination du jitter
 
-### 6.2 Vérification Bit-Perfect
+### 6.2 Vérification Bit-Perfect — ✅ Implémenté (v0.5.2)
 
-**Proposé :**
-- Vérification de checksum de bout en bout (fichier source → entrée renderer)
-- Comparaison de hash audio avant/après transport
-- Indicateur visuel dans l'UI : "Bit-Perfect ✓" ou "Transcodé ⚠️"
-- Log de toutes les décisions du chemin du signal pour audit
+- ✅ Vérification de checksum MD5 de bout en bout (fichier source → entrée renderer)
+- ✅ Comparaison de hash audio : `source_hash == output_hash` vérifié en passthrough
+- ✅ Indicateur visuel dans l'UI : pastille verte "Bit-Perfect ✓" ou jaune "Transcodé ⚠️"
+- ✅ Log complet des décisions du pipeline (chaque décision enregistrée et affichée)
 
-### 6.3 Resampling Avancé
+### 6.3 Resampling Avancé — ✅ Implémenté (v0.5.2)
 
-**Actuel :** Resampler SoX via FFmpeg quand nécessaire.
+- ✅ **Politique de rééchantillonnage** : `auto` (défaut), `never` (refuser les formats incompatibles), `integer_ratio` (préférer 44,1→88,2→176,4 kHz)
+- ✅ Configurable par l'utilisateur via l'interface Settings
+- ✅ Préférence de ratio entier pour une conversion audiophile
+- ✅ Resampler SoX via FFmpeg en fallback transparent
 
-**Proposé pour les DAC haut de gamme :**
-- Option pour ne jamais resampler (refuser les formats incompatibles)
-- Resampling SoX "Very High Quality" à phase linéaire en fallback
-- Algorithme de resampling configurable par l'utilisateur
-- Préférence de resampling à ratio entier (44,1→88,2→176,4)
+### 6.4 Gestion des Buffers — ✅ Implémenté (v0.5.2)
 
-### 6.4 Gestion des Buffers
+- ✅ Taille de buffer configurable par sortie (`TUNE_AUDIO_BUFFER_KB`)
+- ✅ Durée de pré-buffer avant lecture (`TUNE_PREBUFFER_SECONDS`)
+- ✅ Mode basse latence (10ms) pour DAC USB local
+- ✅ Mode buffer large (200ms) pour les environnements réseau difficiles
 
-**Proposé :**
-- Taille de pré-buffer configurable par renderer
-- Mode buffer large pour les environnements réseau difficiles
-- Mode zéro-buffer pour la latence la plus basse (DAC USB local)
-- Buffer circulaire avec ordonnancement prioritaire (thread audio temps réel)
+### 6.5 Support USB Audio Class — ✅ Implémenté (v0.5.2)
 
-### 6.5 Support USB Audio Class
+- ✅ **Mode exclusif** : bypass du mixer OS (PulseAudio/PipeWire) pour une sortie DAC USB bit-perfect
+- ✅ Latence configurable : 10ms (ultra-basse) à 200ms (sûre)
+- ✅ Volume logiciel désactivé en mode exclusif (chaîne bit-perfect pure)
+- ✅ Passthrough DSD natif vers les renderers compatibles
+- ✅ Vérification bit-perfect via checksum
 
-**Pour une entrée DAC USB directe :**
-- Mode exclusif ALSA/CoreAudio (bypass du mixer OS)
-- USB Audio Class 2.0 avec récupération d'horloge asynchrone
-- DSD over PCM (DoP) direct ou DSD natif via USB
-- Vérification bit-perfect via périphérique ALSA hw:
+### 6.6 Correction Acoustique / DSP — ✅ Implémenté (v0.5.2)
 
-### 6.6 Intégration Correction Acoustique
+- ✅ **Chaîne de filtres DSP** : tout filtre FFmpeg `-af` (égaliseur, basses, aigus, compresseur, etc.)
+- ✅ **Convolution** : import de fichiers de réponse impulsionnelle (Dirac Live, REW, Audiolens)
+- ✅ Toggle DSP on/off dans l'interface Settings
+- ✅ Mode bypass pour les puristes (DSP désactivé par défaut — zéro traitement)
 
-**Proposé :**
-- Chaîne de plugins DSP (convolution, EQ, crossover)
-- Import de filtres Dirac Live, REW ou Audiolens
-- Configuration DSP par zone
-- Mode bypass pour les puristes (zéro traitement)
+### 6.7 Affichage du Chemin du Signal — ✅ Implémenté (v0.5.2)
 
-### 6.7 Affichage du Chemin du Signal
-
-**Fonctionnalité audiophile proposée :**
-- Afficher le chemin complet du signal dans l'UI :
+- ✅ **Modale inspirée de Roon** affichant le chemin complet du signal :
   ```
   Source : Qobuz FLAC 96/24
-  → Transport : Passthrough URL Directe HTTP
+  → Transport : Passthrough URL Directe
   → Renderer : DAC Haut de Gamme (DLNA)
   → Horloge : Interne (renderer)
   → Traitement : Aucun (bit-perfect)
   → Sortie : 96kHz / 24-bit / 2ch
   ```
-- Indicateur de qualité coloré (vert = bit-perfect, jaune = transcodé)
+- ✅ Pastille colorée dans la barre de transport (vert = bit-perfect, jaune = transcodé)
+- ✅ Log des décisions du pipeline dépliable
+- ✅ Badge de vérification checksum
+- ✅ Internationalisation complète FR/EN
 
 ---
 
@@ -649,7 +639,7 @@ gantt
     dateFormat YYYY-MM-DD
     axisFormat %d %b
 
-    section v0.5.0 (fait)
+    section v0.5.2 (fait)
     Profils & Favoris                   :done, 2026-04-01, 2026-04-05
     Gestionnaire Playlists (transfert)  :done, 2026-04-01, 2026-04-05
     Support PostgreSQL                  :done, 2026-04-01, 2026-04-05
@@ -689,7 +679,7 @@ gantt
     Linux Embarqué (Raspberry Pi)       :2026-06-01, 2026-07-15
 ```
 
-### Statut Actuel (v0.5.0 — Avril 2026)
+### Statut Actuel (v0.5.2 — Avril 2026)
 
 | Fonctionnalité | Statut | Cible |
 |---------|--------|--------|
@@ -729,7 +719,7 @@ gantt
 - **Téléchargements** : https://mozaiklabs.fr/download
 - **GitHub** : github.com/renesenses/tune-server-linux
 - **Forum Beta** : https://mozaiklabs.fr/forum
-- **Version actuelle** : v0.5.0 (Avril 2026)
+- **Version actuelle** : v0.5.2 (Avril 2026)
 
 ---
 

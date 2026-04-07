@@ -555,6 +555,10 @@ class SystemConfigResponse(BaseModel):
     dsp_filter: str = ""
     dsp_impulse_response: str = ""
     dsp_sample_rate: int = 0
+    # Enrichment
+    discogs_token_set: bool = False  # true if token is configured (don't expose token)
+    enrich_on_scan: bool = True
+    artists_without_image: int = 0
 
 
 class MusicDirRequest(BaseModel):

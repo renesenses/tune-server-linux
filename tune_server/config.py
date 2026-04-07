@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     # DSP sample rate (0 = use source rate)
     dsp_sample_rate: int = 0
 
+    # Enrichment
+    discogs_token: str = ""  # Personal Discogs API token for artist images
+    enrich_on_scan: bool = True  # Auto-enrich after library scan
+
     # Artwork
     artwork_cache_dir: str = "artwork_cache"
     artwork_max_size: int = 1200  # max dimension in pixels

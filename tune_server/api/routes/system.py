@@ -68,6 +68,8 @@ async def get_config():
         dsp_filter=settings.dsp_filter,
         dsp_impulse_response=settings.dsp_impulse_response,
         dsp_sample_rate=settings.dsp_sample_rate,
+        discogs_token_set=bool(settings.discogs_token),
+        enrich_on_scan=settings.enrich_on_scan,
     )
 
 
@@ -235,11 +237,16 @@ async def set_mode(request: dict):
 
 @router.post("/enrich", status_code=202)
 async def trigger_enrich():
-    """Trigger one immediate pass of the metadata enricher (MusicBrainz)."""
+    """Trigger one immediate pass of the metadata enricher (MusicBrainz + Discogs artist images)."""
     if not deps.enricher:
         raise HTTPException(status_code=503, detail="Enricher not available")
     await deps.enricher.enrich_now()
-    return {"status": "started"}
+    # Count artists without images
+    row = await deps.db.fetchone(
+        "SELECT COUNT(*) as cnt FROM artists WHERE image_path IS NULL OR image_path = ''"
+    )
+    remaining = row["cnt"] if row else 0
+    return {"status": "started", "artists_without_image": remaining}
 
 
 @router.get("/discover-servers")

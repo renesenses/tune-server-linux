@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
+import aiohttp
 import structlog
 
 from tune_server.db.engine import Database
 from tune_server.db.repository import AlbumRepo, ArtistRepo
 
 logger = structlog.get_logger()
+
+DISCOGS_API = "https://api.discogs.com"
+DISCOGS_UA = "TuneServer/0.5.2 +https://mozaiklabs.fr"
 
 # Normalize MusicBrainz tags to Discogs-style genres
 _GENRE_NORMALIZE = {
@@ -37,6 +42,50 @@ def normalize_genre(raw: str) -> str:
         return _GENRE_NORMALIZE[lower]
     # Capitalize if not found
     return raw.title()
+
+
+async def _fetch_discogs_artist_image(name: str, token: str, cache_dir: str) -> str | None:
+    """Search Discogs for an artist and download their image. Returns local cache path or None."""
+    headers = {
+        "Authorization": f"Discogs token={token}",
+        "User-Agent": DISCOGS_UA,
+    }
+    try:
+        async with aiohttp.ClientSession(headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as session:
+            # Search artist
+            async with session.get(f"{DISCOGS_API}/database/search", params={"q": name, "type": "artist", "per_page": 1}) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                results = data.get("results", [])
+                if not results:
+                    return None
+                artist_data = results[0]
+                cover_url = artist_data.get("cover_image") or artist_data.get("thumb")
+                discogs_id = str(artist_data.get("id", ""))
+                if not cover_url or "spacer.gif" in cover_url:
+                    return None
+
+            # Download image
+            async with session.get(cover_url) as img_resp:
+                if img_resp.status != 200:
+                    return None
+                img_data = await img_resp.read()
+                if len(img_data) < 1000:
+                    return None
+
+            # Save to cache
+            import hashlib
+            ext = "jpg"
+            hash_name = hashlib.md5(cover_url.encode()).hexdigest()
+            cache_path = Path(cache_dir) / f"{hash_name}.{ext}"
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_bytes(img_data)
+            logger.info("discogs_artist_image_saved", artist=name, path=str(cache_path), discogs_id=discogs_id)
+            return f"{cache_dir}/{hash_name}.{ext}"
+    except Exception:
+        logger.debug("discogs_artist_image_error", artist=name)
+        return None
 
 
 class MetadataEnricher:
@@ -100,6 +149,28 @@ class MetadataEnricher:
                 except Exception:
                     logger.debug("musicbrainz_lookup_failed", artist=artist.name)
                 await asyncio.sleep(1.2)
+
+            # Enrich artist images from Discogs
+            from tune_server.config import settings as _s
+            if _s.discogs_token:
+                no_image = await self._db.fetchall(
+                    "SELECT id, name FROM artists WHERE (image_path IS NULL OR image_path = '') LIMIT 20",
+                )
+                enriched_count = 0
+                for row in no_image:
+                    img_path = await _fetch_discogs_artist_image(
+                        row["name"], _s.discogs_token, _s.artwork_cache_dir
+                    )
+                    if img_path:
+                        await self._db.execute(
+                            "UPDATE artists SET image_path = ? WHERE id = ?",
+                            (img_path, row["id"]),
+                        )
+                        await self._db.commit()
+                        enriched_count += 1
+                    await asyncio.sleep(1.5)  # Discogs rate limit: ~1 req/sec
+                if enriched_count:
+                    logger.info("artist_images_enriched", count=enriched_count)
 
             # Enrich albums
             albums = await self._db.fetchall(
