@@ -9,12 +9,11 @@ import structlog
 from tune_server.audio.buffer import AsyncRingBuffer
 from tune_server.audio.decoder import FFmpegDecoder, IcyMetadataCallback
 from tune_server.audio.formats import AudioCapabilities, can_passthrough
-from tune_server.config import settings
 from tune_server.models import AudioFormat, AudioStreamInfo
 
 logger = structlog.get_logger()
 
-CHUNK_SIZE = max(settings.audio_buffer_kb * 1024, 8192)
+CHUNK_SIZE = 32768  # 32KB
 
 # 44.1 kHz family rates, preferred for DSD conversion (avoids SRC artefacts)
 _441_FAMILY = [352800, 176400, 88200, 44100]
@@ -101,7 +100,8 @@ class AudioPipeline:
             self._decisions.append(f"passthrough=False (seeking to {seek_ms}ms)")
 
         # Resample policy check
-        if not self._passthrough and settings.resample_policy == "never":
+        from tune_server.config import settings as _settings
+        if not self._passthrough and _settings.resample_policy == "never":
             needs_resample = sample_rate > self._capabilities.max_sample_rate or bit_depth > self._capabilities.max_bit_depth
             if needs_resample and source_format in self._capabilities.formats:
                 self._decisions.append(f"resample_policy=never — refusing incompatible rate/depth, forcing passthrough")
@@ -139,7 +139,7 @@ class AudioPipeline:
                 out_depth = min(bit_depth, self._capabilities.max_bit_depth)
 
                 # Integer ratio resampling preference
-                if settings.resample_policy == "integer_ratio" and out_rate != sample_rate:
+                if _settings.resample_policy == "integer_ratio" and out_rate != sample_rate:
                     integer_rates = [r for r in _441_FAMILY + [384000, 192000, 96000, 48000] if r <= self._capabilities.max_sample_rate and sample_rate % r == 0 or r % sample_rate == 0]
                     if integer_rates:
                         out_rate = max(r for r in integer_rates if r <= self._capabilities.max_sample_rate)
