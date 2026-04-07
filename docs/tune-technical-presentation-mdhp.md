@@ -1,6 +1,6 @@
 # TUNE — Technical Architecture for High-End Audio Integration
 
-*Prepared for Vincent Briet, Totaldac — April 2026*
+*Prepared for Antoine, La Maison du Haut-Parleur (Lyon) — April 2026*
 
 ---
 
@@ -62,7 +62,7 @@ A **multi-room music server** that unifies local libraries, network shares, and 
 
 ```mermaid
 graph LR
-    IPAD["📱 iPad<br/>Tune Server Mode"] -->|DLNA/UPnP| DAC["🔊 TotalDAC<br/>d1-twelve"]
+    IPAD["📱 iPad<br/>Tune Server Mode"] -->|DLNA/UPnP| DAC["🔊 High-End DAC"]
     IPAD -->|Tidal / Qobuz| DAC
     style IPAD fill:#1a1a2e,stroke:#ff6b35,color:#fff
     style DAC fill:#ff6b35,stroke:#fff,color:#fff
@@ -80,7 +80,7 @@ graph LR
 
 ```mermaid
 graph LR
-    IP["📱 iPhone<br/>Tune Server Mode<br/>+ Local Zone"] -->|DLNA/UPnP| DAC["🔊 TotalDAC<br/>d1-twelve"]
+    IP["📱 iPhone<br/>Tune Server Mode<br/>+ Local Zone"] -->|DLNA/UPnP| DAC["🔊 High-End DAC"]
     IP -->|Bluetooth| BT["🎧 Headphones"]
     IP -->|AirPlay| AP["🔊 AirPlay Speaker"]
     style IP fill:#1a1a2e,stroke:#ff6b35,color:#fff
@@ -99,7 +99,7 @@ graph LR
 graph LR
     IPAD["📱 iPad / iPhone<br/>Remote"] -->|REST API + WS| SRV["🖥️ Linux Server<br/>NAS · Tidal · Qobuz<br/>22,000+ tracks"]
     WEB["🌐 Web browser"] -->|REST API| SRV
-    SRV -->|DLNA| DAC["🔊 TotalDAC<br/>d1-twelve"]
+    SRV -->|DLNA| DAC["🔊 High-End DAC"]
     SRV -->|DLNA| SONOS["🔊 Sonos<br/>Room 2"]
     style SRV fill:#1a1a2e,stroke:#ff6b35,color:#fff
     style DAC fill:#ff6b35,stroke:#fff,color:#fff
@@ -118,7 +118,7 @@ graph LR
 ```mermaid
 graph LR
     CTRL["📱 Any control<br/>device"] -->|API| SRV["🖥️ Linux Server<br/>Multi-room sync"]
-    SRV -->|DLNA| TOT["🔊 TotalDAC<br/>Salon"]
+    SRV -->|DLNA| TOT["🔊 High-End DAC<br/>Salon"]
     SRV -->|DLNA| MICRO["🔊 Micromega<br/>Bureau"]
     SRV -->|AirPlay| AP["🔊 AirPlay<br/>Cuisine"]
     SRV -->|USB| USB["🎧 USB DAC<br/>Casque"]
@@ -137,7 +137,7 @@ graph LR
 
 ```mermaid
 graph LR
-    MAC["🖥️ Mac<br/>tune-server + Tune.app"] -->|USB| DAC["🔊 TotalDAC<br/>USB input"]
+    MAC["🖥️ Mac<br/>tune-server + Tune.app"] -->|USB| DAC["🔊 High-End DAC<br/>USB input"]
     style MAC fill:#1a1a2e,stroke:#ff6b35,color:#fff
     style DAC fill:#ff6b35,stroke:#fff,color:#fff
 ```
@@ -152,7 +152,7 @@ graph LR
 ```mermaid
 graph LR
     PHONE["📱 Phone / Web"] -->|WiFi| RPI["🍓 Raspberry Pi 5<br/>tune-server · headless<br/>SSD + NAS"]
-    RPI -->|USB| DAC["🔊 TotalDAC<br/>USB input"]
+    RPI -->|USB| DAC["🔊 High-End DAC<br/>USB input"]
     style RPI fill:#1a1a2e,stroke:#ff6b35,color:#fff
     style DAC fill:#ff6b35,stroke:#fff,color:#fff
 ```
@@ -170,7 +170,7 @@ graph LR
     IP["📱 iPhone<br/>remote"] -->|API| SRV["🖥️ Linux Server"]
     SRV -->|AirPlay| HP["🔊 HomePod<br/>Kitchen"]
     SRV -->|AirPlay| ATV["📺 Apple TV<br/>Living room"]
-    SRV -->|DLNA| DAC["🔊 TotalDAC<br/>Salon"]
+    SRV -->|DLNA| DAC["🔊 High-End DAC<br/>Salon"]
     style SRV fill:#1a1a2e,stroke:#ff6b35,color:#fff
     style DAC fill:#ff6b35,stroke:#fff,color:#fff
 ```
@@ -184,7 +184,7 @@ graph LR
 
 ```mermaid
 graph LR
-    AND["🤖 Android<br/>Tune app<br/>embedded server"] -->|DLNA| DAC["🔊 TotalDAC"]
+    AND["🤖 Android<br/>Tune app<br/>embedded server"] -->|DLNA| DAC["🔊 High-End DAC"]
     style AND fill:#1a1a2e,stroke:#ff6b35,color:#fff
     style DAC fill:#ff6b35,stroke:#fff,color:#fff
 ```
@@ -198,7 +198,7 @@ graph LR
 
 ```mermaid
 graph LR
-    WIN["🖥️ Windows PC<br/>tune-server · tray app<br/>web UI :8888"] -->|USB / DLNA| DAC["🔊 TotalDAC"]
+    WIN["🖥️ Windows PC<br/>tune-server · tray app<br/>web UI :8888"] -->|USB / DLNA| DAC["🔊 High-End DAC"]
     style WIN fill:#1a1a2e,stroke:#ff6b35,color:#fff
     style DAC fill:#ff6b35,stroke:#fff,color:#fff
 ```
@@ -212,7 +212,7 @@ graph LR
 
 ```mermaid
 graph LR
-    NAS["🗄️ Synology NAS<br/>Docker · tune-server<br/>music on NAS"] -->|DLNA| DAC["🔊 TotalDAC"]
+    NAS["🗄️ Synology NAS<br/>Docker · tune-server<br/>music on NAS"] -->|DLNA| DAC["🔊 High-End DAC"]
     style NAS fill:#1a1a2e,stroke:#ff6b35,color:#fff
     style DAC fill:#ff6b35,stroke:#fff,color:#fff
 ```
@@ -363,7 +363,7 @@ graph LR
 ```mermaid
 sequenceDiagram
     participant T as 🖥️ Tune Server
-    participant R as 🔊 Totaldac (DLNA)
+    participant R as 🔊 DAC (DLNA)
 
     Note over T,R: Discovery
     T->>R: SSDP M-SEARCH
@@ -425,7 +425,7 @@ else:
 ### Zone Model
 
 ```
-Zone 1: "Salon" (DLNA → Totaldac d1-twelve)
+Zone 1: "Salon" (DLNA → High-End DAC)
   ├─ Queue: [Track A, Track B, Track C]
   ├─ Volume: 0.65
   └─ State: Playing (position: 2:34)
@@ -477,7 +477,7 @@ Group "Whole House" (leader: Zone 1)
 - Add RAVENNA/AES67 network audio protocol support
 - PTP (IEEE 1588) clock synchronization — sub-microsecond precision
 - Professional-grade network audio transport
-- Direct integration with Totaldac's network input
+- Direct integration with high-end DAC network input
 
 #### D. Roon-style RAAT Protocol
 - Implement a custom audio transport with:
@@ -497,7 +497,7 @@ Group "Whole House" (leader: Zone 1)
 
 **Current:** FFmpeg SoX resampler when needed.
 
-**Proposed for Totaldac:**
+**Proposed for high-end DACs:**
 - Option for no resampling ever (refuse incompatible formats)
 - SoX "Very High Quality" linear-phase resampling as fallback
 - User-configurable resampling algorithm
@@ -513,7 +513,7 @@ Group "Whole House" (leader: Zone 1)
 
 ### 6.5 USB Audio Class Support
 
-**For direct Totaldac USB input:**
+**For direct USB DAC input:**
 - ALSA/CoreAudio exclusive mode (bypass OS mixer)
 - USB Audio Class 2.0 with async clock recovery
 - Direct DSD over PCM (DoP) or native DSD via USB
@@ -534,7 +534,7 @@ Group "Whole House" (leader: Zone 1)
   ```
   Source: Qobuz FLAC 96/24
   → Transport: HTTP Direct URL Passthrough
-  → Renderer: Totaldac d1-twelve (DLNA)
+  → Renderer: High-End DAC (DLNA)
   → Clock: Internal (renderer)
   → Processing: None (bit-perfect)
   → Output: 96kHz / 24-bit / 2ch
@@ -543,33 +543,33 @@ Group "Whole House" (leader: Zone 1)
 
 ---
 
-## 7. Totaldac Integration Proposal
+## 7. Hardware Partnership Proposal
 
 ### Phase 1: Basic DLNA (Already Working)
-- Tune discovers Totaldac via SSDP
+- Tune discovers any DLNA/UPnP renderer via SSDP
 - FLAC/WAV/DSD playback via standard UPnP
 - Volume control via SetVolume
 - Metadata display on device
 
 ### Phase 2: Enhanced Integration
-- Custom device profile for Totaldac (optimal settings)
+- Custom device profiles per manufacturer (optimal settings)
 - DSD native detection and passthrough
 - Gapless via SetNextAVTransportURI
 - Signal path reporting
 
-### Phase 3: Totaldac-Native Protocol
+### Phase 3: Native Protocol
 - Direct TCP audio transport (bypass HTTP overhead)
 - PTP clock synchronization
 - Native DSD (not DoP)
-- Remote control API for Totaldac hardware
-- Totaldac-branded Tune interface
+- Remote control API for partner hardware
+- Co-branded Tune interface
 
 ### Phase 4: Joint Product
-- Tune Server embedded in Totaldac hardware
+- Tune Server embedded in partner hardware
 - Pre-configured Linux image
 - Hardware-accelerated audio pipeline
 - Word clock integration
-- Totaldac d1-twelve with Tune built-in
+- Turnkey audiophile streamer solution
 
 ---
 
@@ -586,7 +586,7 @@ graph TD
     end
 
     subgraph Outputs["🔊 Audio Outputs"]
-        TOT["Totaldac d1-twelve<br/>DLNA/USB"]
+        TOT["High-End DAC<br/>DLNA/USB"]
         AIR["AirPlay Speakers"]
         SON["Sonos · DLNA"]
     end
@@ -629,7 +629,7 @@ graph LR
         USB["USB DAC"]
     end
 
-    DAC["🎵 Totaldac d1-twelve<br/>DAC → Amp → Speakers"]
+    DAC["🎵 High-End DAC<br/>DAC → Amp → Speakers"]
 
     Sources --> DEC --> PROC --> Output --> DAC
 
@@ -685,7 +685,7 @@ gantt
     RAVENNA / AES67 output              :2026-05-05, 2026-06-15
     USB Audio Class 2.0 exclusive mode  :2026-05-05, 2026-05-30
     Room correction / DSP plugin chain  :2026-06-01, 2026-07-15
-    Hardware partnerships (Totaldac)    :2026-05-15, 2026-07-30
+    Hardware partnerships    :2026-05-15, 2026-07-30
     Embedded Linux (Raspberry Pi)       :2026-06-01, 2026-07-15
 ```
 

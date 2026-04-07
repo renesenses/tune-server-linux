@@ -106,18 +106,21 @@ class RadioMetadataPoller:
                             "cover_url": np.cover_url,
                         })
 
-                    self._event_bus.emit_nowait(Event(
-                        type=EventType.PLAYBACK_METADATA,
-                        data={
-                            "zone_id": self._zone_id,
-                            "title": np.title,
-                            "artist_name": np.artist,
-                            "album_title": "FIP",
-                            "cover_path": np.cover_url,
-                            "source": "radio",
-                        },
-                        source="radio_metadata",
-                    ))
+                    # Event is emitted by the track_callback (on_icy_metadata)
+                    # which handles station logo fallback. Only emit here if no callback.
+                    if not self._track_callback:
+                        self._event_bus.emit_nowait(Event(
+                            type=EventType.PLAYBACK_METADATA,
+                            data={
+                                "zone_id": self._zone_id,
+                                "title": np.title,
+                                "artist_name": np.artist,
+                                "album_title": "FIP",
+                                "cover_path": np.cover_url,
+                                "source": "radio",
+                            },
+                            source="radio_metadata",
+                        ))
                 await asyncio.sleep(POLL_INTERVAL)
         except asyncio.CancelledError:
             pass

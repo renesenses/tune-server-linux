@@ -670,6 +670,7 @@ class Player:
                     "title": current.title,
                     "artist_name": current.artist_name,
                     "album_title": current.album_title,
+                    "cover_path": current.cover_path,
                     "source": "radio",
                 },
                 source="player",
