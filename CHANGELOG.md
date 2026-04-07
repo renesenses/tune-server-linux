@@ -2,6 +2,28 @@
 
 All notable changes to Tune Server.
 
+## v0.5.2 — 2026-04-07
+
+### Added
+- **Signal Path Display**: Roon-style modal showing complete audio chain (source → transport → output) with bit-perfect indicator
+- **Bit-Perfect Verification**: MD5 checksum on passthrough, pipeline decision log
+- **Precision Timing Headers**: X-Tune-SampleRate, BitDepth, Timestamp (ns), BitPerfect on all HTTP streams
+- **Resampling Policy**: auto, never, integer_ratio — configurable via Settings
+- **ALSA Exclusive Mode**: bypass OS mixer for bit-perfect USB DAC output, configurable latency
+- **DSP Processing Chain**: FFmpeg filter support (EQ, convolution), impulse response for room correction
+- **Audio Quality Settings UI**: new section in Settings for all audio parameters
+
+### Fixed
+- **Port 8080 zombie**: reuse_address + reuse_port on HTTP streamer, systemd KillMode=mixed
+- **Radio cover in playback**: station logo persists after ICY metadata update
+- **Playlists loading indicator**: spinner visible during streaming playlists fetch (was in wrong component)
+
+### Web Client
+- **Signal path dot**: in transport bar controls, green (bit-perfect) / yellow (transcoded)
+- **Signal path modal**: Roon-inspired card with circular icons, color-coded lines, expandable decisions
+- **Checksum verified badge**: displayed in signal path modal
+- **Full FR/EN i18n**: all signal path and audio settings translated
+
 ## v0.5.1 — 2026-04-06
 
 ### Fixed
