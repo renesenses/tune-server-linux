@@ -219,7 +219,7 @@ class TuneServer:
             async def _on_scan_complete(event: Event) -> None:
                 logger.info("auto_enrich_after_scan")
                 await self._enricher.enrich_now()
-            self._event_bus.subscribe(EventType.LIBRARY_SCAN_COMPLETED, _on_scan_complete)
+            self._event_bus.on(EventType.LIBRARY_SCAN_COMPLETED, _on_scan_complete)
 
         # Initial scan
         if settings.scan_on_startup:
