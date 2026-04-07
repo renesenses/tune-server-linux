@@ -89,6 +89,15 @@ class Settings(BaseSettings):
     max_sample_rate: int = 192000
     max_bit_depth: int = 24
 
+    # Resampling policy: "auto" (resample if needed), "never" (refuse incompatible),
+    # "integer_ratio" (prefer 44.1→88.2→176.4, refuse non-integer ratios)
+    resample_policy: str = "auto"
+
+    # Buffer size in KB for audio pipeline (per-chunk read size)
+    audio_buffer_kb: int = 32  # 32KB default, increase for slow networks
+    # Pre-buffer duration in seconds before starting playback
+    prebuffer_seconds: float = 0.5
+
     # Artwork
     artwork_cache_dir: str = "artwork_cache"
     artwork_max_size: int = 1200  # max dimension in pixels

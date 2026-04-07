@@ -153,6 +153,9 @@ class SignalPath(BaseModel):
     bit_perfect: bool = False
     steps: list[SignalPathStep] = Field(default_factory=list)
     summary: str = ""  # e.g. "Bit-Perfect" or "Transcoded (FLAC→WAV 96→48kHz)"
+    decisions: list[str] = Field(default_factory=list)
+    checksum: str | None = None  # MD5 of audio data (passthrough only)
+    checksum_verified: bool | None = None  # True if source==output hash
 
 
 class DiscoveredDevice(BaseModel):

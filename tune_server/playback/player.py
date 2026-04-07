@@ -734,7 +734,25 @@ class Player:
         else:
             summary = f"Transcoded — {fmt_name(stream_info.format)} {stream_info.sample_rate//1000}kHz/{stream_info.bit_depth}bit"
 
-        return SignalPath(bit_perfect=bit_perfect, steps=steps, summary=summary)
+        # Add pipeline decisions if available
+        decisions: list[str] = []
+        checksum: str | None = None
+        checksum_verified: bool | None = None
+
+        if self._pipeline:
+            decisions = self._pipeline.decisions
+            if self._pipeline.source_hash:
+                checksum = self._pipeline.source_hash
+                checksum_verified = self._pipeline.source_hash == self._pipeline.output_hash
+
+        return SignalPath(
+            bit_perfect=bit_perfect,
+            steps=steps,
+            summary=summary,
+            decisions=decisions,
+            checksum=checksum,
+            checksum_verified=checksum_verified,
+        )
 
     def _make_icy_callback(self, track: Track):
         """Create a callback that updates the current track with ICY metadata."""
