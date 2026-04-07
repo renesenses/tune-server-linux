@@ -111,6 +111,7 @@ class ZoneInstance:
             current_track=self._player.current_track,
             position_ms=self._player.position_ms,
             queue_length=self._player.queue.length,
+            signal_path=self._player.signal_path,
         )
 
     async def _save_queue(self, tracks: list[Track], position: int) -> None:
