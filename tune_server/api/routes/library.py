@@ -178,7 +178,7 @@ async def update_track(track_id: int, req: TrackUpdateRequest):
             album = await deps.album_repo.get(req.album_id)
             if album:
                 tag_updates["album"] = album.title
-        if tag_updates:
+        if tag_updates and not settings.metadata_readonly:
             await asyncio.to_thread(write_tags, track.file_path, **tag_updates)
 
     # Genre and year belong to the album, not the track
@@ -224,8 +224,8 @@ async def update_album(album_id: int, req: AlbumUpdateRequest):
         raise HTTPException(status_code=404, detail="Album not found")
     updates = req.model_dump(exclude_none=True)
 
-    # Write album tag to all tracks in the album
-    if req.title is not None:
+    # Write album tag to all tracks in the album (unless readonly)
+    if req.title is not None and not settings.metadata_readonly:
         tracks = await deps.track_repo.list_by_album(album_id)
         for t in tracks:
             if t.file_path and t.source == "local":

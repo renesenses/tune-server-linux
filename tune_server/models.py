@@ -555,8 +555,10 @@ class SystemConfigResponse(BaseModel):
     dsp_filter: str = ""
     dsp_impulse_response: str = ""
     dsp_sample_rate: int = 0
+    # Metadata
+    metadata_readonly: bool = False
     # Enrichment
-    discogs_token_set: bool = False  # true if token is configured (don't expose token)
+    discogs_token_set: bool = False
     enrich_on_scan: bool = True
     artists_without_image: int = 0
 

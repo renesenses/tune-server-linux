@@ -68,6 +68,7 @@ async def get_config():
         dsp_filter=settings.dsp_filter,
         dsp_impulse_response=settings.dsp_impulse_response,
         dsp_sample_rate=settings.dsp_sample_rate,
+        metadata_readonly=settings.metadata_readonly,
         discogs_token_set=bool(settings.discogs_token),
         enrich_on_scan=settings.enrich_on_scan,
     )

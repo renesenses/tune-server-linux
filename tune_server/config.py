@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     # DSP sample rate (0 = use source rate)
     dsp_sample_rate: int = 0
 
+    # Metadata
+    metadata_readonly: bool = False  # When True, Tune never writes tags to audio files
+
     # Enrichment
     discogs_token: str = ""  # Personal Discogs API token for artist images
     enrich_on_scan: bool = True  # Auto-enrich after library scan
