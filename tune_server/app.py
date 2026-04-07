@@ -163,6 +163,9 @@ class TuneServer:
             await self._mount_manager.initialize()
             deps.mount_manager = self._mount_manager
 
+        # WebSocket manager — start BEFORE zones so events are never lost
+        self._ws_manager = await setup_websocket_manager(self._event_bus)
+
         # Brief wait for initial SSDP scan to find devices
         await asyncio.sleep(2)
 
@@ -194,9 +197,6 @@ class TuneServer:
         deps.queue_repo = queue_repo
         deps.zone_repo = zone_repo
         deps.radio_repo = radio_repo
-
-        # WebSocket manager
-        self._ws_manager = await setup_websocket_manager(self._event_bus)
 
         # Start sync engine
         await self._sync_engine.start()

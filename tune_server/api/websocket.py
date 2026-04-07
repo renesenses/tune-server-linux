@@ -44,6 +44,18 @@ class WebSocketManager:
         await websocket.accept()
         self._subscriptions[websocket] = {"*"}  # Default: receive all events
         logger.info("websocket_connected", count=len(self._subscriptions))
+
+        # Replay recent playback events so late-joining clients get current state
+        for event in self._event_bus.get_recent_events():
+            try:
+                msg = json.dumps({
+                    "type": event.type.value,
+                    "data": event.data,
+                    "source": event.source,
+                })
+                await websocket.send_text(msg)
+            except Exception:
+                break
         return True
 
     async def disconnect(self, websocket: WebSocket) -> None:

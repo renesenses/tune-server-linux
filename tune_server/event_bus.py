@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Coroutine
@@ -80,10 +80,22 @@ class Event:
 Listener = Callable[[Event], Coroutine[Any, Any, None]]
 
 
+_BUFFERED_TYPES = {
+    EventType.PLAYBACK_STARTED,
+    EventType.PLAYBACK_PAUSED,
+    EventType.PLAYBACK_RESUMED,
+    EventType.PLAYBACK_STOPPED,
+    EventType.PLAYBACK_TRACK_CHANGED,
+    EventType.PLAYBACK_METADATA,
+    EventType.ZONE_VOLUME_CHANGED,
+}
+
+
 class EventBus:
     def __init__(self) -> None:
         self._listeners: dict[EventType, list[Listener]] = defaultdict(list)
         self._global_listeners: list[Listener] = []
+        self._recent_events: deque[Event] = deque(maxlen=50)
 
     def on(self, event_type: EventType, listener: Listener) -> Callable[[], None]:
         self._listeners[event_type].append(listener)
@@ -101,7 +113,14 @@ class EventBus:
 
         return unsubscribe
 
+    def get_recent_events(self) -> list[Event]:
+        """Get recent buffered events (for WebSocket replay to late-joining clients)."""
+        return list(self._recent_events)
+
     async def emit(self, event: Event) -> None:
+        if event.type in _BUFFERED_TYPES:
+            self._recent_events.append(event)
+
         listeners = list(self._listeners.get(event.type, []))
         listeners.extend(self._global_listeners)
 
