@@ -134,6 +134,28 @@ class Zone(BaseModel):
     current_track: Track | None = None
     position_ms: int = 0
     queue_length: int = 0
+    signal_path: SignalPath | None = None
+
+
+class SignalPathStep(BaseModel):
+    """A single step in the audio signal path."""
+    stage: str  # "source", "transport", "decode", "resample", "output"
+    description: str
+    format: str | None = None
+    sample_rate: int | None = None
+    bit_depth: int | None = None
+    channels: int | None = None
+    detail: str | None = None
+
+
+class SignalPath(BaseModel):
+    """Complete signal path from source to output."""
+    bit_perfect: bool = False
+    steps: list[SignalPathStep] = Field(default_factory=list)
+    summary: str = ""  # e.g. "Bit-Perfect" or "Transcoded (FLAC→WAV 96→48kHz)"
+    decisions: list[str] = Field(default_factory=list)
+    checksum: str | None = None  # MD5 of audio data (passthrough only)
+    checksum_verified: bool | None = None  # True if source==output hash
 
 
 class DiscoveredDevice(BaseModel):

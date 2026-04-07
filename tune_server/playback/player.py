@@ -12,7 +12,7 @@ from pathlib import Path
 
 from tune_server.audio.pipeline import AudioPipeline
 from tune_server.event_bus import Event, EventBus, EventType
-from tune_server.models import AudioFormat, AudioStreamInfo, PlaybackState, Source, Track
+from tune_server.models import AudioFormat, AudioStreamInfo, PlaybackState, SignalPath, SignalPathStep, Source, Track
 from tune_server.outputs.base import OutputTarget
 from tune_server.playback.gapless import GaplessHandler
 from tune_server.playback.queue import PlayQueue
@@ -45,6 +45,7 @@ class Player:
         self._radio_poller = None
         self._skip_in_progress = False
         self._lock = asyncio.Lock()
+        self._signal_path: "SignalPath | None" = None
 
     @property
     def state(self) -> PlaybackState:
@@ -68,6 +69,10 @@ class Player:
     @property
     def volume(self) -> float:
         return self._volume
+
+    @property
+    def signal_path(self) -> SignalPath | None:
+        return self._signal_path
 
     def set_output(self, output: OutputTarget) -> None:
         self._output = output
@@ -184,6 +189,7 @@ class Player:
                 return
 
             # No pipeline needed — renderer fetches directly
+            self._signal_path = self._build_signal_path(track, stream_info, passthrough_type="direct_url" if not _native_dsd else "native_dsd")
             self._state = PlaybackState.PLAYING
             self._position_ms = 0
             self._position_start_time = time.monotonic()
@@ -255,6 +261,8 @@ class Player:
         # Start feeding output
         self._playback_task = asyncio.create_task(self._playback_loop())
 
+        passthrough_type = "file_passthrough" if self._pipeline and self._pipeline.is_passthrough else None
+        self._signal_path = self._build_signal_path(track, stream_info, passthrough_type=passthrough_type)
         self._state = PlaybackState.PLAYING
         self._position_ms = seek_ms
         self._position_start_time = time.monotonic()
@@ -521,6 +529,7 @@ class Player:
             await self._stop_pipeline()
             self._state = PlaybackState.STOPPED
             self._position_ms = 0
+            self._signal_path = None
 
             if self._output:
                 await self._output.stop()
@@ -626,6 +635,124 @@ class Player:
                 data={"zone_id": self._zone_id, "volume": self._volume},
                 source="player",
             ))
+
+    def _build_signal_path(self, track: Track, stream_info: AudioStreamInfo, passthrough_type: str | None = None) -> SignalPath:
+        """Build a SignalPath describing the complete audio chain."""
+        steps: list[SignalPathStep] = []
+        src_fmt = track.format or "unknown"
+        src_rate = track.sample_rate or 44100
+        src_depth = track.bit_depth or 16
+        src_ch = track.channels or 2
+        out_type = self._output.__class__.__name__ if self._output else "unknown"
+        output_name = getattr(self._output, "name", out_type)
+
+        def fmt_name(f) -> str:
+            """Get clean format name from AudioFormat enum or string."""
+            return f.value.upper() if hasattr(f, 'value') else str(f).upper()
+
+        # Step 1: Source
+        source_label = track.source.value.capitalize() if track.source else "Local"
+        if track.source == Source.RADIO:
+            source_detail = "Live radio stream"
+        elif track.source in (Source.TIDAL, Source.QOBUZ):
+            source_detail = f"Streaming CDN ({track.source.value.capitalize()})"
+        else:
+            source_detail = "Local file" if track.file_path and not track.file_path.startswith("http") else "Network"
+
+        steps.append(SignalPathStep(
+            stage="source",
+            description=f"{source_label}: {fmt_name(src_fmt)}",
+            format=fmt_name(src_fmt),
+            sample_rate=src_rate,
+            bit_depth=src_depth,
+            channels=src_ch,
+            detail=source_detail,
+        ))
+
+        # Step 2: Transport / Processing
+        bit_perfect = False
+        if passthrough_type == "direct_url":
+            steps.append(SignalPathStep(
+                stage="transport",
+                description="Direct URL Passthrough",
+                detail="Renderer fetches audio directly from source — zero processing",
+            ))
+            bit_perfect = True
+        elif passthrough_type == "native_dsd":
+            steps.append(SignalPathStep(
+                stage="transport",
+                description="Native DSD Passthrough",
+                detail="DSD stream served bit-perfect to DSD-capable renderer",
+            ))
+            bit_perfect = True
+        elif passthrough_type == "file_passthrough":
+            steps.append(SignalPathStep(
+                stage="transport",
+                description="File Passthrough",
+                format=fmt_name(stream_info.format),
+                sample_rate=stream_info.sample_rate,
+                bit_depth=stream_info.bit_depth,
+                channels=stream_info.channels,
+                detail="Native format streamed without re-encoding",
+            ))
+            bit_perfect = True
+        else:
+            # Transcoded
+            out_fmt = fmt_name(stream_info.format)
+            resampled = stream_info.sample_rate != src_rate or stream_info.bit_depth != src_depth
+            desc_parts = []
+            if fmt_name(src_fmt) != out_fmt:
+                desc_parts.append(f"{fmt_name(src_fmt)} → {out_fmt}")
+            if resampled:
+                desc_parts.append(f"{src_rate//1000}kHz/{src_depth}bit → {stream_info.sample_rate//1000}kHz/{stream_info.bit_depth}bit")
+            description = "Transcode: " + ", ".join(desc_parts) if desc_parts else "Transcode"
+
+            steps.append(SignalPathStep(
+                stage="decode",
+                description=description,
+                format=out_fmt,
+                sample_rate=stream_info.sample_rate,
+                bit_depth=stream_info.bit_depth,
+                channels=stream_info.channels,
+                detail="FFmpeg decode + re-encode" + (" with resampling" if resampled else ""),
+            ))
+
+        # Step 3: Output
+        steps.append(SignalPathStep(
+            stage="output",
+            description=f"{output_name}",
+            format=fmt_name(stream_info.format),
+            sample_rate=stream_info.sample_rate,
+            bit_depth=stream_info.bit_depth,
+            channels=stream_info.channels,
+            detail=out_type.replace("Output", "").replace("output", ""),
+        ))
+
+        # Summary
+        if bit_perfect:
+            summary = f"Bit-Perfect — {fmt_name(src_fmt)} {src_rate//1000}kHz/{src_depth}bit"
+        else:
+            summary = f"Transcoded — {fmt_name(stream_info.format)} {stream_info.sample_rate//1000}kHz/{stream_info.bit_depth}bit"
+
+        # Add pipeline decisions if available
+        decisions: list[str] = []
+        checksum: str | None = None
+        checksum_verified: bool | None = None
+
+        if self._pipeline:
+            decisions = self._pipeline.decisions
+            if self._pipeline.source_hash:
+                checksum = self._pipeline.source_hash
+                checksum_verified = self._pipeline.source_hash == self._pipeline.output_hash
+
+        return SignalPath(
+            bit_perfect=bit_perfect,
+            steps=steps,
+            summary=summary,
+            decisions=decisions,
+            checksum=checksum,
+            checksum_verified=checksum_verified,
+        )
 
     def _make_icy_callback(self, track: Track):
         """Create a callback that updates the current track with ICY metadata."""

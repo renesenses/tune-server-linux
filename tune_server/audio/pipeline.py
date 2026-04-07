@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 
 import structlog
@@ -12,7 +13,7 @@ from tune_server.models import AudioFormat, AudioStreamInfo
 
 logger = structlog.get_logger()
 
-CHUNK_SIZE = 32768  # 32KB — matches decoder chunk size
+CHUNK_SIZE = 32768  # 32KB
 
 # 44.1 kHz family rates, preferred for DSD conversion (avoids SRC artefacts)
 _441_FAMILY = [352800, 176400, 88200, 44100]
@@ -40,6 +41,9 @@ class AudioPipeline:
         icy_callback: IcyMetadataCallback | None = None,
     ) -> None:
         self._capabilities = target_capabilities
+        self._decisions: list[str] = []
+        self._source_hash: str | None = None
+        self._output_hash: str | None = None
         self._icy_callback = icy_callback
         self._decoder: FFmpegDecoder | None = None
         self._output_buffer = AsyncRingBuffer(max_chunks=512)
@@ -59,6 +63,18 @@ class AudioPipeline:
     def is_passthrough(self) -> bool:
         return self._passthrough
 
+    @property
+    def decisions(self) -> list[str]:
+        return self._decisions
+
+    @property
+    def source_hash(self) -> str | None:
+        return self._source_hash
+
+    @property
+    def output_hash(self) -> str | None:
+        return self._output_hash
+
     async def start(
         self,
         file_path: str,
@@ -72,15 +88,27 @@ class AudioPipeline:
         self._passthrough = can_passthrough(
             source_format, sample_rate, bit_depth, self._capabilities
         )
+        self._decisions.append(f"can_passthrough={self._passthrough} (format={source_format}, rate={sample_rate}, depth={bit_depth})")
 
         _is_url = file_path.startswith("http://") or file_path.startswith("https://")
         if _is_url:
             self._passthrough = False
+            self._decisions.append("passthrough=False (HTTP/HTTPS stream requires decode)")
 
         if seek_ms > 0:
             self._passthrough = False
+            self._decisions.append(f"passthrough=False (seeking to {seek_ms}ms)")
+
+        # Resample policy check
+        from tune_server.config import settings as _settings
+        if not self._passthrough and _settings.resample_policy == "never":
+            needs_resample = sample_rate > self._capabilities.max_sample_rate or bit_depth > self._capabilities.max_bit_depth
+            if needs_resample and source_format in self._capabilities.formats:
+                self._decisions.append(f"resample_policy=never — refusing incompatible rate/depth, forcing passthrough")
+                self._passthrough = True
 
         if self._passthrough:
+            self._decisions.append(f"PASSTHROUGH: {source_format} {sample_rate}Hz/{bit_depth}bit — no processing")
             logger.info(
                 "pipeline_passthrough",
                 format=source_format,
@@ -104,21 +132,32 @@ class AudioPipeline:
             if is_dsd:
                 # DSD: use 44.1kHz-family rate to avoid sample-rate conversion artefacts
                 out_rate = _best_dsd_rate(self._capabilities.max_sample_rate)
-                # DSD is 1-bit; always decode to 24-bit for maximum dynamic range
                 out_depth = min(24, self._capabilities.max_bit_depth)
+                self._decisions.append(f"DSD→PCM: rate={out_rate}Hz (44.1kHz family), depth={out_depth}bit")
             else:
                 out_rate = min(sample_rate, self._capabilities.max_sample_rate)
                 out_depth = min(bit_depth, self._capabilities.max_bit_depth)
+
+                # Integer ratio resampling preference
+                if _settings.resample_policy == "integer_ratio" and out_rate != sample_rate:
+                    integer_rates = [r for r in _441_FAMILY + [384000, 192000, 96000, 48000] if r <= self._capabilities.max_sample_rate and sample_rate % r == 0 or r % sample_rate == 0]
+                    if integer_rates:
+                        out_rate = max(r for r in integer_rates if r <= self._capabilities.max_sample_rate)
+                        self._decisions.append(f"integer_ratio: {sample_rate}→{out_rate}Hz")
+
+                if out_rate != sample_rate:
+                    self._decisions.append(f"resample: {sample_rate}→{out_rate}Hz")
+                if out_depth != bit_depth:
+                    self._decisions.append(f"bit_depth: {bit_depth}→{out_depth}bit")
 
             # Ensure minimum 16-bit (DSD is 1-bit, FFmpeg outputs min s16le)
             if out_depth < 16:
                 out_depth = 16
 
             # For URL sources, prefer FLAC over WAV if target supports it.
-            # Some DLNA renderers (e.g. Micromega) can't handle streaming WAV
-            # (no Content-Length) but handle FLAC streams fine.
             use_flac = _is_url and AudioFormat.FLAC in self._capabilities.formats
             out_format = AudioFormat.FLAC if use_flac else AudioFormat.WAV
+            self._decisions.append(f"TRANSCODE: {source_format}→{out_format} {out_rate}Hz/{out_depth}bit (flac_encode={use_flac})")
 
             logger.info(
                 "pipeline_decode",
@@ -155,13 +194,18 @@ class AudioPipeline:
     async def _passthrough_loop(self, file_path: str) -> None:
         try:
             path = Path(file_path)
-            # Stream file bytes directly
+            hasher = hashlib.md5()
             with open(path, "rb") as f:
                 while True:
                     chunk = await asyncio.to_thread(f.read, CHUNK_SIZE)
                     if not chunk:
                         break
+                    hasher.update(chunk)
                     await self._output_buffer.put(chunk)
+            h = hasher.hexdigest()
+            self._source_hash = h
+            self._output_hash = h  # passthrough: identical
+            logger.info("passthrough_checksum", hash=h, file=path.name)
         except asyncio.CancelledError:
             pass
         except Exception:
