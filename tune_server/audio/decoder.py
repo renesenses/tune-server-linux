@@ -59,6 +59,24 @@ class FFmpegDecoder:
         else:
             return "s32le"
 
+    def _build_dsp_filters(self) -> str:
+        """Build FFmpeg -af filter string from DSP settings."""
+        from tune_server.config import settings as _s
+        if not _s.dsp_enabled:
+            return ""
+        parts: list[str] = []
+        # Convolution (room correction impulse response)
+        if _s.dsp_impulse_response:
+            ir_path = _s.dsp_impulse_response.replace("'", "'\\''")
+            parts.append(f"afir=dry=10:wet=10:ir='{ir_path}'")
+        # Custom filter string (e.g. equalizer, bass, treble)
+        if _s.dsp_filter:
+            parts.append(_s.dsp_filter)
+        # Target sample rate override
+        if _s.dsp_sample_rate > 0:
+            parts.append(f"aresample={_s.dsp_sample_rate}")
+        return ",".join(parts)
+
     def _build_cmd(self, seek_ms: int = 0) -> list[str]:
         # Use 'info' loglevel for HTTP streams to capture ICY metadata from stderr
         loglevel = "info" if self._is_http_stream and self._icy_callback else "error"
@@ -73,6 +91,11 @@ class FFmpegDecoder:
             cmd.extend(["-ss", f"{seconds:.3f}"])
 
         cmd.extend(["-i", self._file_path])
+
+        # DSP filter chain (EQ, convolution, room correction)
+        af_filters = self._build_dsp_filters()
+        if af_filters:
+            cmd.extend(["-af", af_filters])
 
         if self._output_format == AudioFormat.FLAC:
             # Transcode to FLAC — lossless, low latency

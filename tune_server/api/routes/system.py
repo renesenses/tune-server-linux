@@ -59,6 +59,15 @@ async def get_config():
         db_pool_min=settings.db_pool_min if settings.db_engine == "postgres" else None,
         db_pool_max=settings.db_pool_max if settings.db_engine == "postgres" else None,
         db_connected=deps.db is not None,
+        resample_policy=settings.resample_policy,
+        audio_buffer_kb=settings.audio_buffer_kb,
+        prebuffer_seconds=settings.prebuffer_seconds,
+        local_exclusive_mode=settings.local_exclusive_mode,
+        local_latency_ms=settings.local_latency_ms,
+        dsp_enabled=settings.dsp_enabled,
+        dsp_filter=settings.dsp_filter,
+        dsp_impulse_response=settings.dsp_impulse_response,
+        dsp_sample_rate=settings.dsp_sample_rate,
     )
 
 

@@ -27,6 +27,7 @@ class LocalOutput(OutputTarget):
         self._recovery_attempts = 0
         self._start_time: float = 0.0
         self._elapsed_before_pause: float = 0.0
+        self._exclusive: bool = False
 
     @property
     def name(self) -> str:
@@ -56,6 +57,7 @@ class LocalOutput(OutputTarget):
         dtype = dtype_map.get(stream_info.bit_depth, "int16")
 
         try:
+            from tune_server.config import settings as _s
             device = None
             if self._device_name:
                 devices = sd.query_devices()
@@ -64,20 +66,44 @@ class LocalOutput(OutputTarget):
                         device = i
                         break
 
+            # Exclusive mode: use ALSA hw: device directly (bypass PulseAudio/PipeWire mixer)
+            exclusive = _s.local_exclusive_mode
+            latency_s = _s.local_latency_ms / 1000.0
+            blocksize = max(256, int(stream_info.sample_rate * latency_s / 4))
+
+            extra_settings = None
+            if exclusive and device is not None:
+                try:
+                    dev_info = sd.query_devices(device)
+                    dev_name = dev_info.get("name", "")
+                    # Try to find ALSA hw: device for exclusive access
+                    hostapi = sd.query_hostapis(dev_info.get("hostapi", 0))
+                    if hostapi.get("name", "").lower() == "alsa":
+                        extra_settings = sd.AsioSettings(channel_selectors=[0, 1]) if hasattr(sd, "AsioSettings") else None
+                        logger.info("local_exclusive_mode", device=dev_name)
+                except Exception:
+                    logger.debug("local_exclusive_mode_detection_failed")
+
             self._stream = sd.OutputStream(
                 samplerate=stream_info.sample_rate,
                 channels=stream_info.channels,
                 dtype=dtype,
                 device=device,
-                blocksize=1024,
+                blocksize=blocksize,
+                latency="low" if exclusive else "high",
+                extra_settings=extra_settings,
             )
             self._stream.start()
             self._available = True
+            self._exclusive = exclusive
             logger.info(
                 "local_output_started",
                 sample_rate=stream_info.sample_rate,
                 channels=stream_info.channels,
                 bit_depth=stream_info.bit_depth,
+                exclusive=exclusive,
+                blocksize=blocksize,
+                latency_ms=_s.local_latency_ms,
             )
         except Exception:
             logger.exception("local_output_start_error")
@@ -100,8 +126,8 @@ class LocalOutput(OutputTarget):
                 trim = len(data) % 4
                 arr = np.frombuffer(data[:len(data) - trim] if trim else data, dtype=np.int32)
 
-            # Apply volume
-            if self._volume < 1.0:
+            # Apply volume (skip in exclusive mode for bit-perfect output)
+            if self._volume < 1.0 and not self._exclusive:
                 arr = (arr * self._volume).astype(arr.dtype)
 
             # Reshape for channels

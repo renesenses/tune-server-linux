@@ -89,6 +89,28 @@ class Settings(BaseSettings):
     max_sample_rate: int = 192000
     max_bit_depth: int = 24
 
+    # Resampling: "auto" (resample if needed), "never" (refuse incompatible),
+    # "integer_ratio" (prefer 44.1→88.2→176.4, refuse non-integer ratios)
+    resample_policy: str = "auto"
+    # Audio buffer size in KB (per chunk)
+    audio_buffer_kb: int = 32
+    # Pre-buffer duration in seconds before starting playback
+    prebuffer_seconds: float = 0.5
+
+    # Local output: exclusive mode (bypass OS mixer for bit-perfect USB DAC)
+    local_exclusive_mode: bool = False
+    # Local output: latency preference in ms (lower = less latency, higher = more stable)
+    local_latency_ms: int = 50
+
+    # DSP / Processing chain
+    dsp_enabled: bool = False
+    # DSP filter file (FFmpeg -af format), e.g. "equalizer=f=1000:t=h:w=200:g=-3"
+    dsp_filter: str = ""
+    # Convolution impulse response file path (for room correction)
+    dsp_impulse_response: str = ""
+    # DSP sample rate (0 = use source rate)
+    dsp_sample_rate: int = 0
+
     # Artwork
     artwork_cache_dir: str = "artwork_cache"
     artwork_max_size: int = 1200  # max dimension in pixels

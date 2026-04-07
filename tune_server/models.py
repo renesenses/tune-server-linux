@@ -522,6 +522,17 @@ class SystemConfigResponse(BaseModel):
     db_pool_min: int | None = None
     db_pool_max: int | None = None
     db_connected: bool = True
+    # Audio quality
+    resample_policy: str = "auto"
+    audio_buffer_kb: int = 32
+    prebuffer_seconds: float = 0.5
+    local_exclusive_mode: bool = False
+    local_latency_ms: int = 50
+    # DSP
+    dsp_enabled: bool = False
+    dsp_filter: str = ""
+    dsp_impulse_response: str = ""
+    dsp_sample_rate: int = 0
 
 
 class MusicDirRequest(BaseModel):
