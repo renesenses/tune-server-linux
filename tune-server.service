@@ -8,6 +8,8 @@ Wants=network-online.target avahi-daemon.service
 Type=simple
 User=tune-server
 Group=tune-server
+KillMode=mixed
+TimeoutStopSec=10
 
 WorkingDirectory=/opt/tune-server
 ExecStart=/opt/tune-server/.venv/bin/python -m tune_server

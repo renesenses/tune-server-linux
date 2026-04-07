@@ -52,9 +52,10 @@ def _build_wav_header(stream_info: AudioStreamInfo) -> bytes:
 class StreamSession:
     """A single audio stream session."""
 
-    def __init__(self, stream_id: str, stream_info: AudioStreamInfo) -> None:
+    def __init__(self, stream_id: str, stream_info: AudioStreamInfo, bit_perfect: bool = False) -> None:
         self.stream_id = stream_id
         self.stream_info = stream_info
+        self.bit_perfect = bit_perfect
         self._chunks: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=256)
         self.active = True
         self.client_connected = asyncio.Event()  # set when renderer makes first HTTP request
@@ -108,9 +109,9 @@ class HttpAudioStreamer:
     def port(self) -> int:
         return self._port
 
-    def create_session(self, stream_info: AudioStreamInfo, file_path: str | None = None) -> str:
+    def create_session(self, stream_info: AudioStreamInfo, file_path: str | None = None, bit_perfect: bool = False) -> str:
         stream_id = str(uuid.uuid4())
-        self._sessions[stream_id] = StreamSession(stream_id, stream_info)
+        self._sessions[stream_id] = StreamSession(stream_id, stream_info, bit_perfect=bit_perfect)
         if file_path:
             self._file_paths[stream_id] = file_path
         logger.info("stream_session_created", stream_id=stream_id)
@@ -119,10 +120,10 @@ class HttpAudioStreamer:
     def get_session(self, stream_id: str) -> Optional[StreamSession]:
         return self._sessions.get(stream_id)
 
-    def create_proxy_session(self, upstream_url: str, stream_info: AudioStreamInfo) -> str:
+    def create_proxy_session(self, upstream_url: str, stream_info: AudioStreamInfo, bit_perfect: bool = False) -> str:
         """Create a session that proxies an upstream HTTPS URL over HTTP."""
         stream_id = str(uuid.uuid4())
-        self._sessions[stream_id] = StreamSession(stream_id, stream_info)
+        self._sessions[stream_id] = StreamSession(stream_id, stream_info, bit_perfect=bit_perfect)
         self._proxy_urls[stream_id] = upstream_url
         logger.info("proxy_session_created", stream_id=stream_id, url=upstream_url[:80])
         return stream_id
@@ -140,6 +141,19 @@ class HttpAudioStreamer:
             file_path = self._file_paths.get(stream_id, "")
             return dsd_mime_from_extension(file_path)
         return mime_type_for_format(session.stream_info.format)
+
+    def _tune_timing_headers(self, session: StreamSession) -> dict[str, str]:
+        """Build precision timing headers from the stream session."""
+        info = session.stream_info
+        fmt_value = info.format.value if hasattr(info.format, "value") else str(info.format)
+        return {
+            "X-Tune-SampleRate": str(info.sample_rate),
+            "X-Tune-BitDepth": str(info.bit_depth),
+            "X-Tune-Channels": str(info.channels),
+            "X-Tune-Format": fmt_value,
+            "X-Tune-Timestamp": str(time.time_ns()),
+            "X-Tune-BitPerfect": "true" if session.bit_perfect else "false",
+        }
 
     def get_stream_url(self, stream_id: str, server_ip: str) -> str:
         session = self._sessions.get(stream_id)
@@ -159,7 +173,10 @@ class HttpAudioStreamer:
 
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
-        site = web.TCPSite(self._runner, self._host, self._port)
+        site = web.TCPSite(
+            self._runner, self._host, self._port,
+            reuse_address=True, reuse_port=True,
+        )
         await site.start()
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info("http_streamer_started", host=self._host, port=self._port)
@@ -214,7 +231,7 @@ class HttpAudioStreamer:
         file_path = self._file_paths.get(stream_id)
         if file_path and session.stream_info.file_size:
             try:
-                return await self._serve_file(request, file_path, mime, session.stream_info.file_size)
+                return await self._serve_file(request, file_path, mime, session.stream_info.file_size, session)
             except Exception:
                 logger.debug("stream_client_disconnected", stream_id=stream_id)
                 return web.Response(status=499)  # client closed
@@ -223,19 +240,19 @@ class HttpAudioStreamer:
         proxy_url = self._proxy_urls.get(stream_id)
         if proxy_url:
             try:
-                return await self._proxy_stream(request, proxy_url, mime, stream_id)
+                return await self._proxy_stream(request, proxy_url, mime, stream_id, session)
             except Exception:
                 logger.debug("proxy_client_disconnected", stream_id=stream_id)
                 return web.Response(status=499)
 
         # Streaming mode
-        response = web.StreamResponse(
-            headers={
-                "Content-Type": mime,
-                "transferMode.dlna.org": "Streaming",
-                "Cache-Control": "no-cache",
-            }
-        )
+        stream_headers = {
+            "Content-Type": mime,
+            "transferMode.dlna.org": "Streaming",
+            "Cache-Control": "no-cache",
+        }
+        stream_headers.update(self._tune_timing_headers(session))
+        response = web.StreamResponse(headers=stream_headers)
         await response.prepare(request)
 
         try:
@@ -263,9 +280,11 @@ class HttpAudioStreamer:
         return response
 
     async def _serve_file(
-        self, request: web.Request, file_path: str, mime: str, file_size: int
+        self, request: web.Request, file_path: str, mime: str, file_size: int,
+        session: StreamSession | None = None,
     ) -> web.StreamResponse:
         """Serve a file with Range request support for DLNA."""
+        timing = self._tune_timing_headers(session) if session else {}
         range_header = request.headers.get("Range")
 
         if range_header:
@@ -276,15 +295,17 @@ class HttpAudioStreamer:
                 end = int(end_str) if end_str else file_size - 1
                 length = end - start + 1
 
+                range_headers = {
+                    "Content-Type": mime,
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Content-Length": str(length),
+                    "Accept-Ranges": "bytes",
+                    "transferMode.dlna.org": "Streaming",
+                }
+                range_headers.update(timing)
                 response = web.StreamResponse(
                     status=206,
-                    headers={
-                        "Content-Type": mime,
-                        "Content-Range": f"bytes {start}-{end}/{file_size}",
-                        "Content-Length": str(length),
-                        "Accept-Ranges": "bytes",
-                        "transferMode.dlna.org": "Streaming",
-                    },
+                    headers=range_headers,
                 )
                 await response.prepare(request)
 
@@ -308,14 +329,14 @@ class HttpAudioStreamer:
                 pass
 
         # Full file response
-        response = web.StreamResponse(
-            headers={
-                "Content-Type": mime,
-                "Content-Length": str(file_size),
-                "Accept-Ranges": "bytes",
-                "transferMode.dlna.org": "Streaming",
-            },
-        )
+        full_headers = {
+            "Content-Type": mime,
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+            "transferMode.dlna.org": "Streaming",
+        }
+        full_headers.update(timing)
+        response = web.StreamResponse(headers=full_headers)
         await response.prepare(request)
 
         try:
@@ -333,6 +354,7 @@ class HttpAudioStreamer:
 
     async def _proxy_stream(
         self, request: web.Request, upstream_url: str, mime: str, stream_id: str,
+        session: StreamSession | None = None,
     ) -> web.StreamResponse:
         """Proxy an upstream HTTPS URL over HTTP with Content-Length."""
         async with aiohttp.ClientSession() as cs:
@@ -345,6 +367,8 @@ class HttpAudioStreamer:
                 cl = upstream.headers.get("Content-Length")
                 if cl:
                     headers["Content-Length"] = cl
+                if session:
+                    headers.update(self._tune_timing_headers(session))
 
                 response = web.StreamResponse(headers=headers)
                 await response.prepare(request)
