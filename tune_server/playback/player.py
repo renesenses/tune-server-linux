@@ -551,6 +551,15 @@ class Player:
                     await self._persist_queue()
                     await self._stop_pipeline()
             if next_track:
+                await self._event_bus.emit(Event(
+                    type=EventType.PLAYBACK_TRACK_CHANGED,
+                    data={
+                        "zone_id": self._zone_id,
+                        "track_id": next_track.id,
+                        "track_title": next_track.title,
+                    },
+                    source="player",
+                ))
                 await self._start_track(next_track)
             else:
                 async with self._lock:
@@ -587,6 +596,15 @@ class Player:
                     await self._persist_queue()
                     await self._stop_pipeline()
             if prev_track:
+                await self._event_bus.emit(Event(
+                    type=EventType.PLAYBACK_TRACK_CHANGED,
+                    data={
+                        "zone_id": self._zone_id,
+                        "track_id": prev_track.id,
+                        "track_title": prev_track.title,
+                    },
+                    source="player",
+                ))
                 await self._start_track(prev_track)
         finally:
             self._skip_in_progress = False
