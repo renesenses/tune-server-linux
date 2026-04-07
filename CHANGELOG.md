@@ -2,6 +2,22 @@
 
 All notable changes to Tune Server.
 
+## v0.5.3 — 2026-04-07
+
+### Added
+- **Metadata Readonly Mode**: `TUNE_METADATA_READONLY` — Tune never writes tags to audio files when enabled
+- **Auto Artist Image Enrichment**: Discogs integration fetches artist photos after library scan
+- **Enrichment UI**: Settings section with Discogs token status and manual "Enrich Now" button
+- **systemd KillMode=mixed**: clean process termination on restart (no more zombie ports)
+
+### Fixed
+- **EventBus.on()**: fixed subscribe call that prevented auto-enrichment after scan
+- **Create Zone (iPhone)**: replaced buggy alert TextField with proper sheet form
+
+### Web Client
+- **Metadata readonly toggle** in Settings
+- **Enrichment section** with Discogs token status + enrich button
+
 ## v0.5.2 — 2026-04-07
 
 ### Added
