@@ -74,6 +74,29 @@ async def get_config():
     )
 
 
+@router.patch("/config")
+async def update_config(body: dict):
+    """Update server configuration. Supports: metadata_readonly, enrich_on_scan."""
+    updated = {}
+
+    if "metadata_readonly" in body:
+        val = bool(body["metadata_readonly"])
+        settings.metadata_readonly = val
+        persist_env_var("TUNE_METADATA_READONLY", str(val))
+        updated["metadata_readonly"] = val
+
+    if "enrich_on_scan" in body:
+        val = bool(body["enrich_on_scan"])
+        settings.enrich_on_scan = val
+        persist_env_var("TUNE_ENRICH_ON_SCAN", str(val))
+        updated["enrich_on_scan"] = val
+
+    if not updated:
+        raise HTTPException(status_code=400, detail="No valid configuration fields provided")
+
+    return updated
+
+
 @router.post("/database/test")
 async def test_database():
     """Test the current database connection."""
