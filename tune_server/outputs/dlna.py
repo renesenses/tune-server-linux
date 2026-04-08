@@ -277,6 +277,11 @@ class DlnaOutput(OutputTarget):
             self._stream_id = self._streamer.create_session(stream_info, file_path)
             stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
 
+            # If the streamer will serve the file directly (passthrough with file on disk),
+            # mark as direct_url so the pipeline's write() calls are no-ops.
+            if file_path and stream_info.file_size and not file_path.startswith("http"):
+                self._direct_url = True
+
             mime = mime_type_for_format(stream_info.format)
             metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info) if track else ""
 
