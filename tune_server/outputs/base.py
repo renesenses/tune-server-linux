@@ -63,6 +63,11 @@ class OutputTarget(ABC):
         """Clean up resources."""
         ...
 
+    @property
+    def is_direct_url(self) -> bool:
+        """True if the output is serving audio directly (no pipeline needed)."""
+        return False
+
     def supports_direct_url(self, track: Track) -> bool:
         """Whether this output can fetch audio directly from a URL, skipping the local pipeline."""
         return False

@@ -258,8 +258,14 @@ class Player:
             self._state = PlaybackState.STOPPED
             return
 
-        # Start feeding output
-        self._playback_task = asyncio.create_task(self._playback_loop())
+        # Start feeding output — skip pipeline loop if output serves files directly
+        if self._output.is_direct_url:
+            # File is served directly by HTTP streamer — pipeline is not needed.
+            # Stop the pipeline and monitor the renderer instead.
+            await self._stop_pipeline()
+            self._playback_task = asyncio.create_task(self._direct_url_monitor(track))
+        else:
+            self._playback_task = asyncio.create_task(self._playback_loop())
 
         passthrough_type = "file_passthrough" if self._pipeline and self._pipeline.is_passthrough else None
         self._signal_path = self._build_signal_path(track, stream_info, passthrough_type=passthrough_type)
