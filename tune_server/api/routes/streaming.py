@@ -172,13 +172,4 @@ async def spotify_callback(code: str):
     return RedirectResponse("/")
 
 
-@router.get("/deezer/callback")
-async def deezer_callback(code: str):
-    """OAuth 2.0 callback for Deezer. Deezer redirects here with ?code=..."""
-    service = deps.streaming_services.get("deezer")
-    if not service:
-        raise HTTPException(status_code=503, detail="Deezer not configured")
-    from tune_server.streaming.deezer import DeezerService
-    if isinstance(service, DeezerService):
-        await service.complete_auth(code, deps.db)
-    return RedirectResponse("/")
+    # Deezer callback removed — now uses ARL cookie auth via POST /streaming/deezer/auth

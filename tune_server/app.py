@@ -339,8 +339,11 @@ class TuneServer:
 
         if settings.deezer_enabled:
             from tune_server.streaming.deezer import DeezerService
-            deps.streaming_services["deezer"] = DeezerService()
-            logger.info("deezer_service_enabled")
+            deps.streaming_services["deezer"] = DeezerService(
+                arl=settings.deezer_arl,
+                quality=settings.deezer_quality,
+            )
+            logger.info("deezer_service_enabled", quality=settings.deezer_quality)
 
     async def _restore_streaming_auth(self) -> None:
         """Restore streaming service auth tokens from DB."""

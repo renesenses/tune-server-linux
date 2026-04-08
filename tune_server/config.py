@@ -148,9 +148,8 @@ class Settings(BaseSettings):
 
     # Deezer
     deezer_enabled: bool = False
-    deezer_app_id: str | None = None
-    deezer_app_secret: str | None = None
-    deezer_redirect_uri: str = "http://localhost:8888/api/v1/streaming/deezer/callback"
+    deezer_arl: str | None = None
+    deezer_quality: str = "FLAC"  # FLAC, MP3_320, MP3_128
 
     # Discovery
     discovery_enabled: bool = True
