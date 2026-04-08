@@ -361,8 +361,15 @@ class Player:
         """Monitor direct URL playback and auto-advance when track finishes."""
         try:
             duration_ms = track.duration_ms or 0
-
             is_radio = track.source == Source.RADIO if hasattr(track, 'source') else False
+
+            # Debounce: require consecutive STOPPED polls before advancing.
+            # Some renderers (e.g. DMP-A8) briefly report STOPPED during
+            # initial buffering, causing premature track skip.
+            stopped_count = 0
+            stopped_threshold = 3  # need 3 consecutive STOPPED (≈3s)
+            min_play_ms = 5000     # ignore STOPPED before 5s of playback
+            cumulative_pos_ms = 0
 
             while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
                 await asyncio.sleep(1)
@@ -372,11 +379,39 @@ class Player:
                 # Prefer output-reported position (some DLNA renderers)
                 output_pos = await self._output.get_position_ms() if self._output else -1
 
-                # -2 = renderer has stopped (track finished)
-                # But NOT for radio streams — DLNA renderers may report STOPPED
-                # briefly during stream buffering
+                # Track cumulative position for minimum play duration check
+                if output_pos >= 0:
+                    cumulative_pos_ms = output_pos
+                else:
+                    cumulative_pos_ms += 1000  # estimate if no position
+
+                # -2 = renderer reports STOPPED
                 if output_pos == -2 and not is_radio:
-                    break
+                    # Ignore early STOPPED (renderer still buffering)
+                    if cumulative_pos_ms < min_play_ms:
+                        logger.debug("dlna_stopped_ignored_early",
+                                     zone_id=self._zone_id,
+                                     pos_ms=cumulative_pos_ms,
+                                     track=track.title)
+                        stopped_count = 0
+                        continue
+
+                    stopped_count += 1
+                    if stopped_count >= stopped_threshold:
+                        logger.info("dlna_stopped_confirmed",
+                                    zone_id=self._zone_id,
+                                    count=stopped_count,
+                                    track=track.title)
+                        break
+                    else:
+                        logger.debug("dlna_stopped_debounce",
+                                     zone_id=self._zone_id,
+                                     count=stopped_count,
+                                     threshold=stopped_threshold,
+                                     track=track.title)
+                        continue
+                else:
+                    stopped_count = 0  # reset on any non-STOPPED poll
 
                 pos = output_pos if output_pos >= 0 else self.position_ms
 
