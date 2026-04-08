@@ -285,6 +285,26 @@ async def completeness_stats():
     )
 
 
+@router.get("/artwork/{filename:path}")
+async def get_artwork(filename: str):
+    """Serve artwork images from the cache directory."""
+    # Try artwork_cache subdirectory first, then direct path
+    cache_dir = Path(settings.artwork_cache_dir)
+    file_path = cache_dir / filename
+    if not file_path.exists():
+        # Maybe filename includes "artwork_cache/" prefix
+        file_path = Path(settings.artwork_cache_dir).parent / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Artwork not found")
+    # Security: ensure the path is within the cache directory
+    try:
+        file_path.resolve().relative_to(cache_dir.resolve().parent)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    mime = "image/jpeg" if file_path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+    return FileResponse(str(file_path), media_type=mime)
+
+
 @router.post("/albums/{album_id}/artwork", response_model=Album)
 async def upload_album_artwork(album_id: int, file: UploadFile):
     album = await deps.album_repo.get(album_id)
