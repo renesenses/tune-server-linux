@@ -380,7 +380,14 @@ async def _rescan_artwork_task() -> None:
     global _artwork_rescan_running
     _artwork_rescan_running = True
     try:
+        # Albums without cover + albums whose cover file is missing
         albums = await deps.album_repo.list_without_cover()
+        all_with_cover = await deps.album_repo.list(limit=100000, offset=0)
+        missing_ids = {a.id for a in albums}
+        for album in all_with_cover:
+            if album.id not in missing_ids and album.cover_path:
+                if not Path(album.cover_path).exists():
+                    albums.append(album)
         total = len(albums)
         found = 0
         logger.info("artwork_rescan_started", total=total)

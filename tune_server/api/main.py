@@ -39,13 +39,12 @@ def create_api_app() -> FastAPI:
     if settings.api_key:
         @app.middleware("http")
         async def check_api_key(request, call_next):
-            # Skip auth for docs, health, websocket, and static files
             path = request.url.path
+            # Always open: root, docs, health check
             if path in ("/", "/docs", "/openapi.json", "/api/v1/system/health"):
                 return await call_next(request)
-            if path == "/ws":
-                return await call_next(request)
-            if not path.startswith("/api/"):
+            # Static web UI assets (CSS/JS/images)
+            if not path.startswith("/api/") and path != "/ws":
                 return await call_next(request)
 
             key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
