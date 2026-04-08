@@ -379,7 +379,7 @@ class Player:
             cumulative_pos_ms = 0
 
             while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
-                await asyncio.sleep(3)  # 3s interval — 1s was too aggressive for some DLNA renderers
+                await asyncio.sleep(10)  # 10s — aggressive polling disrupts some renderers (DMP-A8)
                 if self._state == PlaybackState.PAUSED:
                     continue
 
