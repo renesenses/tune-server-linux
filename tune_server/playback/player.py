@@ -228,6 +228,16 @@ class Player:
         # Build audio pipeline with ICY callback for radio streams
         icy_cb = self._make_icy_callback(track) if track.source == Source.RADIO else None
         source_format = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+
+        # For local files on DLNA, the file will be served directly —
+        # skip seek in pipeline to preserve passthrough (renderer handles seek via Range)
+        pipeline_seek_ms = seek_ms
+        if (seek_ms > 0
+            and track.file_path
+            and not track.file_path.startswith("http")
+            and hasattr(self._output, 'is_direct_url')):
+            pipeline_seek_ms = 0
+
         self._pipeline = AudioPipeline(capabilities, icy_callback=icy_cb)
         try:
             stream_info = await asyncio.wait_for(
@@ -237,7 +247,7 @@ class Player:
                     sample_rate=track.sample_rate or 44100,
                     bit_depth=track.bit_depth or 16,
                     channels=track.channels or 2,
-                    seek_ms=seek_ms,
+                    seek_ms=pipeline_seek_ms,
                 ),
                 timeout=settings.pipeline_start_timeout,
             )
