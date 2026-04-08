@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     pipeline_start_timeout: int = 15  # seconds
 
     # Multi-room sync
-    sync_poll_playing_interval: float = 1.0       # seconds, when groups are playing
+    sync_poll_playing_interval: float = 3.0       # seconds, when groups are playing
     sync_poll_idle_interval: float = 10.0          # seconds, when no active groups
     sync_drift_threshold_ms: int = 500             # ms, correct if drift exceeds this
     sync_correction_cooldown_s: float = 15.0       # seconds, min between corrections per follower
