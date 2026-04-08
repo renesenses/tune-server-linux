@@ -2,6 +2,32 @@
 
 All notable changes to Tune Server.
 
+## v0.5.4 — 2026-04-08
+
+### Fixed
+- **DLNA playback stability**: fixed pipeline conflict causing tracks to cut after 10-30s on DMP-A8 and other renderers — pipeline now stops when HTTP streamer serves files directly
+- **DLNA STOPPED debounce**: require 3 consecutive STOPPED polls before advancing track, prevents premature skip during renderer buffering
+- **DLNA polling interval**: reduced UPnP GetPositionInfo from 1s to 10s, prevents audio dropouts on sensitive renderers
+- **Radio stream stability**: disabled position polling during radio playback (no need to monitor indefinite streams)
+- **Radio favorites crash**: initialized RadioFavoriteRepo (was None, causing ASGI errors on every ICY metadata update)
+- **Windows crash**: removed `reuse_port` socket option not supported on Windows
+- **HTTP stream headers**: disabled non-standard X-Tune-* headers that caused some DLNA renderers to drop connections
+- **DLNA Stop before Play**: limited pre-play Stop command to Micromega only (broke DMP-A8 with 30s timeout)
+- **PLAYBACK_TRACK_CHANGED**: now emitted on skip_next/skip_previous for reliable WebSocket transport bar updates
+- **systemd port cleanup**: ExecStartPre/ExecStopPost kill port 8888 zombies on restart
+
+### Added
+- **PATCH /api/v1/system/config**: runtime toggle for metadata_readonly and enrich_on_scan
+- **Signal Path in iOS/iPadOS/macOS apps**: bit-perfect/transcoded pill in NowPlaying with detail sheet
+- **Embedded HTTP server (iPadOS)**: full REST API on port 8888 when running in server mode (NWListener, zero dependencies)
+- **WebSocket support (iPadOS)**: real-time event broadcast matching Python server format
+- **Progress bar**: elapsed/total time with click-to-seek in web client transport bar
+- **HeartButton**: favorites on artist detail album cards (web client)
+
+### Web Client
+- **Progress bar** in transport bar with elapsed/total time and click-to-seek
+- **HeartButton** on artist detail view album cards
+
 ## v0.5.3 — 2026-04-07
 
 ### Added
