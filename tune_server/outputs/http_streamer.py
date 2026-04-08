@@ -58,12 +58,13 @@ class StreamSession:
         self.bit_perfect = bit_perfect
         self._chunks: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=256)
         self.active = True
+        self.file_served = False  # True when _serve_file handles the request directly
         self.client_connected = asyncio.Event()  # set when renderer makes first HTTP request
         self.created_at = time.monotonic()
         self.last_activity = time.monotonic()
 
     async def put(self, data: bytes) -> None:
-        if self.active:
+        if self.active and not self.file_served:
             self.last_activity = time.monotonic()
             await self._chunks.put(data)
 
@@ -229,6 +230,7 @@ class HttpAudioStreamer:
                      format=str(session.stream_info.format))
         if file_path and session.stream_info.file_size:
             try:
+                session.file_served = True
                 return await self._serve_file(request, file_path, mime, session.stream_info.file_size, session)
             except Exception:
                 logger.debug("stream_client_disconnected", stream_id=stream_id)
