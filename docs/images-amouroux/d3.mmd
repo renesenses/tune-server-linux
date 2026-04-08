@@ -1,0 +1,7 @@
+graph LR
+    IPAD["📱 iPad / iPhone<br/>Télécommande"] -->|REST API + WS| SRV["🖥️ Serveur Linux<br/>NAS · Tidal · Qobuz<br/>22 000+ pistes"]
+    WEB["🌐 Navigateur web"] -->|REST API| SRV
+    SRV -->|DLNA| DAC["🔊 DAC Haut de Gamme"]
+    SRV -->|DLNA| SONOS["🔊 Sonos<br/>Pièce 2"]
+    style SRV fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style DAC fill:#ff6b35,stroke:#fff,color:#fff

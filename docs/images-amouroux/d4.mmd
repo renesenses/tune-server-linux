@@ -1,0 +1,8 @@
+graph LR
+    CTRL["📱 Tout appareil<br/>de contrôle"] -->|API| SRV["🖥️ Serveur Linux<br/>Sync multi-room"]
+    SRV -->|DLNA| TOT["🔊 DAC Haut de Gamme<br/>Salon"]
+    SRV -->|DLNA| MICRO["🔊 Micromega<br/>Bureau"]
+    SRV -->|AirPlay| AP["🔊 AirPlay<br/>Cuisine"]
+    SRV -->|USB| USB["🎧 DAC USB<br/>Casque"]
+    style SRV fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style TOT fill:#ff6b35,stroke:#fff,color:#fff

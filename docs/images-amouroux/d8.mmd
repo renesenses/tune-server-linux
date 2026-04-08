@@ -1,0 +1,23 @@
+graph TD
+    subgraph Server["🖥️ Tune Server - Linux/Mac"]
+        LIB["📚 Bibliothèque<br/>22 000+ pistes"]
+        STR["🎵 Streaming<br/>Tidal · Qobuz"]
+        DB["🐘 PostgreSQL"]
+    end
+    subgraph Outputs["🔊 Sorties Audio"]
+        TOT["DAC Haut de Gamme<br/>DLNA/USB"]
+        AIR["Enceintes AirPlay"]
+        SON["Sonos · DLNA"]
+    end
+    subgraph Clients["📱 Clients de Contrôle"]
+        IPAD["iPad<br/>SwiftUI"]
+        IPHONE["iPhone<br/>Télécommande"]
+        WEB["Web<br/>Svelte 5"]
+        MAC["macOS<br/>SwiftUI"]
+    end
+    Server -->|"DLNA/UPnP<br/>Audio HTTP :8080"| Outputs
+    Server -->|"REST API + WebSocket<br/>:8888"| Clients
+    style Server fill:#1a1a2e,stroke:#ff6b35,color:#fff
+    style Outputs fill:#1e1e38,stroke:#64b5f6,color:#fff
+    style Clients fill:#1e1e38,stroke:#81c784,color:#fff
+    style TOT fill:#ff6b35,stroke:#fff,color:#fff

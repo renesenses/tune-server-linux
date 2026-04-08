@@ -224,10 +224,6 @@ class HttpAudioStreamer:
 
         # Check for file-based passthrough with Range support
         file_path = self._file_paths.get(stream_id)
-        logger.info("stream_request", stream_id=stream_id[:8],
-                     file_path=bool(file_path),
-                     file_size=session.stream_info.file_size,
-                     format=str(session.stream_info.format))
         if file_path and session.stream_info.file_size:
             try:
                 session.file_served = True
