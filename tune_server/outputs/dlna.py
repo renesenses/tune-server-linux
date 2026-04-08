@@ -188,8 +188,9 @@ class DlnaOutput(OutputTarget):
             # Direct URL passthrough: let the DLNA renderer fetch from the CDN
             if track and self.supports_direct_url(track):
                 url = track.file_path
-                # Most DLNA renderers don't support HTTPS — downgrade to HTTP
-                if url.startswith("https://"):
+                # Micromega M-One doesn't support HTTPS — downgrade to HTTP
+                # Other renderers (DMP-A8, etc.) handle HTTPS fine
+                if self._is_micromega and url.startswith("https://"):
                     url = "http://" + url[len("https://"):]
                     logger.info("dlna_https_downgrade", device=self.name, url=url[:80])
 
