@@ -161,6 +161,10 @@ class DlnaOutput(OutputTarget):
     def is_available(self) -> bool:
         return self._available
 
+    @property
+    def is_direct_url(self) -> bool:
+        return self._direct_url
+
     def supports_direct_url(self, track: Track) -> bool:
         if not track or not track.file_path:
             return False

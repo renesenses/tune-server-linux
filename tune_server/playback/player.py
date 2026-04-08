@@ -258,10 +258,18 @@ class Player:
             self._state = PlaybackState.STOPPED
             return
 
-        # Start feeding output
-        self._playback_task = asyncio.create_task(self._playback_loop())
-
+        # Determine passthrough type before potentially stopping pipeline
         passthrough_type = "file_passthrough" if self._pipeline and self._pipeline.is_passthrough else None
+
+        # Start feeding output — skip pipeline loop if output serves files directly
+        if self._output.is_direct_url:
+            # File is served directly by HTTP streamer — pipeline is not needed.
+            # Stop the pipeline and monitor the renderer instead.
+            passthrough_type = "file_passthrough"
+            await self._stop_pipeline()
+            self._playback_task = asyncio.create_task(self._direct_url_monitor(track))
+        else:
+            self._playback_task = asyncio.create_task(self._playback_loop())
         self._signal_path = self._build_signal_path(track, stream_info, passthrough_type=passthrough_type)
         self._state = PlaybackState.PLAYING
         self._position_ms = seek_ms
@@ -374,12 +382,12 @@ class Player:
             # Some renderers (e.g. DMP-A8) briefly report STOPPED during
             # initial buffering, causing premature track skip.
             stopped_count = 0
-            stopped_threshold = 3  # need 3 consecutive STOPPED (≈3s)
+            stopped_threshold = 2  # need 2 consecutive STOPPED
             min_play_ms = 5000     # ignore STOPPED before 5s of playback
             cumulative_pos_ms = 0
 
             while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
-                await asyncio.sleep(10)  # 10s — aggressive polling disrupts some renderers (DMP-A8)
+                await asyncio.sleep(5)  # 5s interval for track end detection
                 if self._state == PlaybackState.PAUSED:
                     continue
 
@@ -403,6 +411,16 @@ class Player:
                         stopped_count = 0
                         continue
 
+                    # Instant transition if track played past 90% of duration
+                    if duration_ms and cumulative_pos_ms >= duration_ms * 0.9:
+                        logger.info("dlna_stopped_track_finished",
+                                    zone_id=self._zone_id,
+                                    pos_ms=cumulative_pos_ms,
+                                    duration_ms=duration_ms,
+                                    track=track.title)
+                        break
+
+                    # Otherwise debounce (mid-track transient STOPPED)
                     stopped_count += 1
                     if stopped_count >= stopped_threshold:
                         logger.info("dlna_stopped_confirmed",

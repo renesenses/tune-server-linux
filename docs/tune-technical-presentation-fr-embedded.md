@@ -22,7 +22,7 @@ Ingénieur EPFL (Systèmes de Communication — convergence IT/Telecom, 1995). P
 | **Statut** | Beta (v0.5.2, Avril 2026) |
 | **Beta testeurs** | Communauté active via [mozaiklabs.fr/forum](https://mozaiklabs.fr/forum) |
 
-**Équipement Audio :**
+**Système de test :**
 - Micromega M-One (ampli/DAC/streamer)
 - EverSolo DMP-A8 (streamer)
 - Lindemann (streamer)
@@ -101,7 +101,7 @@ Un **serveur musical multi-room** qui unifie bibliothèques locales, partages r�
 - Les zones peuvent être **groupées pour une lecture synchronisée** (multi-room)
 - Compensation du délai de synchronisation par zone
 - Mix de sorties DLNA, AirPlay et DAC USB
-- **Idéal pour** : sonorisation de toute la maison, équipement mixte, pièces audiophile + casual
+- **Idéal pour** : sonorisation de toute la maison, système mixte, pièces audiophile + casual
 
 ### Scénario 4 : Mac de bureau (tout-en-un)
 
