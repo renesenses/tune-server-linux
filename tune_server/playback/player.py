@@ -380,12 +380,12 @@ class Player:
             # Some renderers (e.g. DMP-A8) briefly report STOPPED during
             # initial buffering, causing premature track skip.
             stopped_count = 0
-            stopped_threshold = 3  # need 3 consecutive STOPPED (≈3s)
+            stopped_threshold = 2  # need 2 consecutive STOPPED
             min_play_ms = 5000     # ignore STOPPED before 5s of playback
             cumulative_pos_ms = 0
 
             while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
-                await asyncio.sleep(10)  # 10s — aggressive polling disrupts some renderers (DMP-A8)
+                await asyncio.sleep(5)  # 5s interval for track end detection
                 if self._state == PlaybackState.PAUSED:
                     continue
 
@@ -409,6 +409,16 @@ class Player:
                         stopped_count = 0
                         continue
 
+                    # Instant transition if track played past 90% of duration
+                    if duration_ms and cumulative_pos_ms >= duration_ms * 0.9:
+                        logger.info("dlna_stopped_track_finished",
+                                    zone_id=self._zone_id,
+                                    pos_ms=cumulative_pos_ms,
+                                    duration_ms=duration_ms,
+                                    track=track.title)
+                        break
+
+                    # Otherwise debounce (mid-track transient STOPPED)
                     stopped_count += 1
                     if stopped_count >= stopped_threshold:
                         logger.info("dlna_stopped_confirmed",
