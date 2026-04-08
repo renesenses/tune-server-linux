@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import sys
+from pathlib import Path
+
+
+def _ensure_data_dir() -> None:
+    """When running as a PyInstaller binary, chdir to the exe directory
+    so that .env, tune_server.db, artwork_cache/ resolve next to the exe."""
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        os.chdir(exe_dir)
 
 
 def main() -> None:
+    _ensure_data_dir()
+
     # Handle subcommands
     if len(sys.argv) > 1 and sys.argv[1] == "migrate-db":
         sys.argv = [sys.argv[0]] + sys.argv[2:]  # Strip subcommand for argparse

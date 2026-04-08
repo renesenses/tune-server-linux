@@ -38,6 +38,12 @@ class WebSocketManager:
         self._subscriptions.clear()
 
     async def connect(self, websocket: WebSocket) -> bool:
+        # API key check (if configured)
+        if settings.api_key:
+            key = websocket.query_params.get("api_key")
+            if key != settings.api_key:
+                await websocket.close(code=4401, reason="Invalid API key")
+                return False
         if len(self._subscriptions) >= MAX_WS_CONNECTIONS:
             await websocket.close(code=1013, reason="Too many connections")
             return False
