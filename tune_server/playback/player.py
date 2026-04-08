@@ -363,6 +363,13 @@ class Player:
             duration_ms = track.duration_ms or 0
             is_radio = track.source == Source.RADIO if hasattr(track, 'source') else False
 
+            # Radio streams play indefinitely — no position polling needed.
+            # Polling via UPnP GetPositionInfo can disrupt some renderers.
+            if is_radio:
+                while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
+                    await asyncio.sleep(5)
+                return
+
             # Debounce: require consecutive STOPPED polls before advancing.
             # Some renderers (e.g. DMP-A8) briefly report STOPPED during
             # initial buffering, causing premature track skip.
