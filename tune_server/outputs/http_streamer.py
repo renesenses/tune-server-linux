@@ -143,17 +143,11 @@ class HttpAudioStreamer:
         return mime_type_for_format(session.stream_info.format)
 
     def _tune_timing_headers(self, session: StreamSession) -> dict[str, str]:
-        """Build precision timing headers from the stream session."""
-        info = session.stream_info
-        fmt_value = info.format.value if hasattr(info.format, "value") else str(info.format)
-        return {
-            "X-Tune-SampleRate": str(info.sample_rate),
-            "X-Tune-BitDepth": str(info.bit_depth),
-            "X-Tune-Channels": str(info.channels),
-            "X-Tune-Format": fmt_value,
-            "X-Tune-Timestamp": str(time.time_ns()),
-            "X-Tune-BitPerfect": "true" if session.bit_perfect else "false",
-        }
+        """Build precision timing headers from the stream session.
+        Disabled: non-standard headers cause some DLNA renderers (DMP-A8)
+        to drop the HTTP connection after ~11 seconds.
+        """
+        return {}
 
     def get_stream_url(self, stream_id: str, server_ip: str) -> str:
         session = self._sessions.get(stream_id)
