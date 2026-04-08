@@ -59,6 +59,8 @@ async def save_current():
 
 @router.get("/is-favorite")
 async def is_favorite(title: str, artist: str = ""):
+    if not deps.radio_fav_repo:
+        return {"is_favorite": False}
     return {"is_favorite": await deps.radio_fav_repo.is_favorite(title, artist)}
 
 

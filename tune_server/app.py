@@ -15,6 +15,7 @@ from tune_server.db.repository import (
     ArtistRepo,
     PlaylistRepo,
     PlayQueueRepo,
+    RadioFavoriteRepo,
     RadioStationRepo,
     TrackRepo,
     ZoneRepo,
@@ -197,6 +198,7 @@ class TuneServer:
         deps.queue_repo = queue_repo
         deps.zone_repo = zone_repo
         deps.radio_repo = radio_repo
+        deps.radio_fav_repo = RadioFavoriteRepo(self._db)
 
         # Start sync engine
         await self._sync_engine.start()
