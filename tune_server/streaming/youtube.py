@@ -91,7 +91,9 @@ class YouTubeService(StreamingService):
 
     @property
     def is_authenticated(self) -> bool:
-        return self._access_token is not None
+        # YouTube works without auth via yt-dlp (search + playback)
+        # OAuth token is optional (higher quota, user playlists)
+        return True
 
     @property
     def verification_url(self) -> str | None:
