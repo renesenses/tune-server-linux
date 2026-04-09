@@ -246,6 +246,13 @@ class AlbumRepo:
             albums = [a for a in albums if a.quality == quality]
         return albums
 
+    async def list_recent(self, limit: int = 50) -> list[Album]:
+        rows = await self._db.fetchall(
+            f"{self._SELECT} ORDER BY al.created_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [_row_to_album(r) for r in rows]
+
     async def list_by_artist(self, artist_id: int) -> list[Album]:
         rows = await self._db.fetchall(
             f"""{self._SELECT}

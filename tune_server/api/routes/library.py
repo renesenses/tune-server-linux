@@ -63,6 +63,12 @@ async def stream_track_audio(track_id: int):
           ".opus": "audio/opus", ".aiff": "audio/aiff", ".dsf": "audio/dsf"}
     return FileResponse(filepath, media_type=mt.get(suffix, "application/octet-stream"), filename=filepath.name)
 
+@router.get("/albums/recent", response_model=list[Album])
+async def list_recent_albums(limit: int = Query(50, le=200)):
+    """Albums recently added to the library, sorted by creation date descending."""
+    return await deps.album_repo.list_recent(limit=limit)
+
+
 @router.get("/albums")
 async def list_albums(
     limit: int = Query(100, le=50000),
