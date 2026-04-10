@@ -2,6 +2,40 @@
 
 All notable changes to Tune Server.
 
+## v0.5.5 — 2026-04-10
+
+### Added
+- **Apple Music (MusicKit)**: catalog search, playlists, album queue playback, transport controls (iOS/macOS)
+- **CoreAudio device selection**: choose USB DAC, headphones, or any audio output on macOS
+- **"Récemment ajouté"**: GET /library/albums/recent endpoint — albums sorted by creation date
+- **Playlists tab**: Apple Music (201) + Tidal playlists with pagination (all playlists, not just 50)
+- **Now Playing sidebar**: dedicated view in macOS sidebar
+- **Signal path in now playing bar**: visible without opening the sheet
+- **Local audio devices**: Sources & Devices shows server audio outputs (Linux/Windows via API)
+- **YouTube Music**: enabled on server, authenticated without OAuth (yt-dlp)
+- **Deezer**: added to streaming services list
+- **Firebase App Distribution**: Android beta testing via Firebase
+
+### Fixed
+- **Signal path**: "Lossy" for AAC/MP3 instead of misleading "Transcoded"
+- **Radio playback**: HTTPS for local zones, HTTP only for DLNA renderers (ATS fix)
+- **Radio format**: detect AAC/MP3 from stream URL for correct signal path display
+- **Search navigation**: programmatic navigation fixes .searchable() interference on iPhone
+- **Local zone persistence**: zone (id=-1) no longer disappears after syncZoneState
+- **Default zone**: prefer server zones over local on connect
+- **Apple Music controls**: play/pause/next/prev route to ApplicationMusicPlayer
+- **Apple Music artwork**: filter internal musicKit:// URLs, use catalog HTTPS lookup
+- **Album detail**: handle nil album ID + empty tracks gracefully
+- **Tidal pagination**: load all playlists (was limited to 50)
+- **Artwork fallback**: resolve cover paths from settings when API not initialized
+- **Search padding**: bottom margin for now playing bar
+- **Zone name**: use actual device name/model (iPhone not iPad)
+
+### Infrastructure
+- Servers .29 (.18) and .50 deployed with sudoers NOPASSWD
+- Web client built and deployed
+- Radio logos restored on all servers
+
 ## v0.5.4 — 2026-04-08
 
 ### Fixed
