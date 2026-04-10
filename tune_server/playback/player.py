@@ -817,8 +817,12 @@ class Player:
         ))
 
         # Summary
+        lossy_formats = {"mp3", "aac", "ogg", "opus", "wma"}
+        is_lossy = (src_fmt or "").lower() in lossy_formats
         if bit_perfect:
             summary = f"Bit-Perfect — {fmt_name(src_fmt)} {src_rate//1000}kHz/{src_depth}bit"
+        elif is_lossy:
+            summary = f"Lossy — {fmt_name(src_fmt)} {src_rate//1000}kHz/{src_depth}bit"
         else:
             summary = f"Transcoded — {fmt_name(stream_info.format)} {stream_info.sample_rate//1000}kHz/{stream_info.bit_depth}bit"
 
