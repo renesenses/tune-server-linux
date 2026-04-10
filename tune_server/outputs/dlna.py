@@ -4,6 +4,7 @@ import asyncio
 import time
 from xml.sax.saxutils import escape as xml_escape
 
+import aiohttp
 import structlog
 
 from tune_server.audio.formats import (
@@ -194,34 +195,34 @@ class DlnaOutput(OutputTarget):
             # Direct URL passthrough: let the DLNA renderer fetch from the CDN
             if track and self.supports_direct_url(track):
                 url = track.file_path
-                # Micromega M-One doesn't support HTTPS — downgrade to HTTP
-                # Other renderers (DMP-A8, etc.) handle HTTPS fine
-                if self._is_micromega and url.startswith("https://"):
-                    url = "http://" + url[len("https://"):]
-                    logger.info("dlna_https_downgrade", device=self.name, url=url[:80])
+                # Micromega M-One: proxy all external URLs (can't handle HTTPS or redirects)
+                if self._is_micromega and url.startswith("http"):
+                    # Fall through to Micromega proxy below
+                    pass
+                else:
+                    mime = mime_type_for_format(AudioFormat(track.format))
+                    metadata = _build_didl_lite(track, url, mime)
 
-                mime = mime_type_for_format(AudioFormat(track.format))
-                metadata = _build_didl_lite(track, url, mime)
+                    dmr = self._device
+                    title = track.title or "Unknown"
+                    await asyncio.wait_for(
+                        dmr.async_set_transport_uri(url, title, meta_data=metadata), timeout=10
+                    )
+                    await asyncio.wait_for(dmr.async_play(), timeout=10)
 
-                dmr = self._device
-                title = track.title or "Unknown"
-                await asyncio.wait_for(
-                    dmr.async_set_transport_uri(url, title, meta_data=metadata), timeout=10
-                )
-                await asyncio.wait_for(dmr.async_play(), timeout=10)
+                    self._direct_url = True
+                    self._last_uri = url
+                    self._available = True
+                    logger.info("dlna_direct_url_playback", device=self.name, url=url[:80])
+                    return
 
-                self._direct_url = True
-                self._last_uri = url
-                self._available = True
-                logger.info("dlna_direct_url_playback", device=self.name, url=url[:80])
-                return
-
-            # Micromega proxy: relay HTTPS streaming URLs over HTTP with Content-Length
+            # Micromega proxy: relay external URLs over HTTP
+            # (Micromega can't handle HTTPS or follow redirects)
             if (
                 self._is_micromega
                 and track
                 and track.file_path
-                and track.file_path.startswith("https://")
+                and (track.file_path.startswith("https://") or track.file_path.startswith("http://"))
                 and track.source != Source.RADIO
             ):
                 fmt = AudioFormat(track.format) if track.format else AudioFormat.FLAC
@@ -403,6 +404,29 @@ class DlnaOutput(OutputTarget):
         await asyncio.to_thread(_send)
         logger.debug("micromega_volume_set", device=self.name, volume=target_vol)
 
+    async def _resolve_redirects(self, url: str, max_hops: int = 5) -> str:
+        """Follow redirects manually, forcing HTTP at each hop."""
+        try:
+            current = url
+            async with aiohttp.ClientSession() as session:
+                for _ in range(max_hops):
+                    async with session.head(current, allow_redirects=False,
+                                            timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status not in (301, 302, 303, 307, 308):
+                            break  # Final destination
+                        location = resp.headers.get("Location", "")
+                        if not location:
+                            break
+                        # Force HTTP
+                        if location.startswith("https://"):
+                            location = "http://" + location[len("https://"):]
+                        current = location
+            if current != url:
+                logger.info("dlna_redirect_resolved", original=url[:60], final=current[:80])
+            return current
+        except Exception:
+            return url
+
     async def close(self) -> None:
         await self.stop()
 
@@ -412,8 +436,10 @@ class DlnaOutput(OutputTarget):
             # Direct URL for next track too if applicable
             if self.supports_direct_url(track):
                 url = track.file_path
-                if self._is_micromega and url.startswith("https://"):
-                    url = "http://" + url[len("https://"):]
+                if self._is_micromega:
+                    if url.startswith("https://"):
+                        url = "http://" + url[len("https://"):]
+                    url = await self._resolve_redirects(url)
                 mime = mime_type_for_format(AudioFormat(track.format))
                 metadata = _build_didl_lite(track, url, mime)
                 await self._device.async_set_next_transport_uri(url, track.title or "Unknown", meta_data=metadata)

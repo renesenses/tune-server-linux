@@ -151,6 +151,9 @@ class Settings(BaseSettings):
     deezer_arl: str | None = None
     deezer_quality: str = "FLAC"  # FLAC, MP3_320, MP3_128
 
+    # Podcasts
+    radiofrance_api_key: str | None = None  # Radio France Open API key
+
     # Discovery
     discovery_enabled: bool = True
     ssdp_enabled: bool = True

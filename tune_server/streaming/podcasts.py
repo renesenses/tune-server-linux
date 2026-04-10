@@ -1,7 +1,7 @@
 """Podcast service — search, browse, and stream podcasts.
 
-Uses iTunes Search API for catalog search and RSS feeds for episodes.
-Radio France API support planned (pending API key validation).
+Uses iTunes Search API for catalog search, RSS feeds for episodes,
+and Radio France Open API (GraphQL) for Radio France podcasts.
 """
 
 from __future__ import annotations
@@ -17,6 +17,10 @@ import structlog
 logger = structlog.get_logger()
 
 ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
+RADIOFRANCE_GRAPHQL_URL = "https://openapi.radiofrance.fr/v1/graphql"
+
+# Radio France stations
+RF_STATIONS = ["FRANCEINTER", "FRANCECULTURE", "FRANCEMUSIQUE", "FIP", "MOUV", "FRANCEINFO"]
 
 
 class PodcastEpisode:
@@ -93,6 +97,14 @@ RADIO_FRANCE_PODCASTS = [
 class PodcastService:
     """Podcast search, browse, and episode listing."""
 
+    def _rf_api_key(self) -> str | None:
+        """Get Radio France API key from config."""
+        try:
+            from tune_server.config import settings
+            return settings.radiofrance_api_key
+        except Exception:
+            return None
+
     async def search(self, query: str, limit: int = 20) -> list[dict]:
         """Search podcasts via iTunes Search API."""
         try:
@@ -126,11 +138,66 @@ class PodcastService:
             return []
 
     async def get_radio_france_podcasts(self) -> list[dict]:
-        """Return curated list of Radio France podcasts."""
-        return [p.to_dict() for p in RADIO_FRANCE_PODCASTS]
+        """List Radio France shows via Open API, fallback to curated RSS list."""
+        api_key = self._rf_api_key()
+        if not api_key:
+            return [p.to_dict() for p in RADIO_FRANCE_PODCASTS]
 
-    async def get_episodes(self, feed_url: str, limit: int = 30) -> list[dict]:
-        """Fetch episodes from an RSS feed."""
+        try:
+            shows = []
+            async with aiohttp.ClientSession() as session:
+                for station in RF_STATIONS:
+                    query = f'''{{
+                        shows(station: {station}, first: 20) {{
+                            edges {{ node {{
+                                id title url standFirst
+                                podcast {{ rss }}
+                            }} }}
+                        }}
+                    }}'''
+                    async with session.post(
+                        RADIOFRANCE_GRAPHQL_URL,
+                        json={"query": query},
+                        headers={"x-token": api_key},
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json()
+
+                    edges = data.get("data", {}).get("shows", {}).get("edges", [])
+                    station_name = station.replace("FRANCE", "France ").replace("FIP", "FIP").replace("MOUV", "Mouv'").strip()
+                    for e in edges:
+                        node = e["node"]
+                        rss = (node.get("podcast") or {}).get("rss", "")
+                        shows.append(Podcast(
+                            name=node["title"],
+                            artist=station_name,
+                            feed_url=rss or "",
+                            description=(node.get("standFirst") or "")[:200],
+                            source_id=node["id"],
+                        ).to_dict())
+                        # Store show URL for later episode lookup
+                        shows[-1]["show_url"] = node.get("url", "")
+
+            logger.info("radiofrance_shows_loaded", count=len(shows))
+            return shows if shows else [p.to_dict() for p in RADIO_FRANCE_PODCASTS]
+        except Exception:
+            logger.exception("radiofrance_api_error")
+            return [p.to_dict() for p in RADIO_FRANCE_PODCASTS]
+
+    async def get_episodes(self, feed_url: str, limit: int = 30,
+                           show_url: str | None = None) -> list[dict]:
+        """Fetch episodes — via Radio France API if show_url provided, else RSS."""
+        # Try Radio France API first if we have a show URL
+        if show_url:
+            api_key = self._rf_api_key()
+            if api_key:
+                episodes = await self._get_rf_episodes(show_url, api_key, limit)
+                if episodes:
+                    return episodes
+
+        # Fallback to RSS
         if not feed_url:
             return []
         try:
@@ -143,6 +210,59 @@ class PodcastService:
             return self._parse_rss(xml_text, limit)
         except Exception:
             logger.exception("podcast_episodes_error", feed_url=feed_url)
+            return []
+
+    async def _get_rf_episodes(self, show_url: str, api_key: str, limit: int) -> list[dict]:
+        """Fetch episodes from Radio France Open API."""
+        try:
+            query = f'''{{
+                diffusionsOfShowByUrl(url: "{show_url}", first: {min(limit, 50)}) {{
+                    edges {{ node {{
+                        title standFirst published_date
+                        podcastEpisode {{ url duration }}
+                        show {{ title }}
+                    }} }}
+                }}
+            }}'''
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    RADIOFRANCE_GRAPHQL_URL,
+                    json={"query": query},
+                    headers={"x-token": api_key},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+
+            edges = data.get("data", {}).get("diffusionsOfShowByUrl", {}).get("edges", [])
+            episodes = []
+            for e in edges:
+                node = e["node"]
+                ep = node.get("podcastEpisode") or {}
+                audio_url = ep.get("url", "")
+                if not audio_url:
+                    continue
+                # published_date is a Unix timestamp string
+                published = ""
+                ts = node.get("published_date")
+                if ts:
+                    try:
+                        published = datetime.fromtimestamp(int(ts)).strftime("%a, %d %b %Y")
+                    except Exception:
+                        pass
+                episodes.append(PodcastEpisode(
+                    title=node.get("title", ""),
+                    description=(node.get("standFirst") or "")[:500],
+                    audio_url=audio_url,
+                    duration_ms=(ep.get("duration") or 0) * 1000,
+                    published=published,
+                ).to_dict())
+
+            logger.info("radiofrance_episodes_loaded", count=len(episodes), show_url=show_url[:60])
+            return episodes
+        except Exception:
+            logger.exception("radiofrance_episodes_error", show_url=show_url[:60])
             return []
 
     def _parse_rss(self, xml_text: str, limit: int) -> list[dict]:
