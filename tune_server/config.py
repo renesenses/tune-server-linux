@@ -112,11 +112,11 @@ class Settings(BaseSettings):
     dsp_sample_rate: int = 0
 
     # Metadata
-    metadata_readonly: bool = False  # When True, Tune never writes tags to audio files
+    metadata_readonly: bool = True  # When True, Tune never writes tags to audio files
 
     # Enrichment
     discogs_token: str = ""  # Personal Discogs API token for artist images
-    enrich_on_scan: bool = True  # Auto-enrich after library scan
+    enrich_on_scan: bool = False  # Auto-enrich after library scan
 
     # Artwork
     artwork_cache_dir: str = "artwork_cache"
