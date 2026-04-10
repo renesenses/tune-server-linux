@@ -106,7 +106,7 @@ class PodcastService:
                 async with session.get(ITUNES_SEARCH_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status != 200:
                         return []
-                    data = await resp.json()
+                    data = await resp.json(content_type=None)
 
                 results = []
                 for r in data.get("results", []):

@@ -1,4 +1,4 @@
-"""Podcast API routes — search, browse, episodes, play."""
+"""Podcast API routes — search, browse, episodes."""
 
 from __future__ import annotations
 

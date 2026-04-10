@@ -124,9 +124,9 @@ async def _resolve_tracks(request: PlayRequest) -> list:
                     tracks.append(track)
 
     elif request.file_path:
-        # Direct URL playback (e.g. media server stream replay from history)
+        # Direct URL playback (e.g. media server stream, podcast episode)
         from tune_server.models import Track, AudioFormat
-        fmt = AudioFormat.WAV
+        fmt = AudioFormat.MP3  # sensible default for HTTP streams (podcast, radio)
         url_lower = request.file_path.lower()
         if "flac" in url_lower:
             fmt = AudioFormat.FLAC
@@ -136,6 +136,8 @@ async def _resolve_tracks(request: PlayRequest) -> list:
             fmt = AudioFormat.AAC
         elif "ogg" in url_lower:
             fmt = AudioFormat.OGG
+        elif "wav" in url_lower:
+            fmt = AudioFormat.WAV
         tracks.append(Track(
             id=None,
             title=request.title or _clean_file_title(request.file_path),
@@ -337,7 +339,7 @@ async def add_to_queue(zone_id: int, request: QueueAddRequest):
                     tracks.append(track)
     elif request.file_path:
         from tune_server.models import Track, AudioFormat
-        fmt = AudioFormat.WAV
+        fmt = AudioFormat.MP3  # sensible default for HTTP streams
         url_lower = request.file_path.lower()
         if "flac" in url_lower:
             fmt = AudioFormat.FLAC
@@ -347,6 +349,8 @@ async def add_to_queue(zone_id: int, request: QueueAddRequest):
             fmt = AudioFormat.AAC
         elif "ogg" in url_lower:
             fmt = AudioFormat.OGG
+        elif "wav" in url_lower:
+            fmt = AudioFormat.WAV
         tracks.append(Track(
             id=None,
             title=request.title or _clean_file_title(request.file_path),
