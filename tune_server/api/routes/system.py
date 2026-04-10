@@ -282,3 +282,29 @@ async def discover_servers():
         {"name": s.name, "host": s.host, "port": s.port, "uuid": s.uuid}
         for s in servers
     ]
+
+
+# --- Update management ---
+
+@router.get("/update/check")
+async def check_update():
+    """Check if a newer version is available on GitHub."""
+    if not deps.update_checker:
+        raise HTTPException(status_code=503, detail="Update checker not available")
+    info = await deps.update_checker.check_for_update()
+    if info:
+        return info
+    return {"current_version": deps.update_checker.current_version, "latest_version": None, "update_available": False}
+
+
+@router.post("/update/install")
+async def install_update():
+    """Download and install the latest update. Requires restart after."""
+    if not deps.update_checker:
+        raise HTTPException(status_code=503, detail="Update checker not available")
+    if not deps.update_checker.update_available:
+        raise HTTPException(status_code=400, detail="No update available")
+    success = await deps.update_checker.download_and_install()
+    if success:
+        return {"status": "installed", "version": deps.update_checker.latest_version, "restart_required": True}
+    raise HTTPException(status_code=500, detail="Update installation failed")

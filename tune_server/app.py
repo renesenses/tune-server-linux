@@ -200,6 +200,12 @@ class TuneServer:
         deps.radio_repo = radio_repo
         deps.radio_fav_repo = RadioFavoriteRepo(self._db)
 
+        # Auto-update checker
+        from tune_server.updater import UpdateChecker
+        self._update_checker = UpdateChecker(event_bus=self._event_bus)
+        deps.update_checker = self._update_checker
+        self._update_checker.start()
+
         # Start sync engine
         await self._sync_engine.start()
 

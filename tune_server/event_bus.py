@@ -68,6 +68,8 @@ class EventType(str, Enum):
     # System events
     SYSTEM_STARTED = "system.started"
     SYSTEM_STOPPING = "system.stopping"
+    SYSTEM_UPDATE_AVAILABLE = "system.update_available"
+    SYSTEM_UPDATE_INSTALLED = "system.update_installed"
 
 
 @dataclass

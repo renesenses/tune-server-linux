@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from tune_server.library.watcher import FileSystemWatcher
     from tune_server.network.mount_manager import MountManager
     from tune_server.streaming.base import StreamingService
+    from tune_server.updater import UpdateChecker
     from tune_server.zones.group import GroupManager
     from tune_server.zones.manager import ZoneManager
 
@@ -31,6 +32,7 @@ class AppDeps:
         self.watcher: FileSystemWatcher | None = None
         self.enricher: MetadataEnricher | None = None
         self.stream_url_resolver: object | None = None  # StreamUrlResolver callable
+        self.update_checker: UpdateChecker | None = None
 
         # Repos (set after DB init)
         self.track_repo: TrackRepo | None = None
