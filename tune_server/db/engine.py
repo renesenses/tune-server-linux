@@ -203,6 +203,49 @@ class SQLiteDatabase:
         """)
         await self.commit()
 
+        # Zone manager tables
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS zone_groups (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                leader_zone_id INTEGER NOT NULL,
+                master_volume REAL DEFAULT 0.5,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS zone_group_members (
+                group_id TEXT NOT NULL REFERENCES zone_groups(id) ON DELETE CASCADE,
+                zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+                volume_offset REAL DEFAULT 0.0,
+                muted INTEGER DEFAULT 0,
+                PRIMARY KEY(group_id, zone_id)
+            )
+        """)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS zone_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                config TEXT NOT NULL,
+                icon TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.commit()
+
+        # Zone column migrations
+        migrations_zone = [
+            "ALTER TABLE zones ADD COLUMN muted INTEGER DEFAULT 0",
+            "ALTER TABLE zones ADD COLUMN online INTEGER DEFAULT 1",
+        ]
+        for sql in migrations_zone:
+            try:
+                await self.connection.execute(sql)
+                await self.commit()
+            except Exception:
+                pass
+
         # Playlist manager tables
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS playlist_links (

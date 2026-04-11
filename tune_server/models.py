@@ -131,11 +131,31 @@ class Zone(BaseModel):
     volume: float = Field(default=0.5, ge=0.0, le=1.0)
     group_id: str | None = None
     sync_delay_ms: int = 0
+    muted: bool = False
+    online: bool = True
     state: PlaybackState = PlaybackState.STOPPED
     current_track: Track | None = None
     position_ms: int = 0
     queue_length: int = 0
     signal_path: SignalPath | None = None
+
+
+class ZoneGroupModel(BaseModel):
+    """Persisted zone group for multi-room."""
+    id: str
+    name: str | None = None
+    leader_zone_id: int
+    master_volume: float = 0.5
+    members: list[dict] = []  # [{zone_id, volume_offset, muted}]
+
+
+class ZoneProfile(BaseModel):
+    """Saved zone scenario/preset."""
+    id: int | None = None
+    name: str
+    description: str | None = None
+    config: dict = {}  # {groups: [...], zones: [{id, volume, muted}]}
+    icon: str | None = None
 
 
 class SignalPathStep(BaseModel):
