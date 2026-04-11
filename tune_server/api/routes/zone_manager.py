@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from tune_server.api.deps import deps
+from tune_server.zones.latency import LatencyMeasurer, ZoneHealthMonitor
 
 router = APIRouter(prefix="/zone-manager", tags=["zone-manager"])
 
@@ -339,3 +340,90 @@ async def delete_profile(profile_id: int):
     await deps.db.execute("DELETE FROM zone_profiles WHERE id = ?", (profile_id,))
     await deps.db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Latency measurement & calibration
+# ---------------------------------------------------------------------------
+
+@router.post("/zones/{zone_id}/measure-latency")
+async def measure_latency(zone_id: int):
+    """Measure output latency for a zone. Returns one-way latency in ms."""
+    zm = deps.zone_manager
+    zone = zm.get_zone(zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+
+    latency = await LatencyMeasurer.measure_zone_latency(zone)
+    if latency is None:
+        raise HTTPException(status_code=503, detail="Latency measurement failed")
+
+    return {"zone_id": zone_id, "latency_ms": latency}
+
+
+@router.post("/groups/{group_id}/calibrate")
+async def calibrate_group(group_id: str):
+    """Auto-calibrate sync delays for all zones in a group."""
+    zm = deps.zone_manager
+
+    # Find leader and followers
+    group_row = await deps.db.fetchone("SELECT * FROM zone_groups WHERE id = ?", (group_id,))
+    if not group_row:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    leader = zm.get_zone(group_row["leader_zone_id"])
+    if not leader:
+        raise HTTPException(status_code=404, detail="Leader zone not found")
+
+    member_rows = await deps.db.fetchall(
+        "SELECT zone_id FROM zone_group_members WHERE group_id = ?", (group_id,))
+    followers = [zm.get_zone(m["zone_id"]) for m in member_rows
+                 if m["zone_id"] != leader.zone_id and zm.get_zone(m["zone_id"])]
+
+    results = await LatencyMeasurer.auto_calibrate_group(leader, followers, db=deps.db)
+    return {"group_id": group_id, "calibration": results}
+
+
+# ---------------------------------------------------------------------------
+# Health monitoring
+# ---------------------------------------------------------------------------
+
+@router.get("/zones/{zone_id}/health")
+async def zone_health(zone_id: int):
+    """Check health of a zone's output device."""
+    zm = deps.zone_manager
+    zone = zm.get_zone(zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+
+    return await ZoneHealthMonitor.check_zone_health(zone)
+
+
+@router.get("/groups/{group_id}/health")
+async def group_health(group_id: str):
+    """Check health of all zones in a group."""
+    zm = deps.zone_manager
+
+    group_row = await deps.db.fetchone("SELECT * FROM zone_groups WHERE id = ?", (group_id,))
+    if not group_row:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    leader = zm.get_zone(group_row["leader_zone_id"])
+    if not leader:
+        raise HTTPException(status_code=404, detail="Leader zone not found")
+
+    member_rows = await deps.db.fetchall(
+        "SELECT zone_id FROM zone_group_members WHERE group_id = ?", (group_id,))
+    followers = [zm.get_zone(m["zone_id"]) for m in member_rows
+                 if m["zone_id"] != leader.zone_id and zm.get_zone(m["zone_id"])]
+
+    return await ZoneHealthMonitor.check_group_health(leader, followers)
+
+
+@router.get("/sync/stats")
+async def sync_stats():
+    """Get drift statistics from the sync engine."""
+    se = deps.sync_engine
+    if not se:
+        return {"stats": {}}
+    return {"stats": se.get_drift_stats()}
