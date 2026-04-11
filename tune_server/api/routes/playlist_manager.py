@@ -5,16 +5,19 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi.responses import PlainTextResponse
 
 from tune_server.api.deps import deps
 from tune_server.playlist_manager.models import (
     TransferRequest, TransferResponse,
     BackupRequest, BackupResponse,
     CreateLinkRequest, PlaylistLink,
+    ExportRequest,
     TransferHistoryEntry,
 )
 from tune_server.playlist_manager.transfer import execute_transfer
+from tune_server.playlist_manager.export_import import export_playlist, import_playlist
 
 router = APIRouter(prefix="/playlist-manager", tags=["playlist-manager"])
 
@@ -333,3 +336,107 @@ async def delete_link(link_id: int):
     await deps.db.execute("DELETE FROM playlist_links WHERE id = ?", (link_id,))
     await deps.db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------------
+
+@router.post("/export")
+async def export_playlist_endpoint(req: ExportRequest):
+    """Export a playlist to CSV, JSON, XSPF, or text."""
+    sm = deps.streaming_manager
+
+    if req.service == "local":
+        row = await deps.db.fetchone(
+            "SELECT name FROM playlists WHERE id = ?", (int(req.playlist_id),))
+        if not row:
+            raise HTTPException(status_code=404, detail="Playlist not found")
+        name = row["name"]
+        track_rows = await deps.db.fetchall(
+            """SELECT t.title, t.artist_name, a.title as album_title,
+                      t.duration_ms, t.source_id, t.isrc
+               FROM playlist_tracks pt
+               JOIN tracks t ON t.id = pt.track_id
+               LEFT JOIN albums a ON a.id = t.album_id
+               WHERE pt.playlist_id = ?
+               ORDER BY pt.position""",
+            (int(req.playlist_id),),
+        )
+        tracks = [dict(r) for r in track_rows]
+    else:
+        svc = sm.service(req.service)
+        if not svc:
+            raise HTTPException(status_code=400, detail=f"Service '{req.service}' not found")
+        try:
+            playlists = await svc.getUserPlaylists()
+            name = next(
+                (p.name for p in playlists if p.source_id == req.playlist_id),
+                "Playlist",
+            )
+            raw_tracks = await svc.getPlaylistTracks(req.playlist_id)
+            tracks = [
+                {"title": t.get("title", ""), "artist_name": t.get("artist_name", ""),
+                 "album_title": t.get("album_title", ""), "duration_ms": t.get("duration_ms", 0),
+                 "isrc": t.get("isrc", "")}
+                for t in raw_tracks
+            ]
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    content, content_type, filename = export_playlist(name, tracks, req.format)
+    return PlainTextResponse(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Import
+# ---------------------------------------------------------------------------
+
+@router.post("/import")
+async def import_playlist_endpoint(
+    file: UploadFile = File(...),
+    format: str = Query("csv"),
+):
+    """Import a playlist from a file (CSV, JSON, XSPF, text).
+    Creates a local playlist with the imported tracks matched to the library."""
+    content = (await file.read()).decode("utf-8")
+    name, tracks = import_playlist(content, format)
+
+    # Create local playlist
+    await deps.db.execute(
+        "INSERT INTO playlists (name, description) VALUES (?, ?)",
+        (name, f"Imported from {file.filename}"),
+    )
+    await deps.db.commit()
+    row = await deps.db.fetchone("SELECT last_insert_rowid() as id")
+    playlist_id = row["id"]
+
+    # Try to match tracks to local library
+    matched = 0
+    for i, t in enumerate(tracks):
+        # Search by title + artist
+        track_row = await deps.db.fetchone(
+            """SELECT id FROM tracks
+               WHERE title LIKE ? AND (artist_name LIKE ? OR ? = '')
+               LIMIT 1""",
+            (f"%{t.title}%", f"%{t.artist}%", t.artist),
+        )
+        if track_row:
+            await deps.db.execute(
+                "INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)",
+                (playlist_id, track_row["id"], i),
+            )
+            matched += 1
+    await deps.db.commit()
+
+    return {
+        "playlist_id": playlist_id,
+        "playlist_name": name,
+        "total_tracks": len(tracks),
+        "matched_to_library": matched,
+        "unmatched": len(tracks) - matched,
+    }
