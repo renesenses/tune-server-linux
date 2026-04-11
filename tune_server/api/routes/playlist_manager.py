@@ -11,14 +11,17 @@ from fastapi.responses import PlainTextResponse
 from tune_server.api.deps import deps
 from tune_server.playlist_manager.models import (
     TransferRequest, TransferResponse,
+    BatchTransferRequest, BatchTransferResponse,
     BackupRequest, BackupResponse,
     CreateLinkRequest, PlaylistLink,
+    MergeRequest,
     ExportRequest,
     TransferHistoryEntry,
 )
 from tune_server.playlist_manager.transfer import execute_transfer
 from tune_server.playlist_manager.export_import import export_playlist, import_playlist
 from tune_server.playlist_manager.sync import sync_playlist
+from tune_server.playlist_manager.batch import batch_transfer, merge_playlists
 
 router = APIRouter(prefix="/playlist-manager", tags=["playlist-manager"])
 
@@ -383,6 +386,77 @@ async def delete_link(link_id: int):
     await deps.db.execute("DELETE FROM playlist_links WHERE id = ?", (link_id,))
     await deps.db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Batch Transfer
+# ---------------------------------------------------------------------------
+
+@router.post("/batch-transfer", response_model=BatchTransferResponse)
+async def batch_transfer_endpoint(req: BatchTransferRequest):
+    """Transfer multiple (or all) playlists from one service to another."""
+    sm = deps.streaming_manager
+    source_svc = sm.service(req.source_service)
+    if not source_svc:
+        raise HTTPException(status_code=400, detail=f"Source '{req.source_service}' not found")
+
+    # Build search func for target
+    if req.target_service == "local":
+        async def search_func(query: str, limit: int):
+            rows = await deps.db.fetchall(
+                """SELECT t.id as source_id, t.title, t.artist_name,
+                          a.title as album_title, t.duration_ms, t.isrc
+                   FROM tracks t LEFT JOIN albums a ON a.id = t.album_id
+                   WHERE t.title LIKE ? OR t.artist_name LIKE ?
+                   LIMIT ?""",
+                (f"%{query}%", f"%{query}%", limit),
+            )
+            return [dict(r) for r in rows]
+    else:
+        target_svc = sm.service(req.target_service)
+        if not target_svc:
+            raise HTTPException(status_code=400, detail=f"Target '{req.target_service}' not found")
+
+        async def search_func(query: str, limit: int):
+            results = await target_svc.search(query, limit=limit)
+            return [
+                {"title": r.title, "artist_name": r.artist, "source_id": r.id,
+                 "duration_ms": getattr(r, "duration_ms", 0)}
+                for r in results
+            ]
+
+    result = await batch_transfer(
+        source_service_name=req.source_service,
+        target_service_name=req.target_service,
+        source_service=source_svc,
+        search_func=search_func,
+        db=deps.db,
+        event_bus=deps.event_bus,
+        playlist_ids=req.playlist_ids,
+        match_threshold=req.match_threshold,
+    )
+    return BatchTransferResponse(
+        batch_id=result["batch_id"],
+        total_playlists=result["total_playlists"],
+        status=result["status"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Merge
+# ---------------------------------------------------------------------------
+
+@router.post("/merge")
+async def merge_playlists_endpoint(req: MergeRequest):
+    """Merge multiple playlists into one, with optional deduplication."""
+    result = await merge_playlists(
+        playlist_sources=req.playlists,
+        target_name=req.target_name,
+        db=deps.db,
+        streaming_manager=deps.streaming_manager,
+        deduplicate=req.deduplicate,
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
