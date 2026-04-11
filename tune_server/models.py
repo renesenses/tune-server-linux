@@ -99,6 +99,7 @@ class Track(BaseModel):
     cover_path: Optional[str] = None
     source: Source = Source.LOCAL
     source_id: Optional[str] = None
+    isrc: Optional[str] = None
 
 
 class Playlist(BaseModel):

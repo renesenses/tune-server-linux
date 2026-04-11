@@ -126,6 +126,7 @@ class SQLiteDatabase:
             "ALTER TABLE zones ADD COLUMN queue_json TEXT",
             "ALTER TABLE tracks ADD COLUMN audio_hash TEXT",
             "ALTER TABLE zones ADD COLUMN sync_delay_ms INTEGER DEFAULT 0",
+            "ALTER TABLE tracks ADD COLUMN isrc TEXT",
         ]
         for sql in migrations:
             try:
@@ -198,6 +199,65 @@ class SQLiteDatabase:
                 album_id INTEGER REFERENCES albums(id) ON DELETE CASCADE,
                 artist_id INTEGER REFERENCES artists(id) ON DELETE CASCADE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.commit()
+
+        # Playlist manager tables
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS playlist_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                local_playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+                service TEXT NOT NULL,
+                service_playlist_id TEXT NOT NULL,
+                service_playlist_name TEXT,
+                sync_direction TEXT NOT NULL DEFAULT 'pull',
+                last_synced_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(local_playlist_id, service, service_playlist_id)
+            )
+        """)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS playlist_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_service TEXT NOT NULL,
+                source_playlist_id TEXT NOT NULL,
+                playlist_name TEXT NOT NULL,
+                track_count INTEGER DEFAULT 0,
+                snapshot_data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS transfer_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation TEXT NOT NULL,
+                source_service TEXT NOT NULL,
+                source_playlist_id TEXT,
+                source_playlist_name TEXT,
+                target_service TEXT,
+                target_playlist_id TEXT,
+                target_playlist_name TEXT,
+                total_tracks INTEGER DEFAULT 0,
+                matched INTEGER DEFAULT 0,
+                approximate INTEGER DEFAULT 0,
+                not_found INTEGER DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'completed',
+                details TEXT,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP
+            )
+        """)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS sync_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                playlist_link_id INTEGER NOT NULL REFERENCES playlist_links(id) ON DELETE CASCADE,
+                interval_minutes INTEGER NOT NULL DEFAULT 1440,
+                last_run_at TIMESTAMP,
+                next_run_at TIMESTAMP,
+                enabled INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(playlist_link_id)
             )
         """)
         await self.commit()

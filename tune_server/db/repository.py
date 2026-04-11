@@ -79,6 +79,7 @@ def _row_to_track(row) -> Track:
         cover_path=row["cover_path"] if "cover_path" in row.keys() else None,
         source=row["source"],
         source_id=row["source_id"],
+        isrc=row["isrc"] if "isrc" in row.keys() else None,
     )
 
 
