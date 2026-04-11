@@ -436,3 +436,88 @@ async def fetch_album_cover(album_id: int):
         return {"ok": True, "cover_path": cover_path, "source": results[0]["source"]}
 
     return {"ok": False, "error": "No cover found"}
+
+
+# ---------------------------------------------------------------------------
+# Fingerprinting (AcoustID/Chromaprint)
+# ---------------------------------------------------------------------------
+
+@router.post("/fingerprint/{track_id}")
+async def fingerprint_track(track_id: int):
+    """Identify a track by its audio fingerprint."""
+    from tune_server.metadata_manager.fingerprint import identify_track
+
+    row = await deps.db.fetchone("SELECT file_path FROM tracks WHERE id = ?", (track_id,))
+    if not row or not row["file_path"]:
+        raise HTTPException(status_code=404, detail="Track or file not found")
+
+    result = await identify_track(row["file_path"])
+    if not result:
+        return {"identified": False, "track_id": track_id}
+
+    return {"identified": True, "track_id": track_id, **result}
+
+
+@router.post("/fingerprint-batch")
+async def fingerprint_batch(track_ids: list[int] | None = None, limit: int = 50):
+    """Batch fingerprint identification. If no IDs given, scans unidentified tracks."""
+    from tune_server.metadata_manager.fingerprint import identify_batch
+
+    if track_ids:
+        rows = await deps.db.fetchall(
+            f"SELECT id, file_path, title, artist_name FROM tracks WHERE id IN ({','.join('?' * len(track_ids))})",
+            tuple(track_ids),
+        )
+    else:
+        rows = await deps.db.fetchall(
+            """SELECT id, file_path, title, artist_name FROM tracks
+               WHERE source = 'local' AND (acoustid IS NULL OR acoustid = '')
+               AND file_path IS NOT NULL
+               LIMIT ?""",
+            (limit,),
+        )
+
+    tracks = [dict(r) for r in rows]
+    result = await identify_batch(tracks, db=deps.db)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Auto-fix background scan
+# ---------------------------------------------------------------------------
+
+@router.post("/auto-fix")
+async def start_auto_fix():
+    """Start a background auto-fix scan of the library."""
+    from tune_server.metadata_manager.auto_fix import get_auto_fix_engine
+    from tune_server.config import settings
+
+    engine = get_auto_fix_engine()
+    if engine.status["status"] == "running":
+        return {"ok": False, "error": "Scan already in progress", "status": engine.status}
+
+    await engine.start_scan(
+        db=deps.db,
+        event_bus=deps.event_bus,
+        lastfm_key=getattr(settings, "lastfm_api_key", ""),
+        discogs_token=getattr(settings, "discogs_token", ""),
+        cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
+    )
+    return {"ok": True, "status": "started"}
+
+
+@router.get("/auto-fix/status")
+async def auto_fix_status():
+    """Get status of the current auto-fix scan."""
+    from tune_server.metadata_manager.auto_fix import get_auto_fix_engine
+    return get_auto_fix_engine().status
+
+
+@router.get("/auto-fix/report")
+async def auto_fix_report(limit: int = 10):
+    """Get the last N auto-fix reports."""
+    rows = await deps.db.fetchall(
+        "SELECT * FROM metadata_fix_reports ORDER BY started_at DESC LIMIT ?",
+        (limit,),
+    )
+    return [dict(r) for r in rows]
