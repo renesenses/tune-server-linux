@@ -1,29 +1,79 @@
 # Tune — Étude préparatoire : Gestion des Zones
 
+## 0. Topologie réelle de référence
+
+![Diagramme 1](images/zm-0.png)
+
+**Cas d'usage clés :**
+- **Bureau** : l'utilisateur switch entre DMP-A8 et Micromega via le préampli physique. Tune doit pouvoir **hot-swap** l'appareil actif sans recréer la zone.
+- **Billard** : Lindemann seul, simple.
+- **Rez de jardin** : Bureau + Billard groupés → musique synchronisée sur les deux zones.
+
+### Nouveau concept : Zone multi-appareils
+
+Une zone peut avoir **plusieurs appareils assignés**, mais **un seul actif à la fois**. Le switch se fait dans l'app — l'utilisateur switch aussi son préampli.
+
+![Diagramme 2](images/zm-1.png)
+
+### Scénarios nommés
+
+| Scénario | Zones | Appareils actifs | Volume |
+|----------|-------|-----------------|--------|
+| Bureau seul | Bureau | DMP-A8 | 60% |
+| Bureau Hi-Res | Bureau | Micromega (DSD) | 55% |
+| Billard | Billard | Lindemann | 50% |
+| Rez de jardin | Bureau + Billard (groupe) | DMP-A8 + Lindemann | 45% |
+
+---
+
 ## 1. Architecture actuelle
 
 ### Qu'est-ce qu'une Zone ?
 
 Une Zone est l'unité de lecture audio dans Tune. Elle combine :
-- Un **appareil de sortie** (DLNA, AirPlay, sortie locale)
+- Un ou plusieurs **appareils de sortie** (un seul actif)
 - Un **player** (contrôle lecture/pause/seek)
 - Une **file d'attente** (queue de morceaux)
 - Un **volume** persisté
 - Un **offset de sync** (pour le multi-room)
 
-![Diagramme 1](images/zm-0.png)
+![Diagramme 3](images/zm-2.png)
 
-### Schéma base de données
+### Schéma base de données (actuel + proposé)
 
 ```sql
+-- Table actuelle
 CREATE TABLE zones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    output_type TEXT NOT NULL DEFAULT 'local',  -- local, dlna, airplay
-    output_device_id TEXT,                       -- device unique ID
+    output_type TEXT NOT NULL DEFAULT 'local',
+    output_device_id TEXT,              -- appareil actif
     volume REAL DEFAULT 0.5,
-    group_id TEXT,                               -- UUID pour le multi-room
-    sync_delay_ms INTEGER DEFAULT 0,             -- offset ±10s
+    group_id TEXT,                      -- UUID multi-room
+    sync_delay_ms INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- NOUVEAU: Appareils assignés à une zone (1:N)
+CREATE TABLE zone_devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+    device_id TEXT NOT NULL,
+    device_name TEXT,
+    output_type TEXT NOT NULL,          -- dlna, airplay, local
+    is_active INTEGER DEFAULT 0,       -- un seul actif par zone
+    sync_delay_ms INTEGER DEFAULT 0,   -- offset par appareil
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(device_id)                  -- un appareil = une seule zone
+);
+
+-- NOUVEAU: Scénarios/Profils nommés
+CREATE TABLE zone_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    config TEXT NOT NULL,               -- JSON: zones, groupes, volumes, appareils actifs
+    icon TEXT,                          -- emoji ou SF Symbol
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
@@ -34,20 +84,22 @@ CREATE TABLE zones (
 
 ### Un appareil peut-il appartenir à plusieurs Zones ?
 
-**Non. La relation Device → Zone est strictement 1:1.**
+**Non. La relation Device → Zone reste 1:1** (un appareil n'est assigné qu'à une seule zone).
 
-![Diagramme 2](images/zm-1.png)
+**Mais une Zone peut avoir plusieurs appareils** (relation Zone → Devices = 1:N) avec un seul actif.
 
-**Pourquoi ?**
-- Un appareil DLNA ne peut recevoir qu'un flux à la fois (`SetAVTransportURI` remplace le flux courant)
-- Un appareil AirPlay ne peut diffuser qu'une source
-- Évite les conflits de contrôle (volume, pause, seek)
+![Diagramme 4](images/zm-3.png)
 
-**Conséquence** : Pour jouer la même musique sur 2 appareils, il faut les **grouper** (multi-room).
+**Pourquoi un seul actif ?**
+- Un appareil DLNA ne peut recevoir qu'un flux à la fois
+- Deux appareils sur le même ampli = double son
+- L'utilisateur switch physiquement son préampli + switch dans Tune
 
-### Une Zone peut-elle changer d'appareil ?
+### Hot-swap d'appareil (nouveau)
 
-**Actuellement non** — il faut supprimer la zone et en recréer une. C'est une limitation à corriger.
+**L'utilisateur peut changer l'appareil actif d'une zone** sans la recréer. La queue, le volume et l'historique sont conservés.
+
+![Diagramme 5](images/zm-4.png)
 
 ### Une Zone peut-elle être dans plusieurs groupes ?
 
@@ -59,7 +111,7 @@ CREATE TABLE zones (
 
 ### Comment ça marche
 
-![Diagramme 3](images/zm-2.png)
+![Diagramme 6](images/zm-5.png)
 
 ### Rôle du Leader vs Followers
 
@@ -72,7 +124,7 @@ CREATE TABLE zones (
 
 ### Synchronisation
 
-![Diagramme 4](images/zm-3.png)
+![Diagramme 7](images/zm-6.png)
 
 **sync_delay_ms** : Chaque zone peut avoir un offset positif ou négatif (±10 secondes) pour compenser les différences de distance acoustique ou de latence réseau.
 
@@ -80,7 +132,7 @@ CREATE TABLE zones (
 
 ## 4. Chaîne audio (Signal Path)
 
-![Diagramme 5](images/zm-4.png)
+![Diagramme 8](images/zm-7.png)
 
 ### Modes de lecture DLNA
 
@@ -96,7 +148,7 @@ CREATE TABLE zones (
 
 ## 5. Découverte des appareils
 
-![Diagramme 6](images/zm-5.png)
+![Diagramme 9](images/zm-8.png)
 
 **Appareils découverts actuels** (réseau Bertrand) :
 - DMP-A8 (DLNA + AirPlay)
@@ -197,7 +249,7 @@ Un profil = un snapshot de la config zones + groupes + volumes.
 
 ## 9. Architecture cible
 
-![Diagramme 7](images/zm-6.png)
+![Diagramme 10](images/zm-9.png)
 
 ---
 
