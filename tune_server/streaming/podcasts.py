@@ -22,14 +22,14 @@ RADIOFRANCE_GRAPHQL_URL = "https://openapi.radiofrance.fr/v1/graphql"
 # Radio France stations
 RF_STATIONS = ["FRANCEINTER", "FRANCECULTURE", "FRANCEMUSIQUE", "FIP", "MOUV", "FRANCEINFO"]
 
-# Station logo URLs (fallback covers)
+# Station logo URLs (from iTunes — always accessible, high-res)
 RF_STATION_LOGOS = {
-    "FRANCEINTER": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/a25e1e21-c0b9-4146-84e0-f2e2b8b0e5fd/200x200_rf_omm_0000001168_dnc.0000000001_n.jpg",
-    "FRANCECULTURE": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/3dbe0f69-45e4-42f4-88a0-5db84f1f27b2/200x200_rf_omm_0000001166_dnc.0000000001_n.jpg",
-    "FRANCEMUSIQUE": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/6e57a1a2-c7f2-41d3-9db2-fa2c4e52e010/200x200_rf_omm_0000001167_dnc.0000000001_n.jpg",
-    "FIP": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/3a03da8f-3b75-4067-b081-a52ecfed7e3b/200x200_rf_omm_0000001170_dnc.0000000001_n.jpg",
-    "MOUV": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/f825a26e-42e3-4a31-9ab0-0b69c33e89a3/200x200_rf_omm_0000001171_dnc.0000000001_n.jpg",
-    "FRANCEINFO": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/59238e3e-51d0-4199-83c0-3dd66a9b0234/200x200_rf_omm_0000001283_dnc.0000000001_n.jpg",
+    "FRANCEINTER": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts116/v4/40/57/c9/4057c986-9e9b-2f27-471e-669790b9788b/mza_16146822716049881226.jpg/600x600bb.jpg",
+    "FRANCECULTURE": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/58/6b/0b/586b0b16-ef9d-d160-5593-eee87d567358/mza_4954724521098021025.jpg/600x600bb.jpg",
+    "FRANCEMUSIQUE": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/52/98/63/52986395-b451-c974-4781-a1aad9bf09c5/mza_2035646446873974817.jpg/600x600bb.jpg",
+    "FIP": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/5a/5b/c1/5a5bc1ee-a965-d95b-c074-edc0f0fddbfc/mza_12768080290056813898.jpg/600x600bb.jpg",
+    "MOUV": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ba/10/9f/ba109f72-d875-27a7-f46d-74f6668f721b/mza_4429136207653695156.jpg/600x600bb.jpg",
+    "FRANCEINFO": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts122/v4/bd/3a/6b/bd3a6b04-b759-5511-6cf5-83cd52630baf/mza_12873134609460958889.jpg/600x600bb.jpg",
 }
 
 
@@ -82,7 +82,7 @@ class Podcast:
 
 RADIO_FRANCE_PODCASTS = [
     Podcast("La Science, CQFD", "France Culture", "https://radiofrance-podcast.net/podcast09/rss_14312.xml",
-            cover_url=RF_STATION_LOGOS["FRANCECULTURE"], description="Sciences et recherche"),
+            cover_url=RF_STATION_LOGOS["FRANCECULTURE"], description="Sciences et recherche"),  # noqa: E501
     Podcast("Les Pieds sur terre", "France Culture", "https://radiofrance-podcast.net/podcast09/rss_10078.xml",
             cover_url=RF_STATION_LOGOS["FRANCECULTURE"], description="Reportages et témoignages"),
     Podcast("Le Masque et la Plume", "France Inter", "https://radiofrance-podcast.net/podcast09/rss_14007.xml",
