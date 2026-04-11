@@ -312,47 +312,35 @@ graph TD
 
 ---
 
-## 7. Questions clés à trancher
+## 7. Décisions validées
 
-### Q1 : Un appareil peut-il appartenir à plusieurs zones ?
+Résultat de l'entretien avec Bertrand (11 avril 2026) :
 
-**Réponse actuelle : Non (1:1)**
+| # | Question | Décision |
+|---|----------|----------|
+| 1 | Découverte d'un appareil | **Suggestion** de créer une zone (notification) |
+| 2 | Hot-swap (changer appareil) | **Lecture s'arrête**, relance manuelle sur le nouvel appareil |
+| 3 | Persistance des groupes | **Oui**, persistés en base (survivent au reboot) |
+| 4 | Volume multi-room | **Master + offset** par zone (ex: master 50%, bureau +10%) |
+| 5 | Contenu d'un scénario | **Groupement + volumes** par zone |
+| 6 | Activation scénario | À décider lors du design UI |
+| 7 | Appareil hors ligne | **Zone reste "Hors ligne"**, reconnexion automatique |
+| 8 | Zones simultanées max | **5+** (toute la maison) |
+| 9 | Précision sync | **<50ms** (qualité audiophile) |
+| 10 | Volume sans lecture | **Toujours accessible** (même si rien ne joue) |
+| 11 | Gapless multi-room | **Parfait ou rien** — si un renderer ne supporte pas, désactivé pour le groupe |
+| 12 | Retirer zone d'un groupe | **Mute** (reste dans le groupe mais silencieux) |
 
-**Faut-il changer ?** Probablement non. Les raisons techniques sont solides :
-- Un appareil ne peut jouer qu'un flux
-- Créer des "zones virtuelles" par appareil n'a pas de sens audio
+### Principes de design retenus
 
-**Alternative** : Permettre de **déplacer** un appareil d'une zone à l'autre sans recréer la zone (hot-swap).
-
-### Q2 : Faut-il des zones automatiques ?
-
-**Proposition** : À la découverte d'un appareil, créer automatiquement une zone avec le nom de l'appareil. L'utilisateur peut ensuite renommer, grouper, supprimer.
-
-### Q3 : Faut-il persister les groupes ?
-
-**Proposition** : Oui. Sauvegarder les groupes en DB pour qu'ils survivent au redémarrage du serveur. Ajouter une table `zone_groups`.
-
-### Q4 : Faut-il des profils/scénarios ?
-
-**Proposition** : Oui à terme. Exemples :
-- "Salon" : DMP-A8 seul, volume 60%
-- "Soirée" : DMP-A8 + Sonos × 2, volume 40%
-- "Bureau" : Micromega, volume 50%
-
-Un profil = un snapshot de la config zones + groupes + volumes.
-
-### Q5 : Faut-il mesurer la latence ?
-
-**Proposition** : Oui. Envoyer un signal test, mesurer le round-trip, ajuster automatiquement `sync_delay_ms`. Mais complexe avec DLNA (pas de feedback latence standardisé).
-
-### Q6 : Volumes liés dans un groupe ?
-
-**Options** :
-- A) Volumes indépendants (actuel) — chaque zone a son volume
-- B) Volume groupe relatif — un master + offsets par zone
-- C) Volume synchronisé — toutes les zones au même volume
-
-**Recommandation** : Option B (master + offsets). Le plus flexible.
+- **Zone = 1 appareil** (1:1 strict, hot-swap pour changer)
+- **Groupes persistés** en base avec table `zone_groups`
+- **Volume master** par groupe + offsets individuels
+- **Sync <50ms** avec mesure de latence automatique
+- **Gapless tout-ou-rien** par groupe
+- **Mute par zone** dans un groupe (pas de dégroupage pour couper une zone)
+- **Scénarios** = presets nommés de groupement + volumes
+- **5+ zones** supportées simultanément
 
 ---
 
@@ -360,24 +348,27 @@ Un profil = un snapshot de la config zones + groupes + volumes.
 
 ### Phase 1 : UX Zone Manager (prioritaire)
 
-1. **Hot-swap d'appareil** : changer l'appareil d'une zone sans la recréer
-2. **Zones automatiques** : créer une zone à la découverte d'un appareil
-3. **Persistance des groupes** : sauvegarder group_id au redémarrage
-4. **UI Zone Manager** : drag & drop pour grouper, renommer, supprimer
-5. **Volume groupe** : master volume avec offsets par zone
+1. **Hot-swap d'appareil** : changer l'appareil d'une zone (arrêt lecture, swap, relance manuelle)
+2. **Suggestion de zone** : notification quand un nouvel appareil est découvert
+3. **Persistance des groupes** : table `zone_groups` en DB
+4. **UI Zone Manager** : liste des zones, grouper/dégrouper, renommer, supprimer
+5. **Volume master + offsets** : slider master par groupe + offset par zone
+6. **Mute par zone** : couper une zone dans un groupe sans la retirer
+7. **Statut "Hors ligne"** : zone grisée avec reconnexion automatique
+8. **Volume toujours accessible** : même sans lecture active
 
-### Phase 2 : Sync avancée
+### Phase 2 : Sync audiophile
 
-6. **Mesure de latence** : signal test pour calibrer sync_delay_ms
-7. **Gapless multi-room** : coordination SetNextAVTransportURI sur tous les renderers
-8. **Indicateur de santé** : statut par zone (connecté, décalé, erreur)
+9. **Mesure de latence** : signal test pour calibrer sync_delay_ms automatiquement
+10. **Sync <50ms** : polling haute fréquence + correction anticipée
+11. **Gapless multi-room** : coordination SetNextAVTransportURI, tout-ou-rien par groupe
+12. **Indicateur de santé** : statut par zone (connecté, décalé, muted, erreur)
 
-### Phase 3 : Fonctionnalités avancées
+### Phase 3 : Scénarios et avancé
 
-9. **Profils/Scénarios** : sauvegarder et rappeler des configs
-10. **Paire stéréo** : left/right sur 2 appareils (nécessite DSP)
-11. **Routage de canaux** : mono, downmix, upmix
-12. **Zones favorites** : accès rapide depuis le transport bar
+13. **Scénarios nommés** : sauvegarder/rappeler des configs (groupement + volumes)
+14. **Paire stéréo** : left/right sur 2 appareils (v2, nécessite DSP)
+15. **Zones favorites** : accès rapide depuis le transport bar
 
 ---
 
@@ -429,10 +420,12 @@ graph TD
 | Multi-room | ✅ | ✅ | ✅ | ✅ |
 | Sync < 50ms | ✅ | ✅ | ⚠️ ~500ms | ✅ |
 | Groupement persisté | ✅ | ✅ | ❌ | ✅ |
-| Zones automatiques | ✅ | ✅ | ❌ | ✅ |
-| Volume groupe | ✅ | ✅ | ❌ | ✅ |
+| Suggestion de zone | ✅ | ✅ | ❌ | ✅ |
+| Volume master + offset | ✅ | ✅ | ❌ | ✅ |
+| Mute par zone (groupe) | ✅ | ✅ | ❌ | ✅ |
 | Hot-swap appareil | ✅ | ❌ | ❌ | ✅ |
-| Profils/Scénarios | ❌ | ❌ | ❌ | ✅ |
+| Gapless multi-room | ✅ | ✅ | ⚠️ | ✅ (tout-ou-rien) |
+| Scénarios nommés | ❌ | ❌ | ❌ | ✅ |
+| Mesure latence auto | ✅ | ✅ | ❌ | ✅ |
 | Paire stéréo | ✅ | ✅ | ❌ | v2 |
-| Mesure latence | ✅ | ✅ | ❌ | v2 |
 | Open source | ❌ | ❌ | ✅ | ✅ |
