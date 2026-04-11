@@ -521,3 +521,132 @@ async def auto_fix_report(limit: int = 10):
         (limit,),
     )
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Duplicates (audio hash MD5)
+# ---------------------------------------------------------------------------
+
+@router.post("/duplicates/scan")
+async def scan_duplicates_endpoint(limit: int = 5000):
+    """Scan library for duplicate tracks by audio content hash."""
+    from tune_server.metadata_manager.duplicate import scan_duplicates
+    result = await scan_duplicates(deps.db, limit=limit)
+    return result
+
+
+@router.get("/duplicates")
+async def list_duplicates():
+    """List detected duplicate groups."""
+    rows = await deps.db.fetchall(
+        """SELECT d.id, d.audio_hash, d.resolved,
+                  ta.id as track_a_id, ta.title as track_a_title, ta.file_path as track_a_path,
+                  tb.id as track_b_id, tb.title as track_b_title, tb.file_path as track_b_path
+           FROM duplicate_tracks d
+           JOIN tracks ta ON ta.id = d.track_id_a
+           JOIN tracks tb ON tb.id = d.track_id_b
+           WHERE d.resolved = 0
+           ORDER BY d.audio_hash""",
+    )
+    return [dict(r) for r in rows]
+
+
+@router.post("/duplicates/resolve")
+async def resolve_duplicate(duplicate_id: int, keep_track_id: int):
+    """Resolve a duplicate — keep one track, optionally delete the other."""
+    row = await deps.db.fetchone(
+        "SELECT * FROM duplicate_tracks WHERE id = ?", (duplicate_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Duplicate not found")
+
+    # Mark as resolved
+    await deps.db.execute(
+        "UPDATE duplicate_tracks SET resolved = 1 WHERE id = ?", (duplicate_id,))
+    await deps.db.commit()
+
+    # Determine which to remove
+    remove_id = row["track_id_b"] if keep_track_id == row["track_id_a"] else row["track_id_a"]
+
+    return {
+        "ok": True,
+        "kept": keep_track_id,
+        "removable": remove_id,
+        "note": "Track not deleted — use DELETE /library/tracks/{id} to remove",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Cover upload
+# ---------------------------------------------------------------------------
+
+@router.post("/covers/album/{album_id}/upload")
+async def upload_album_cover(album_id: int):
+    """Upload a cover image for an album (multipart form)."""
+    from fastapi import UploadFile, File as FastAPIFile
+    # This endpoint needs to be called with multipart/form-data
+    # For now, provide the basic structure
+    return {"error": "Use PUT /library/albums/{id}/artwork with multipart upload"}
+
+
+@router.post("/covers/track/{track_id}/embed")
+async def embed_cover_in_file(track_id: int):
+    """Embed the album cover into the track's audio file tags."""
+    import mutagen
+    from mutagen.id3 import APIC
+    from pathlib import Path
+
+    row = await deps.db.fetchone(
+        """SELECT t.file_path, a.cover_path
+           FROM tracks t
+           LEFT JOIN albums a ON a.id = t.album_id
+           WHERE t.id = ?""",
+        (track_id,),
+    )
+    if not row or not row["file_path"]:
+        raise HTTPException(status_code=404, detail="Track not found")
+    if not row["cover_path"]:
+        return {"ok": False, "error": "No cover art available for this album"}
+
+    cover_path = Path(row["cover_path"])
+    if not cover_path.is_absolute():
+        from tune_server.config import settings
+        cover_path = Path(settings.artwork_cache_dir) / cover_path.name
+
+    if not cover_path.exists():
+        return {"ok": False, "error": f"Cover file not found: {cover_path}"}
+
+    try:
+        audio = mutagen.File(row["file_path"])
+        if audio is None:
+            return {"ok": False, "error": "Unsupported audio format"}
+
+        cover_data = cover_path.read_bytes()
+        mime = "image/jpeg" if cover_path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+
+        # ID3 (MP3)
+        if hasattr(audio, 'tags') and hasattr(audio.tags, 'add'):
+            if audio.tags is None:
+                audio.add_tags()
+            audio.tags.add(APIC(
+                encoding=3, mime=mime, type=3,
+                desc="Front", data=cover_data,
+            ))
+            audio.save()
+            return {"ok": True, "embedded": True, "size": len(cover_data)}
+
+        # FLAC
+        if hasattr(audio, 'pictures'):
+            from mutagen.flac import Picture
+            pic = Picture()
+            pic.type = 3
+            pic.mime = mime
+            pic.data = cover_data
+            audio.clear_pictures()
+            audio.add_picture(pic)
+            audio.save()
+            return {"ok": True, "embedded": True, "size": len(cover_data)}
+
+        return {"ok": False, "error": "Cover embedding not supported for this format"}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
