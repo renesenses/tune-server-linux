@@ -52,6 +52,13 @@ class EventType(str, Enum):
     DEVICE_LOST = "device.lost"
     DEVICE_UPDATED = "device.updated"
 
+    # Playlist Manager events
+    PLAYLIST_MANAGER_TRANSFER_STARTED = "playlist_manager.transfer.started"
+    PLAYLIST_MANAGER_TRANSFER_PROGRESS = "playlist_manager.transfer.progress"
+    PLAYLIST_MANAGER_TRANSFER_COMPLETED = "playlist_manager.transfer.completed"
+    PLAYLIST_MANAGER_SYNC_COMPLETED = "playlist_manager.sync.completed"
+    PLAYLIST_MANAGER_BACKUP_COMPLETED = "playlist_manager.backup.completed"
+
     # Network events
     NETWORK_SHARE_DISCOVERED = "network.share.discovered"
     NETWORK_SHARE_LOST = "network.share.lost"
