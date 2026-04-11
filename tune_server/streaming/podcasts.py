@@ -22,6 +22,16 @@ RADIOFRANCE_GRAPHQL_URL = "https://openapi.radiofrance.fr/v1/graphql"
 # Radio France stations
 RF_STATIONS = ["FRANCEINTER", "FRANCECULTURE", "FRANCEMUSIQUE", "FIP", "MOUV", "FRANCEINFO"]
 
+# Station logo URLs (fallback covers)
+RF_STATION_LOGOS = {
+    "FRANCEINTER": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/a25e1e21-c0b9-4146-84e0-f2e2b8b0e5fd/200x200_rf_omm_0000001168_dnc.0000000001_n.jpg",
+    "FRANCECULTURE": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/3dbe0f69-45e4-42f4-88a0-5db84f1f27b2/200x200_rf_omm_0000001166_dnc.0000000001_n.jpg",
+    "FRANCEMUSIQUE": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/6e57a1a2-c7f2-41d3-9db2-fa2c4e52e010/200x200_rf_omm_0000001167_dnc.0000000001_n.jpg",
+    "FIP": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/3a03da8f-3b75-4067-b081-a52ecfed7e3b/200x200_rf_omm_0000001170_dnc.0000000001_n.jpg",
+    "MOUV": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/f825a26e-42e3-4a31-9ab0-0b69c33e89a3/200x200_rf_omm_0000001171_dnc.0000000001_n.jpg",
+    "FRANCEINFO": "https://www.radiofrance.fr/s3/cruiser-production/2022/05/59238e3e-51d0-4199-83c0-3dd66a9b0234/200x200_rf_omm_0000001283_dnc.0000000001_n.jpg",
+}
+
 
 class PodcastEpisode:
     def __init__(self, title: str, description: str = "", audio_url: str = "",
@@ -72,25 +82,25 @@ class Podcast:
 
 RADIO_FRANCE_PODCASTS = [
     Podcast("La Science, CQFD", "France Culture", "https://radiofrance-podcast.net/podcast09/rss_14312.xml",
-            description="Sciences et recherche"),
+            cover_url=RF_STATION_LOGOS["FRANCECULTURE"], description="Sciences et recherche"),
     Podcast("Les Pieds sur terre", "France Culture", "https://radiofrance-podcast.net/podcast09/rss_10078.xml",
-            description="Reportages et témoignages"),
+            cover_url=RF_STATION_LOGOS["FRANCECULTURE"], description="Reportages et témoignages"),
     Podcast("Le Masque et la Plume", "France Inter", "https://radiofrance-podcast.net/podcast09/rss_14007.xml",
-            description="Critiques cinéma, littérature, théâtre"),
+            cover_url=RF_STATION_LOGOS["FRANCEINTER"], description="Critiques cinéma, littérature, théâtre"),
     Podcast("Affaires sensibles", "France Inter", "https://radiofrance-podcast.net/podcast09/rss_13915.xml",
-            description="Grandes affaires criminelles et judiciaires"),
+            cover_url=RF_STATION_LOGOS["FRANCEINTER"], description="Grandes affaires criminelles et judiciaires"),
     Podcast("La Terre au carré", "France Inter", "https://radiofrance-podcast.net/podcast09/rss_16361.xml",
-            description="Environnement et écologie"),
+            cover_url=RF_STATION_LOGOS["FRANCEINTER"], description="Environnement et écologie"),
     Podcast("Le 7/9", "France Inter", "https://radiofrance-podcast.net/podcast09/rss_10241.xml",
-            description="La matinale de France Inter"),
+            cover_url=RF_STATION_LOGOS["FRANCEINTER"], description="La matinale de France Inter"),
     Podcast("Grand bien vous fasse", "France Inter", "https://radiofrance-podcast.net/podcast09/rss_18722.xml",
-            description="Société et bien-être"),
+            cover_url=RF_STATION_LOGOS["FRANCEINTER"], description="Société et bien-être"),
     Podcast("Par Jupiter !", "France Inter", "https://radiofrance-podcast.net/podcast09/rss_16929.xml",
-            description="Humour et actualité"),
+            cover_url=RF_STATION_LOGOS["FRANCEINTER"], description="Humour et actualité"),
     Podcast("FIP 360", "FIP", "https://radiofrance-podcast.net/podcast09/rss_23357.xml",
-            description="Musique et découvertes"),
+            cover_url=RF_STATION_LOGOS["FIP"], description="Musique et découvertes"),
     Podcast("Certains l'aiment Fip", "FIP", "https://radiofrance-podcast.net/podcast09/rss_23187.xml",
-            description="Interviews et sessions musicales"),
+            cover_url=RF_STATION_LOGOS["FIP"], description="Interviews et sessions musicales"),
 ]
 
 
@@ -167,6 +177,7 @@ class PodcastService:
 
                     edges = data.get("data", {}).get("shows", {}).get("edges", [])
                     station_name = station.replace("FRANCE", "France ").replace("FIP", "FIP").replace("MOUV", "Mouv'").strip()
+                    station_logo = RF_STATION_LOGOS.get(station, "")
                     for e in edges:
                         node = e["node"]
                         rss = (node.get("podcast") or {}).get("rss", "")
@@ -174,11 +185,28 @@ class PodcastService:
                             name=node["title"],
                             artist=station_name,
                             feed_url=rss or "",
+                            cover_url=station_logo,
                             description=(node.get("standFirst") or "")[:200],
                             source_id=node["id"],
                         ).to_dict())
                         # Store show URL for later episode lookup
                         shows[-1]["show_url"] = node.get("url", "")
+
+            # Enrich covers from RSS channel images (async, best-effort)
+            async with aiohttp.ClientSession() as session:
+                for show in shows:
+                    rss_url = show.get("feed_url", "")
+                    if not rss_url or show.get("cover_url"):
+                        continue
+                    try:
+                        async with session.get(rss_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status == 200:
+                                xml_text = await resp.text()
+                                cover = self._extract_channel_image(xml_text)
+                                if cover:
+                                    show["cover_url"] = cover
+                    except Exception:
+                        pass
 
             logger.info("radiofrance_shows_loaded", count=len(shows))
             return shows if shows else [p.to_dict() for p in RADIO_FRANCE_PODCASTS]
@@ -333,6 +361,25 @@ class PodcastService:
                 ).to_dict())
 
         return episodes
+
+    @staticmethod
+    def _extract_channel_image(xml_text: str) -> str:
+        """Extract channel cover image from RSS XML."""
+        try:
+            root = ET.fromstring(xml_text)
+            ns = {"itunes": "http://www.itunes.com/dtds/podcast-1.0.dtd"}
+            channel = root.find("channel")
+            if channel is None:
+                return ""
+            itunes_img = channel.find("itunes:image", ns)
+            if itunes_img is not None:
+                return itunes_img.get("href", "")
+            img_url = channel.find("image/url")
+            if img_url is not None:
+                return img_url.text or ""
+        except Exception:
+            pass
+        return ""
 
     @staticmethod
     def _parse_duration(text: str) -> int:
