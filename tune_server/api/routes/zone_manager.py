@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from tune_server.api.deps import deps
+from tune_server.zones.gapless import check_group_gapless
 from tune_server.zones.latency import LatencyMeasurer, ZoneHealthMonitor
 
 router = APIRouter(prefix="/zone-manager", tags=["zone-manager"])
@@ -427,3 +428,67 @@ async def sync_stats():
     if not se:
         return {"stats": {}}
     return {"stats": se.get_drift_stats()}
+
+
+# ---------------------------------------------------------------------------
+# Gapless multi-room check
+# ---------------------------------------------------------------------------
+
+@router.get("/groups/{group_id}/gapless")
+async def check_gapless(group_id: str):
+    """Check if all zones in a group support gapless playback."""
+    zm = deps.zone_manager
+    group_row = await deps.db.fetchone("SELECT * FROM zone_groups WHERE id = ?", (group_id,))
+    if not group_row:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    member_rows = await deps.db.fetchall(
+        "SELECT zone_id FROM zone_group_members WHERE group_id = ?", (group_id,))
+    zones = [zm.get_zone(m["zone_id"]) for m in member_rows if zm.get_zone(m["zone_id"])]
+
+    capable = await check_group_gapless(zones)
+    return {
+        "group_id": group_id,
+        "gapless_capable": capable,
+        "zones": [
+            {"zone_id": z.zone_id, "name": z.name,
+             "supports_gapless": getattr(getattr(z.output, 'capabilities', None), 'supports_gapless', False)}
+            for z in zones
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Zone status overview
+# ---------------------------------------------------------------------------
+
+@router.get("/overview")
+async def zone_overview():
+    """Complete overview: all zones with status, groups, profiles."""
+    zm = deps.zone_manager
+    all_zones = zm.list_zones() if hasattr(zm, 'list_zones') else []
+
+    zones = []
+    for z in all_zones:
+        zone_data = z.to_model() if hasattr(z, 'to_model') else {"id": z.zone_id, "name": z.name}
+        # Add online/muted from DB
+        row = await deps.db.fetchone("SELECT muted, online FROM zones WHERE id = ?", (z.zone_id,))
+        if row:
+            zone_data["muted"] = bool(row["muted"]) if "muted" in row.keys() else False
+            zone_data["online"] = bool(row["online"]) if "online" in row.keys() else True
+        zones.append(zone_data)
+
+    groups = await list_groups()
+    profiles_rows = await deps.db.fetchall("SELECT id, name, icon FROM zone_profiles ORDER BY name")
+    profiles = [{"id": r["id"], "name": r["name"], "icon": r["icon"]} for r in profiles_rows]
+
+    # Sync stats
+    se = deps.sync_engine
+    drift = se.get_drift_stats() if se else {}
+
+    return {
+        "zones": zones,
+        "groups": groups,
+        "profiles": profiles,
+        "sync_stats": drift,
+    }
