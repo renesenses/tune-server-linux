@@ -16,6 +16,9 @@ from tune_server.metadata_manager.models import (
     BatchWriteTagsRequest,
 )
 from tune_server.metadata_manager.tag_writer import write_tags, read_tags
+from tune_server.metadata_manager.matcher import lookup_track, lookup_album
+from tune_server.metadata_manager.enricher import enrich_track, enrich_album
+from tune_server.metadata_manager.cover_fetcher import search_covers
 
 router = APIRouter(prefix="/metadata", tags=["metadata"])
 
@@ -321,3 +324,115 @@ async def accept_all_suggestions(min_confidence: float = 0.9):
 
     await deps.db.commit()
     return {"ok": True, "applied": applied}
+
+
+# ---------------------------------------------------------------------------
+# Lookup (MusicBrainz)
+# ---------------------------------------------------------------------------
+
+@router.post("/lookup")
+async def lookup_track_endpoint(title: str, artist: str = "", album: str = ""):
+    """Search MusicBrainz for a track. Returns candidates."""
+    results = await lookup_track(title, artist, album)
+    return {"results": results}
+
+
+@router.post("/lookup-album")
+async def lookup_album_endpoint(title: str, artist: str = ""):
+    """Search MusicBrainz for an album. Returns candidates."""
+    results = await lookup_album(title, artist)
+    return {"results": results}
+
+
+# ---------------------------------------------------------------------------
+# Enrichment (multi-source)
+# ---------------------------------------------------------------------------
+
+@router.post("/enrich/{track_id}")
+async def enrich_track_endpoint(track_id: int):
+    """Enrich a track from MusicBrainz + Last.fm. Creates suggestions."""
+    row = await deps.db.fetchone("SELECT * FROM tracks WHERE id = ?", (track_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Track not found")
+
+    album_row = await deps.db.fetchone("SELECT title FROM albums WHERE id = ?", (row["album_id"],)) if row.get("album_id") else None
+
+    from tune_server.config import settings
+    result = await enrich_track(
+        track_id=track_id,
+        title=row["title"],
+        artist=row.get("artist_name") or "",
+        album=album_row["title"] if album_row else "",
+        db=deps.db,
+        lastfm_key=getattr(settings, "lastfm_api_key", ""),
+        discogs_token=getattr(settings, "discogs_token", ""),
+        cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
+    )
+    return result
+
+
+@router.post("/enrich-album/{album_id}")
+async def enrich_album_endpoint(album_id: int):
+    """Enrich an album from MusicBrainz + fetch cover art."""
+    row = await deps.db.fetchone("SELECT * FROM albums WHERE id = ?", (album_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    from tune_server.config import settings
+    result = await enrich_album(
+        album_id=album_id,
+        title=row["title"],
+        artist=row.get("artist_name") or "",
+        db=deps.db,
+        discogs_token=getattr(settings, "discogs_token", ""),
+        cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Covers
+# ---------------------------------------------------------------------------
+
+@router.get("/covers/search")
+async def search_covers_endpoint(album: str, artist: str = "", release_id: str = ""):
+    """Search for album covers from Cover Art Archive + Discogs."""
+    from tune_server.config import settings
+    results = await search_covers(
+        album_title=album,
+        artist_name=artist,
+        musicbrainz_release_id=release_id,
+        discogs_token=getattr(settings, "discogs_token", ""),
+        cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
+    )
+    return {"results": results}
+
+
+@router.post("/covers/album/{album_id}")
+async def fetch_album_cover(album_id: int):
+    """Auto-fetch and assign a cover to an album."""
+    row = await deps.db.fetchone("SELECT * FROM albums WHERE id = ?", (album_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    from tune_server.config import settings
+    mb_id = row.get("musicbrainz_release_id") or "" if "musicbrainz_release_id" in row.keys() else ""
+
+    results = await search_covers(
+        album_title=row["title"],
+        artist_name=row.get("artist_name") or "",
+        musicbrainz_release_id=mb_id,
+        discogs_token=getattr(settings, "discogs_token", ""),
+        cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
+    )
+
+    if results:
+        cover_path = results[0]["local_path"]
+        await deps.db.execute(
+            "UPDATE albums SET cover_path = ? WHERE id = ?",
+            (cover_path, album_id),
+        )
+        await deps.db.commit()
+        return {"ok": True, "cover_path": cover_path, "source": results[0]["source"]}
+
+    return {"ok": False, "error": "No cover found"}
