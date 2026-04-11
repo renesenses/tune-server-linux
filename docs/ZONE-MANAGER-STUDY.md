@@ -27,29 +27,23 @@ graph TD
 - **Billard** : Lindemann seul, simple.
 - **Rez de jardin** : Bureau + Billard groupés → musique synchronisée sur les deux zones.
 
-### Nouveau concept : Zone multi-appareils
+### Modèle : Zone = 1 appareil (1:1)
 
-Une zone peut avoir **plusieurs appareils assignés**, mais **un seul actif à la fois**. Le switch se fait dans l'app — l'utilisateur switch aussi son préampli.
+Chaque zone a **un seul appareil**. Pour changer d'appareil sur une zone, on fait un **hot-swap** (queue + position conservées).
 
 ```mermaid
 graph LR
-    subgraph Zone Bureau
-        direction TB
-        A1["🟢 DMP-A8 (actif)"]
-        A2["⚪ Micromega (standby)"]
-    end
-
-    subgraph Zone Billard
-        direction TB
-        A3["🟢 Lindemann (actif)"]
-    end
-
-    Zone_Bureau[Zone Bureau] ---|Groupe| Zone_Billard[Zone Billard]
-
-    style A1 fill:#10B981,color:#fff
-    style A2 fill:#6B7280,color:#fff
-    style A3 fill:#10B981,color:#fff
+    Z1[Zone Bureau<br>DMP-A8] --> SPK1[Préampli → Enceintes]
+    Z2[Zone Billard<br>Lindemann] --> SPK2[Ampli → Enceintes]
+    
+    Z1 -.->|"hot-swap"| Z1B["Zone Bureau<br>Micromega"]
+    
+    style Z1 fill:#10B981,color:#fff
+    style Z2 fill:#3B82F6,color:#fff
+    style Z1B fill:#F59E0B,color:#fff,stroke-dasharray: 5 5
 ```
+
+Pour écouter sur les 2 zones : **groupement** Bureau + Billard.
 
 ### Scénarios nommés
 
@@ -67,7 +61,7 @@ graph LR
 ### Qu'est-ce qu'une Zone ?
 
 Une Zone est l'unité de lecture audio dans Tune. Elle combine :
-- Un ou plusieurs **appareils de sortie** (un seul actif)
+- Un **appareil de sortie** (DLNA, AirPlay, sortie locale)
 - Un **player** (contrôle lecture/pause/seek)
 - Une **file d'attente** (queue de morceaux)
 - Un **volume** persisté
@@ -109,19 +103,6 @@ CREATE TABLE zones (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- NOUVEAU: Appareils assignés à une zone (1:N)
-CREATE TABLE zone_devices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
-    device_id TEXT NOT NULL,
-    device_name TEXT,
-    output_type TEXT NOT NULL,          -- dlna, airplay, local
-    is_active INTEGER DEFAULT 0,       -- un seul actif par zone
-    sync_delay_ms INTEGER DEFAULT 0,   -- offset par appareil
-    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(device_id)                  -- un appareil = une seule zone
-);
-
 -- NOUVEAU: Scénarios/Profils nommés
 CREATE TABLE zone_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,34 +120,29 @@ CREATE TABLE zone_profiles (
 
 ### Un appareil peut-il appartenir à plusieurs Zones ?
 
-**Non. La relation Device → Zone reste 1:1** (un appareil n'est assigné qu'à une seule zone).
-
-**Mais une Zone peut avoir plusieurs appareils** (relation Zone → Devices = 1:N) avec un seul actif.
+**Non. La relation Device → Zone est strictement 1:1.**
 
 ```mermaid
 graph LR
-    D1[DMP-A8] -->|assigné| Z1[Zone Bureau]
-    D2[Micromega] -->|assigné| Z1
-    D3[Lindemann] -->|assigné| Z2[Zone Billard]
-    D4[Sonos] -->|assigné| Z3[Zone Chambre]
+    D1[DMP-A8] -->|assigné à| Z1[Zone Bureau]
+    D2[Lindemann] -->|assigné à| Z2[Zone Billard]
+    D3[Sonos] -->|assigné à| Z3[Zone Chambre]
     
     D1 -.->|❌ interdit| Z2
-    
-    Z1 -->|"🟢 actif: DMP-A8"| OUT1[Sortie]
     
     style Z1 fill:#7574F3,color:#fff
     style Z2 fill:#3B82F6,color:#fff
     style Z3 fill:#10B981,color:#fff
 ```
 
-**Pourquoi un seul actif ?**
-- Un appareil DLNA ne peut recevoir qu'un flux à la fois
-- Deux appareils sur le même ampli = double son
-- L'utilisateur switch physiquement son préampli + switch dans Tune
+**Pourquoi ?**
+- Un appareil DLNA/AirPlay ne peut recevoir qu'un flux à la fois
+- Évite les conflits de contrôle (volume, pause, seek)
+- Pour jouer sur 2 appareils → **grouper** les zones
 
 ### Hot-swap d'appareil (nouveau)
 
-**L'utilisateur peut changer l'appareil actif d'une zone** sans la recréer. La queue, le volume et l'historique sont conservés.
+**Changer l'appareil d'une zone** sans la recréer. La queue, le volume et la position sont conservés.
 
 ```mermaid
 sequenceDiagram
@@ -176,11 +152,13 @@ sequenceDiagram
     participant A2 as Micromega
 
     Note over U: Switch préampli → Input 2
-    U->>T: Zone Bureau → activer Micromega
+    U->>T: Zone Bureau → changer vers Micromega
     T->>A1: Stop
+    T->>T: Garde queue + position
     T->>A2: Play (même track, même position)
-    Note over T: Queue + volume conservés
 ```
+
+**Cas d'usage** : Bureau avec DMP-A8 et Micromega sur le même préampli. L'utilisateur switch physiquement l'entrée du préampli et change l'appareil dans Tune.
 
 ### Une Zone peut-elle être dans plusieurs groupes ?
 
