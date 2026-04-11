@@ -526,3 +526,40 @@ class TidalService(StreamingService):
             name=ar.name or "Unknown",
             source_id=str(ar.id),
         )
+
+    # ------------------------------------------------------------------
+    # Playlist write operations
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_playlist_write(self) -> bool:
+        return True
+
+    async def create_playlist(self, name: str, description: str | None = None) -> str | None:
+        if not await self._ensure_authenticated():
+            return None
+        try:
+            playlist = await asyncio.to_thread(
+                self._session.user.create_playlist, name, description or ""
+            )
+            logger.info("tidal_playlist_created", name=name, id=playlist.id)
+            return str(playlist.id)
+        except Exception:
+            logger.exception("tidal_create_playlist_error")
+            return None
+
+    async def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]) -> int:
+        if not await self._ensure_authenticated():
+            return 0
+        try:
+            playlist = await asyncio.to_thread(self._session.playlist, playlist_id)
+            # tidalapi expects list of track IDs as ints
+            int_ids = [int(tid) for tid in track_ids if tid.isdigit()]
+            if not int_ids:
+                return 0
+            await asyncio.to_thread(playlist.add, int_ids)
+            logger.info("tidal_tracks_added", playlist_id=playlist_id, count=len(int_ids))
+            return len(int_ids)
+        except Exception:
+            logger.exception("tidal_add_tracks_error")
+            return 0

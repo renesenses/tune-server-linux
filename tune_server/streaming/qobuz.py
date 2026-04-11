@@ -360,3 +360,40 @@ class QobuzService(StreamingService):
             source_id=str(ar.get("id", "")),
             image_path=ar.get("image", {}).get("large") if isinstance(ar.get("image"), dict) else None,
         )
+
+    # ------------------------------------------------------------------
+    # Playlist write operations
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_playlist_write(self) -> bool:
+        return True
+
+    async def create_playlist(self, name: str, description: str | None = None) -> str | None:
+        try:
+            params = {
+                "name": name,
+                "is_public": "false",
+            }
+            if description:
+                params["description"] = description
+            data = await self._api_get("playlist/create", params)
+            pid = str(data.get("id", ""))
+            logger.info("qobuz_playlist_created", name=name, id=pid)
+            return pid
+        except Exception:
+            logger.exception("qobuz_create_playlist_error")
+            return None
+
+    async def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]) -> int:
+        try:
+            ids_str = ",".join(track_ids)
+            await self._api_get("playlist/addTracks", {
+                "playlist_id": playlist_id,
+                "track_ids": ids_str,
+            })
+            logger.info("qobuz_tracks_added", playlist_id=playlist_id, count=len(track_ids))
+            return len(track_ids)
+        except Exception:
+            logger.exception("qobuz_add_tracks_error")
+            return 0

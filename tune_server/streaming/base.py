@@ -91,3 +91,24 @@ class StreamingService(ABC):
     async def get_playlist_tracks(self, playlist_id: str) -> list[Track]:
         """Return tracks for a playlist. Override in subclasses."""
         return []
+
+    # ------------------------------------------------------------------
+    # Playlist write operations (optional — override in subclasses)
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_playlist_write(self) -> bool:
+        """Whether this service supports creating/modifying playlists."""
+        return False
+
+    async def create_playlist(self, name: str, description: str | None = None) -> str | None:
+        """Create a playlist on the service. Returns the playlist ID or None."""
+        return None
+
+    async def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]) -> int:
+        """Add tracks to a playlist. Returns the number successfully added."""
+        return 0
+
+    async def remove_tracks_from_playlist(self, playlist_id: str, track_ids: list[str]) -> int:
+        """Remove tracks from a playlist. Returns the number removed."""
+        return 0

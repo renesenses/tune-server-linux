@@ -18,8 +18,24 @@ from tune_server.playlist_manager.models import (
 )
 from tune_server.playlist_manager.transfer import execute_transfer
 from tune_server.playlist_manager.export_import import export_playlist, import_playlist
+from tune_server.playlist_manager.sync import sync_playlist
 
 router = APIRouter(prefix="/playlist-manager", tags=["playlist-manager"])
+
+
+@router.get("/services")
+async def get_services_capabilities():
+    """List streaming services with their playlist write capabilities."""
+    sm = deps.streaming_manager
+    services = {}
+    for name, status in sm.status.items():
+        svc = sm.service(name)
+        services[name] = {
+            "authenticated": status.get("authenticated", False) if isinstance(status, dict) else getattr(status, "authenticated", False),
+            "supports_write": svc.supports_playlist_write if svc else False,
+        }
+    services["local"] = {"authenticated": True, "supports_write": True}
+    return services
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +344,37 @@ async def create_link(req: CreateLinkRequest):
         sync_direction=row["sync_direction"],
         created_at=row["created_at"],
     )
+
+
+@router.post("/links/{link_id}/sync")
+async def trigger_sync(link_id: int):
+    """Trigger a sync for a playlist link."""
+    row = await deps.db.fetchone("SELECT * FROM playlist_links WHERE id = ?", (link_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Link not found")
+
+    link = dict(row)
+    sm = deps.streaming_manager
+    svc = sm.service(link["service"])
+    if not svc:
+        raise HTTPException(status_code=400, detail=f"Service '{link['service']}' not available")
+
+    # Build search func for push matching
+    async def search_func(query: str, limit: int):
+        results = await svc.search(query, limit=limit)
+        return [
+            {"title": r.title, "artist_name": r.artist, "source_id": r.id,
+             "duration_ms": getattr(r, "duration_ms", 0)}
+            for r in results
+        ]
+
+    result = await sync_playlist(
+        link=link,
+        db=deps.db,
+        streaming_service=svc,
+        search_func=search_func,
+    )
+    return result
 
 
 @router.delete("/links/{link_id}")
