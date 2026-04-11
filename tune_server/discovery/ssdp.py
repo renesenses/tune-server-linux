@@ -139,7 +139,23 @@ class SsdpDiscovery:
                         except Exception:
                             logger.debug("ssdp_device_create_error", location=location)
 
-                    await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN)
+                    # Try SSDP search — handle Windows multicast errors gracefully
+                    try:
+                        await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN)
+                    except OSError as os_err:
+                        # WinError 10065 (host unreachable) or similar — retry with source IP
+                        logger.warning("ssdp_multicast_error", error=str(os_err))
+                        try:
+                            source_ip = self._get_local_ip()
+                            if source_ip:
+                                logger.info("ssdp_retry_with_source", source=source_ip)
+                                await async_search(
+                                    _on_response, timeout=10,
+                                    search_target=MEDIA_RENDERER_URN,
+                                    source=source_ip,
+                                )
+                        except Exception:
+                            logger.debug("ssdp_retry_also_failed")
 
                     # Mark lost devices
                     async with self._lock:
@@ -237,5 +253,23 @@ class SsdpDiscovery:
             except Exception:
                 logger.debug("ssdp_device_create_error", location=location)
 
-        await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN)
+        try:
+            await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN)
+        except OSError:
+            source_ip = self._get_local_ip()
+            if source_ip:
+                await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN, source=source_ip)
         return list(self._devices.values())
+
+    @staticmethod
+    def _get_local_ip() -> str | None:
+        """Get the local IP address for binding SSDP multicast."""
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return None
