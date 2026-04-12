@@ -116,6 +116,7 @@ class Settings(BaseSettings):
 
     # Enrichment
     discogs_token: str = ""  # Personal Discogs API token for artist images
+    lastfm_api_key: str = ""  # Last.fm API key for metadata enrichment
     enrich_on_scan: bool = False  # Auto-enrich after library scan
 
     # Artwork

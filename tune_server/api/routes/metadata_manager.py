@@ -38,6 +38,49 @@ async def update_track_metadata(track_id: int, update: TrackMetadataUpdate):
     if "custom_tags" in fields:
         fields["custom_tags"] = json.dumps(fields["custom_tags"])
 
+    # artist_name → resolve to artist_id (artist_name is not a column in PG)
+    if "artist_name" in fields:
+        artist_name = fields.pop("artist_name")
+        # Find or create artist
+        row = await deps.db.fetchone(
+            "SELECT id FROM artists WHERE name = ?", (artist_name,))
+        if row:
+            fields["artist_id"] = row["id"]
+        else:
+            await deps.db.execute(
+                "INSERT INTO artists (name) VALUES (?)", (artist_name,))
+            await deps.db.commit()
+            row = await deps.db.fetchone(
+                "SELECT id FROM artists WHERE name = ?", (artist_name,))
+            if row:
+                fields["artist_id"] = row["id"]
+
+    # album_title → resolve to album_id
+    if "album_title" in fields:
+        album_title = fields.pop("album_title")
+        # Get current track's artist_id for album lookup
+        artist_id = fields.get("artist_id")
+        if not artist_id:
+            tr = await deps.db.fetchone("SELECT artist_id FROM tracks WHERE id = ?", (track_id,))
+            artist_id = tr["artist_id"] if tr else None
+        row = await deps.db.fetchone(
+            "SELECT id FROM albums WHERE title = ? AND artist_id = ?", (album_title, artist_id))
+        if row:
+            fields["album_id"] = row["id"]
+        elif artist_id:
+            await deps.db.execute(
+                "INSERT INTO albums (title, artist_id, source) VALUES (?, ?, 'local')",
+                (album_title, artist_id))
+            await deps.db.commit()
+            row = await deps.db.fetchone(
+                "SELECT id FROM albums WHERE title = ? AND artist_id = ? ORDER BY id DESC LIMIT 1",
+                (album_title, artist_id))
+            if row:
+                fields["album_id"] = row["id"]
+
+    if not fields:
+        return {"ok": True, "updated": 0}
+
     set_clauses = ", ".join(f"{k} = ?" for k in fields)
     values = list(fields.values()) + [track_id]
 
@@ -744,4 +787,667 @@ async def auto_fix_albums_from_paths():
         "tracks_fixed": fixed,
         "albums_created": len(created_albums),
         "total_unknown": len(rows),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fix missing years from Tidal
+# ---------------------------------------------------------------------------
+
+@router.post("/fix-years-tidal")
+async def fix_years_from_tidal():
+    """Fill missing album years by searching Tidal.
+
+    For each album with year IS NULL or 0, search Tidal by title + artist.
+    If a match is found, update the year in the local database.
+    """
+    import asyncio
+    from difflib import SequenceMatcher
+
+    tidal = deps.streaming_services.get("tidal")
+    if not tidal:
+        raise HTTPException(status_code=400, detail="Tidal not connected")
+
+    # Get all albums missing year
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE (al.year IS NULL OR al.year = 0)
+           ORDER BY al.title""",
+    )
+
+    if not rows:
+        return {"ok": True, "total": 0, "fixed": 0, "not_found": 0}
+
+    fixed = 0
+    not_found = 0
+    results = []
+    missing = []
+
+    def _normalize(s: str) -> str:
+        import unicodedata
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+        s = s.lower().strip()
+        if s.startswith("the "):
+            s = s[4:]
+        # Remove quality suffixes like (96kHz/24bit)
+        import re
+        s = re.sub(r"\s*\(\d+k?hz[^)]*\)", "", s, flags=re.IGNORECASE)
+        return s
+
+    for row in rows:
+        album_title = row["title"]
+        artist_name = row["artist_name"] or ""
+        album_id = row["id"]
+
+        if not album_title or album_title == "Unknown Album":
+            not_found += 1
+            continue
+
+        query = f"{artist_name} {album_title}".strip()
+        try:
+            search_result = await tidal.search(query, limit=10)
+        except Exception:
+            not_found += 1
+            continue
+
+        # Find best matching album
+        best_year = None
+        best_score = 0.0
+
+        norm_title = _normalize(album_title)
+        norm_artist = _normalize(artist_name)
+
+        for album in search_result.albums:
+            t_score = SequenceMatcher(None, norm_title, _normalize(album.title)).ratio()
+            a_score = SequenceMatcher(None, norm_artist, _normalize(album.artist_name)).ratio() if norm_artist else 1.0
+            combined = t_score * 0.7 + a_score * 0.3
+
+            if combined > best_score and album.year and album.year > 1900:
+                best_score = combined
+                best_year = album.year
+
+        if best_year and best_score >= 0.6:
+            await deps.db.execute(
+                "UPDATE albums SET year = ? WHERE id = ?",
+                (best_year, album_id),
+            )
+            fixed += 1
+            results.append({"album": album_title, "artist": artist_name, "year": best_year, "score": round(best_score, 2)})
+        else:
+            not_found += 1
+            missing.append({"id": album_id, "album": album_title, "artist": artist_name})
+
+        # Rate limit: avoid hammering Tidal
+        await asyncio.sleep(0.3)
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "total": len(rows),
+        "fixed": fixed,
+        "not_found": not_found,
+        "details": results,
+        "missing": missing,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fix missing years from file tags
+# ---------------------------------------------------------------------------
+
+@router.post("/fix-years-tags")
+async def fix_years_from_file_tags():
+    """Fill missing album years by reading the DATE/YEAR tag from audio files.
+
+    For each album without year, pick a track, read its tags with mutagen,
+    and extract the year.
+    """
+    from pathlib import Path
+
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, t.file_path
+           FROM albums al
+           JOIN tracks t ON t.album_id = al.id
+           WHERE (al.year IS NULL OR al.year = 0)
+             AND t.file_path IS NOT NULL
+           ORDER BY al.id""",
+    )
+
+    if not rows:
+        return {"ok": True, "total": 0, "fixed": 0}
+
+    # Group by album (take first track per album)
+    albums: dict[int, dict] = {}
+    for r in rows:
+        aid = r["id"]
+        if aid not in albums:
+            albums[aid] = {"title": r["title"], "file_path": r["file_path"]}
+
+    fixed = 0
+    results = []
+    tag_keys = ["date", "TDRC", "TYER", "\xa9day", "year", "DATE", "YEAR"]
+
+    for album_id, info in albums.items():
+        fp = Path(info["file_path"])
+        if not fp.exists():
+            continue
+
+        try:
+            import mutagen
+            audio = mutagen.File(str(fp), easy=True)
+            if not audio or not audio.tags:
+                continue
+
+            year = None
+            for key in tag_keys:
+                val = audio.tags.get(key)
+                if val:
+                    raw = str(val[0]) if isinstance(val, list) else str(val)
+                    raw = raw.strip()[:4]
+                    if raw.isdigit() and 1900 < int(raw) < 2030:
+                        year = int(raw)
+                        break
+
+            if not year:
+                # Try non-easy mode
+                audio2 = mutagen.File(str(fp))
+                if audio2 and audio2.tags:
+                    for key in tag_keys:
+                        val = audio2.tags.get(key)
+                        if val:
+                            raw = str(val.text[0]) if hasattr(val, "text") else str(val[0]) if isinstance(val, list) else str(val)
+                            raw = raw.strip()[:4]
+                            if raw.isdigit() and 1900 < int(raw) < 2030:
+                                year = int(raw)
+                                break
+
+            if year:
+                await deps.db.execute(
+                    "UPDATE albums SET year = ? WHERE id = ?", (year, album_id))
+                fixed += 1
+                results.append({"album": info["title"], "year": year})
+        except Exception:
+            continue
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "total": len(albums),
+        "fixed": fixed,
+        "not_found": len(albums) - fixed,
+        "details": results,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fix missing years from Last.fm
+# ---------------------------------------------------------------------------
+
+@router.post("/fix-years-lastfm")
+async def fix_years_from_lastfm():
+    """Fill missing album years by querying Last.fm API."""
+    import asyncio
+    import aiohttp
+    from tune_server.config import settings
+
+    api_key = getattr(settings, "lastfm_api_key", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Last.fm API key not configured")
+
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE (al.year IS NULL OR al.year = 0)
+           ORDER BY al.title""",
+    )
+
+    if not rows:
+        return {"ok": True, "total": 0, "fixed": 0}
+
+    fixed = 0
+    results = []
+
+    async with aiohttp.ClientSession() as session:
+        for row in rows:
+            album_title = row["title"]
+            artist_name = row["artist_name"] or ""
+            album_id = row["id"]
+
+            if not album_title or album_title in ("Unknown Album", ""):
+                continue
+
+            try:
+                params = {
+                    "method": "album.getinfo",
+                    "api_key": api_key,
+                    "artist": artist_name,
+                    "album": album_title,
+                    "format": "json",
+                }
+                async with session.get(
+                    "https://ws.audioscrobbler.com/2.0/", params=params, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+
+                album_info = data.get("album", {})
+                # Last.fm doesn't always have year directly, but wiki may have it
+                wiki = album_info.get("wiki", {})
+                published = wiki.get("published", "")
+                # Try to extract year from tags or release date
+                year = None
+
+                # Check tags for year-like values
+                tags = album_info.get("tags", {}).get("tag", [])
+                for tag in tags:
+                    name = tag.get("name", "")
+                    if name.isdigit() and 1900 < int(name) < 2030:
+                        year = int(name)
+                        break
+
+                # Fallback: parse published date
+                if not year and published:
+                    parts = published.strip().split()
+                    for p in parts:
+                        if p.isdigit() and 1900 < int(p) < 2030:
+                            year = int(p)
+                            break
+
+                if year:
+                    await deps.db.execute(
+                        "UPDATE albums SET year = ? WHERE id = ?", (year, album_id))
+                    fixed += 1
+                    results.append({"album": album_title, "artist": artist_name, "year": year})
+
+            except Exception:
+                continue
+
+            await asyncio.sleep(0.25)
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "total": len(rows),
+        "fixed": fixed,
+        "not_found": len(rows) - fixed,
+        "details": results,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fix missing years from Discogs
+# ---------------------------------------------------------------------------
+
+@router.post("/fix-years-discogs")
+async def fix_years_from_discogs():
+    """Fill missing album years by querying Discogs database API."""
+    import asyncio
+    import aiohttp
+    import re
+    from tune_server.config import settings
+
+    token = settings.discogs_token
+    if not token:
+        raise HTTPException(status_code=400, detail="Discogs token not configured")
+
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE (al.year IS NULL OR al.year = 0)
+           ORDER BY al.title""",
+    )
+
+    if not rows:
+        return {"ok": True, "total": 0, "fixed": 0, "missing": []}
+
+    def _clean(s: str) -> str:
+        s = re.sub(r"\s*\(\d+k?hz[^)]*\)", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*\(.*?(deluxe|remaster|bonus|edition|disc).*?\)", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*-\s*Disc\s*[A-Z0-9]+$", "", s, flags=re.IGNORECASE)
+        return s.strip()
+
+    fixed = 0
+    results = []
+    missing = []
+    headers = {
+        "User-Agent": "TuneServer/0.5.7 +https://mozaiklabs.fr",
+        "Authorization": f"Discogs token={token}",
+    }
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        for row in rows:
+            album_title = row["title"]
+            artist_name = row["artist_name"] or ""
+            album_id = row["id"]
+
+            if not album_title or album_title in ("Unknown Album", ""):
+                missing.append({"id": album_id, "album": album_title, "artist": artist_name})
+                continue
+
+            clean_title = _clean(album_title)
+            clean_artist = _clean(artist_name)
+
+            params = {
+                "release_title": clean_title,
+                "type": "release",
+                "per_page": "5",
+            }
+            if clean_artist and clean_artist not in ("?", "Unknown Artist", "Various Interprets"):
+                params["artist"] = clean_artist
+
+            try:
+                async with session.get(
+                    "https://api.discogs.com/database/search",
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status == 429:
+                        await asyncio.sleep(5)
+                        async with session.get(
+                            "https://api.discogs.com/database/search",
+                            params=params,
+                            timeout=aiohttp.ClientTimeout(total=15),
+                        ) as resp2:
+                            if resp2.status != 200:
+                                missing.append({"id": album_id, "album": album_title, "artist": artist_name})
+                                continue
+                            data = await resp2.json()
+                    elif resp.status != 200:
+                        missing.append({"id": album_id, "album": album_title, "artist": artist_name})
+                        continue
+                    else:
+                        data = await resp.json()
+
+                hits = data.get("results", [])
+                year = None
+                for hit in hits:
+                    y = hit.get("year")
+                    if y and isinstance(y, (int, str)):
+                        y = int(str(y)[:4]) if str(y)[:4].isdigit() else None
+                        if y and 1900 < y < 2030:
+                            year = y
+                            break
+
+                if year:
+                    await deps.db.execute(
+                        "UPDATE albums SET year = ? WHERE id = ?", (year, album_id))
+                    fixed += 1
+                    results.append({"album": album_title, "artist": artist_name, "year": year})
+                else:
+                    missing.append({"id": album_id, "album": album_title, "artist": artist_name})
+
+            except Exception:
+                missing.append({"id": album_id, "album": album_title, "artist": artist_name})
+                continue
+
+            # Discogs rate limit: ~60 req/min
+            await asyncio.sleep(1.1)
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "total": len(rows),
+        "fixed": fixed,
+        "not_found": len(missing),
+        "details": results,
+        "missing": missing,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fix missing years from MusicBrainz
+# ---------------------------------------------------------------------------
+
+@router.post("/fix-years-musicbrainz")
+async def fix_years_from_musicbrainz():
+    """Fill missing album years by querying MusicBrainz release API."""
+    import asyncio
+    import aiohttp
+    import re
+    import unicodedata
+
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE (al.year IS NULL OR al.year = 0)
+           ORDER BY al.title""",
+    )
+
+    if not rows:
+        return {"ok": True, "total": 0, "fixed": 0}
+
+    def _clean(s: str) -> str:
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+        s = re.sub(r"\s*\(\d+k?hz[^)]*\)", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*\(.*?(deluxe|remaster|bonus|edition|live|disc).*?\)", "", s, flags=re.IGNORECASE)
+        return s.strip()
+
+    fixed = 0
+    results = []
+    headers = {"User-Agent": "TuneServer/0.5.7 (contact@mozaiklabs.fr)"}
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        for row in rows:
+            album_title = row["title"]
+            artist_name = row["artist_name"] or ""
+            album_id = row["id"]
+
+            if not album_title or album_title in ("Unknown Album", ""):
+                continue
+
+            clean_title = _clean(album_title)
+            clean_artist = _clean(artist_name)
+
+            query = f'release:"{clean_title}"'
+            if clean_artist and clean_artist != "?":
+                query += f' AND artist:"{clean_artist}"'
+
+            try:
+                params = {"query": query, "fmt": "json", "limit": "5"}
+                async with session.get(
+                    "https://musicbrainz.org/ws/2/release/",
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+
+                releases = data.get("releases", [])
+                year = None
+                for rel in releases:
+                    date = rel.get("date", "")
+                    if date and len(date) >= 4:
+                        y = date[:4]
+                        if y.isdigit() and 1900 < int(y) < 2030:
+                            year = int(y)
+                            break
+
+                if year:
+                    await deps.db.execute(
+                        "UPDATE albums SET year = ? WHERE id = ?", (year, album_id))
+                    fixed += 1
+                    results.append({"album": album_title, "artist": artist_name, "year": year})
+
+            except Exception:
+                continue
+
+            # MusicBrainz rate limit: 1 req/s
+            await asyncio.sleep(1.1)
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "total": len(rows),
+        "fixed": fixed,
+        "not_found": len(rows) - fixed,
+        "details": results,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fix missing genres from Last.fm + Discogs
+# ---------------------------------------------------------------------------
+
+_GENRE_MAP = {
+    "rock": "Rock", "alternative rock": "Rock", "indie rock": "Rock",
+    "classic rock": "Rock", "hard rock": "Rock", "progressive rock": "Progressive Rock",
+    "post-rock": "Rock", "psychedelic rock": "Rock", "punk rock": "Punk",
+    "pop": "Pop", "indie pop": "Pop", "synthpop": "Pop", "electropop": "Pop",
+    "dream pop": "Pop", "chamber pop": "Pop", "art pop": "Pop",
+    "jazz": "Jazz", "smooth jazz": "Jazz", "free jazz": "Jazz",
+    "vocal jazz": "Jazz", "cool jazz": "Jazz", "bebop": "Jazz",
+    "hard bop": "Jazz", "post-bop": "Jazz", "jazz fusion": "Jazz",
+    "avant-garde jazz": "Jazz", "contemporary jazz": "Jazz",
+    "electronic": "Electronic", "ambient": "Electronic", "downtempo": "Electronic",
+    "idm": "Electronic", "trip-hop": "Electronic", "house": "Electronic",
+    "techno": "Electronic", "electronica": "Electronic", "chillout": "Electronic",
+    "classical": "Classical", "contemporary classical": "Classical",
+    "modern classical": "Classical", "baroque": "Classical", "romantic": "Classical",
+    "orchestral": "Classical", "chamber music": "Classical", "opera": "Classical",
+    "blues": "Blues", "electric blues": "Blues", "delta blues": "Blues",
+    "soul": "Soul", "neo-soul": "Soul", "r&b": "R&B", "rnb": "R&B",
+    "funk": "Funk",
+    "hip-hop": "Hip-Hop", "hip hop": "Hip-Hop", "rap": "Hip-Hop",
+    "metal": "Metal", "heavy metal": "Metal", "progressive metal": "Metal",
+    "folk": "Folk", "indie folk": "Folk", "folk rock": "Folk",
+    "country": "Country", "alt-country": "Country",
+    "reggae": "Reggae", "dub": "Reggae",
+    "world": "World", "afrobeat": "World", "latin": "World", "bossa nova": "World",
+    "chanson": "Chanson", "chanson francaise": "Chanson", "french": "Chanson",
+    "singer-songwriter": "Singer-Songwriter",
+    "soundtrack": "Soundtrack", "film score": "Soundtrack",
+    "new wave": "New Wave", "post-punk": "New Wave",
+    "experimental": "Experimental", "avant-garde": "Experimental",
+}
+
+
+def _normalize_genre(tags: list[str]) -> str | None:
+    for tag in tags:
+        normalized = _GENRE_MAP.get(tag.lower().strip())
+        if normalized:
+            return normalized
+    for tag in tags:
+        t = tag.strip()
+        if len(t) > 2 and len(t) < 30 and not t.isdigit():
+            return t.title()
+    return None
+
+
+@router.post("/fix-genres")
+async def fix_genres():
+    """Fill missing album genres using Last.fm tags + Discogs fallback."""
+    import asyncio
+    import aiohttp
+    import re
+    from tune_server.config import settings
+
+    lastfm_key = settings.lastfm_api_key
+    discogs_token = settings.discogs_token
+
+    if not lastfm_key and not discogs_token:
+        raise HTTPException(status_code=400, detail="No Last.fm or Discogs credentials configured")
+
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE al.genre IS NULL OR al.genre = ''
+           ORDER BY al.title""",
+    )
+
+    if not rows:
+        return {"ok": True, "total": 0, "fixed": 0}
+
+    fixed = 0
+    results = []
+    headers_discogs = {
+        "User-Agent": "TuneServer/0.5.7 +https://mozaiklabs.fr",
+        "Authorization": f"Discogs token={discogs_token}",
+    } if discogs_token else {}
+
+    async with aiohttp.ClientSession() as session:
+        for row in rows:
+            album_title = row["title"]
+            artist_name = row["artist_name"] or ""
+            album_id = row["id"]
+
+            if not album_title or album_title in ("Unknown Album", ""):
+                continue
+
+            genre = None
+
+            # 1) Last.fm
+            if lastfm_key:
+                try:
+                    params = {
+                        "method": "album.getinfo",
+                        "api_key": lastfm_key,
+                        "artist": artist_name,
+                        "album": re.sub(r"\s*\(\d+k?hz[^)]*\)", "", album_title, flags=re.IGNORECASE).strip(),
+                        "format": "json",
+                    }
+                    async with session.get(
+                        "https://ws.audioscrobbler.com/2.0/",
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            tags = [t["name"] for t in data.get("album", {}).get("tags", {}).get("tag", [])]
+                            genre = _normalize_genre(tags)
+                except Exception:
+                    pass
+
+            # 2) Discogs fallback
+            if not genre and discogs_token:
+                try:
+                    clean = re.sub(r"\s*\(\d+k?hz[^)]*\)", "", album_title, flags=re.IGNORECASE).strip()
+                    params = {"release_title": clean, "type": "release", "per_page": "3"}
+                    if artist_name and artist_name not in ("Unknown Artist", "?"):
+                        params["artist"] = artist_name
+                    async with session.get(
+                        "https://api.discogs.com/database/search",
+                        params=params, headers=headers_discogs,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            for hit in data.get("results", []):
+                                styles = hit.get("style", []) + hit.get("genre", [])
+                                genre = _normalize_genre(styles)
+                                if genre:
+                                    break
+                        elif resp.status == 429:
+                            await asyncio.sleep(5)
+                except Exception:
+                    pass
+
+            if genre:
+                await deps.db.execute(
+                    "UPDATE albums SET genre = ? WHERE id = ?", (genre, album_id))
+                fixed += 1
+                results.append({"album": album_title, "artist": artist_name, "genre": genre})
+
+            await asyncio.sleep(0.3)
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "total": len(rows),
+        "fixed": fixed,
+        "not_found": len(rows) - fixed,
+        "details": results[:100],
     }

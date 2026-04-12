@@ -172,10 +172,16 @@ async def create_group(req: CreateGroupRequest):
 
     # Add members
     for zid in req.zone_ids:
-        await deps.db.execute(
-            "INSERT OR REPLACE INTO zone_group_members (group_id, zone_id) VALUES (?, ?)",
-            (group_id, zid),
-        )
+        if getattr(deps.db, 'engine_name', 'sqlite') == 'postgres':
+            await deps.db.execute(
+                "INSERT INTO zone_group_members (group_id, zone_id) VALUES (?, ?) ON CONFLICT (group_id, zone_id) DO NOTHING",
+                (group_id, zid),
+            )
+        else:
+            await deps.db.execute(
+                "INSERT OR REPLACE INTO zone_group_members (group_id, zone_id) VALUES (?, ?)",
+                (group_id, zid),
+            )
         # Tag zone with group_id
         await deps.db.execute(
             "UPDATE zones SET group_id = ? WHERE id = ?",
@@ -192,6 +198,18 @@ async def create_group(req: CreateGroupRequest):
         pass
 
     return {"id": group_id, "name": req.name, "zone_ids": req.zone_ids}
+
+
+@router.patch("/groups/{group_id}")
+async def rename_group(group_id: str, req: dict):
+    """Rename a zone group."""
+    name = req.get("name")
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    await deps.db.execute(
+        "UPDATE zone_groups SET name = ? WHERE id = ?", (name, group_id))
+    await deps.db.commit()
+    return {"ok": True, "id": group_id, "name": name}
 
 
 @router.delete("/groups/{group_id}")
@@ -465,30 +483,57 @@ async def check_gapless(group_id: str):
 @router.get("/overview")
 async def zone_overview():
     """Complete overview: all zones with status, groups, profiles."""
-    zm = deps.zone_manager
-    all_zones = zm.list_zones() if hasattr(zm, 'list_zones') else []
+    import traceback as _tb
+    try:
+        # Get zones from DB
+        zone_rows = await deps.db.fetchall(
+            "SELECT * FROM zones ORDER BY id"
+        )
+        # Build device IP lookup from discovered devices
+        device_hosts: dict[str, str] = {}
+        dm = getattr(deps, 'discovery_manager', None)
+        if dm and hasattr(dm, 'list_devices'):
+            try:
+                for dev in dm.list_devices():
+                    did = dev.get("id", "") if isinstance(dev, dict) else getattr(dev, 'id', "")
+                    h = dev.get("host", "") if isinstance(dev, dict) else getattr(dev, 'host', "")
+                    if did and h:
+                        device_hosts[did] = h
+            except Exception:
+                pass
 
-    zones = []
-    for z in all_zones:
-        zone_data = z.to_model() if hasattr(z, 'to_model') else {"id": z.zone_id, "name": z.name}
-        # Add online/muted from DB
-        row = await deps.db.fetchone("SELECT muted, online FROM zones WHERE id = ?", (z.zone_id,))
-        if row:
-            zone_data["muted"] = bool(row["muted"]) if "muted" in row.keys() else False
-            zone_data["online"] = bool(row["online"]) if "online" in row.keys() else True
-        zones.append(zone_data)
+        zones = []
+        for r in zone_rows:
+            device_id = r.get("output_device_id") or ""
+            host = device_hosts.get(device_id)
+            zones.append({
+                "id": r["id"],
+                "name": r["name"],
+                "output_type": r.get("output_type", ""),
+                "output_device_id": device_id,
+                "host": host,
+                "volume": r.get("volume", 0.5),
+                "muted": bool(r.get("muted", 0)),
+                "online": bool(r.get("online", 1)),
+                "group_id": r.get("group_id"),
+                "sync_delay_ms": r.get("sync_delay_ms", 0),
+            })
 
-    groups = await list_groups()
-    profiles_rows = await deps.db.fetchall("SELECT id, name, icon FROM zone_profiles ORDER BY name")
-    profiles = [{"id": r["id"], "name": r["name"], "icon": r["icon"]} for r in profiles_rows]
+        groups = await list_groups()
+        profiles_rows = await deps.db.fetchall("SELECT id, name, icon FROM zone_profiles ORDER BY name")
+        profiles = [{"id": r["id"], "name": r["name"], "icon": r.get("icon")} for r in profiles_rows]
 
-    # Sync stats
-    se = deps.sync_engine
-    drift = se.get_drift_stats() if se else {}
+        # Sync stats
+        se = getattr(deps, 'sync_engine', None)
+        drift = se.get_drift_stats() if se and hasattr(se, 'get_drift_stats') else {}
 
-    return {
-        "zones": zones,
-        "groups": groups,
-        "profiles": profiles,
-        "sync_stats": drift,
-    }
+        return {
+            "zones": zones,
+            "groups": groups,
+            "profiles": profiles,
+            "sync_stats": drift,
+        }
+    except Exception as e:
+        import structlog
+        structlog.get_logger().exception("zone_overview_error")
+        raise HTTPException(status_code=500, detail=str(e))
