@@ -650,3 +650,98 @@ async def embed_cover_in_file(track_id: int):
 
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Auto-fix albums from file paths
+# ---------------------------------------------------------------------------
+
+@router.post("/auto-fix-albums")
+async def auto_fix_albums_from_paths():
+    """Auto-detect album names from file paths for tracks in 'Unknown Album'.
+
+    Parses path pattern: .../Artist/AlbumName/track.flac
+    Creates or finds albums and reassigns tracks.
+    """
+    rows = await deps.db.fetchall(
+        """SELECT t.id, t.title, t.file_path, t.artist_id, ar.name as artist_name,
+                  a.id as album_id, a.title as album_title
+           FROM tracks t
+           LEFT JOIN artists ar ON ar.id = t.artist_id
+           LEFT JOIN albums a ON a.id = t.album_id
+           WHERE (a.title = 'Unknown Album' OR a.title IS NULL)
+             AND t.file_path IS NOT NULL""",
+    )
+
+    import os
+    fixed = 0
+    created_albums = {}
+
+    for row in rows:
+        path = row["file_path"]
+        if not path:
+            continue
+
+        # Extract album from path: .../Artist/AlbumName/track.ext
+        parts = path.replace("\\", "/").split("/")
+        if len(parts) < 3:
+            continue
+
+        album_name = parts[-2]  # Parent folder = album name
+        artist_name = row["artist_name"] or parts[-3] if len(parts) >= 3 else ""
+
+        # Skip if album name is still "Unknown Album" or too short
+        if album_name.lower() in ("unknown album", "unknown", ""):
+            continue
+
+        # Find or create album
+        cache_key = f"{artist_name}|||{album_name}"
+        if cache_key in created_albums:
+            new_album_id = created_albums[cache_key]
+        else:
+            # Check if album already exists
+            existing = await deps.db.fetchone(
+                "SELECT id FROM albums WHERE title = ? AND artist_id = ?",
+                (album_name, row["artist_id"]),
+            )
+            if existing:
+                new_album_id = existing["id"]
+            else:
+                # Create new album
+                await deps.db.execute(
+                    "INSERT INTO albums (title, artist_id, source) VALUES (?, ?, 'local')",
+                    (album_name, row["artist_id"]),
+                )
+                await deps.db.commit()
+                new_row = await deps.db.fetchone(
+                    "SELECT id FROM albums WHERE title = ? AND artist_id = ? ORDER BY id DESC LIMIT 1",
+                    (album_name, row["artist_id"]),
+                )
+                new_album_id = new_row["id"] if new_row else None
+
+            if new_album_id:
+                created_albums[cache_key] = new_album_id
+
+        # Reassign track to correct album
+        if new_album_id and new_album_id != row["album_id"]:
+            await deps.db.execute(
+                "UPDATE tracks SET album_id = ? WHERE id = ?",
+                (new_album_id, row["id"]),
+            )
+            fixed += 1
+
+    await deps.db.commit()
+
+    # Cleanup: delete "Unknown Album" if empty
+    await deps.db.execute(
+        """DELETE FROM albums WHERE title = 'Unknown Album'
+           AND id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)""",
+    )
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "tracks_fixed": fixed,
+        "albums_created": len(created_albums),
+        "total_unknown": len(rows),
+    }
