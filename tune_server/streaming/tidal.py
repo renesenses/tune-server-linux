@@ -383,7 +383,16 @@ class TidalService(StreamingService):
             logger.exception("tidal_featured_error", section=section)
             return []
 
+    _playlists_cache: list[StreamingPlaylist] | None = None
+    _playlists_cache_time: float = 0
+
     async def get_user_playlists(self) -> list[StreamingPlaylist]:
+        # Cache for 5 minutes (Tidal takes ~34s to fetch 280 playlists)
+        import time
+        if self._playlists_cache is not None and (time.monotonic() - self._playlists_cache_time) < 300:
+            logger.debug("tidal_playlists_cache_hit", count=len(self._playlists_cache))
+            return self._playlists_cache
+
         if not await self._ensure_authenticated():
             return []
         try:
@@ -423,10 +432,14 @@ class TidalService(StreamingService):
             playlists = await asyncio.wait_for(
                 asyncio.to_thread(_fetch_all), timeout=120
             )
-            return [self._map_playlist(p) for p in playlists]
+            result = [self._map_playlist(p) for p in playlists]
+            self._playlists_cache = result
+            self._playlists_cache_time = time.monotonic()
+            logger.info("tidal_playlists_loaded", count=len(result))
+            return result
         except Exception:
             logger.exception("tidal_user_playlists_error")
-            return []
+            return self._playlists_cache or []
 
     async def get_playlist_tracks(self, playlist_id: str) -> list[Track]:
         if not await self._ensure_authenticated():
