@@ -2,6 +2,33 @@
 
 All notable changes to Tune Server.
 
+## v0.5.8 — 2026-04-12
+
+### Metadata — Automatic Enrichment
+- Auto-fix missing years via Tidal, MusicBrainz and Discogs (98% coverage)
+- Auto-fix missing genres via Last.fm and Discogs (93.5% coverage)
+- Fix PATCH metadata artist_name/album_title on PostgreSQL (auto-resolve to IDs)
+- New endpoints: fix-years-tidal, fix-years-musicbrainz, fix-years-discogs, fix-years-tags, fix-genres
+- Last.fm API key support
+
+### Zone Manager
+- Zone Manager view (web, iOS, Flutter)
+- Per-zone mute/unmute, volume control, latency measurement
+- Multi-room groups: create, rename, calibrate, dissolve
+- Profiles: save and restore zone configurations
+- DLNA device IP display, health monitoring, sync stats
+
+### Metadata Manager (iOS + Flutter)
+- Full metadata UI port to iOS/macOS and Flutter
+- Action buttons: merge duplicates, enrich, fix years/genres, auto-fix albums
+- Suggestions section with batch accept
+
+### Fixes
+- PostgreSQL zone_groups/zone_profiles tables
+- INSERT OR REPLACE → ON CONFLICT for PostgreSQL
+- Swift 6 Sendable: Codable structs for all API responses
+- Zone manager overview (Pydantic model_dump, discovery IP lookup)
+
 ## v0.5.7 — 2026-04-12
 
 ### 🎵 Playlist Manager
