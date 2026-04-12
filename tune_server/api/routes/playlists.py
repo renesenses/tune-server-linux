@@ -299,9 +299,15 @@ async def transfer_playlist(body: PlaylistTransferRequest):
     playlist_id = await deps.playlist_repo.create(target_name)
 
     if body.target_service == "local":
-        # Add local track IDs directly
+        # Add local track IDs (deduplicated, preserving order)
         if matched_track_ids:
-            await deps.playlist_repo.add_tracks(playlist_id, matched_track_ids)
+            seen = set()
+            unique_ids = []
+            for tid in matched_track_ids:
+                if tid not in seen:
+                    seen.add(tid)
+                    unique_ids.append(tid)
+            await deps.playlist_repo.add_tracks(playlist_id, unique_ids)
     else:
         # Upsert streaming tracks from target service into the playlist
         upserted_ids: list[int] = []
