@@ -2,6 +2,71 @@
 
 All notable changes to Tune Server.
 
+## v0.5.7 — 2026-04-12
+
+### 🎵 Playlist Manager
+- Cross-service transfer (Tidal/Qobuz/Deezer ↔ Local) with smart ISRC + fuzzy matching
+- Batch transfer: all playlists from a service in one operation
+- Merge playlists with deduplication
+- Bidirectional sync (pull/push) with persistent links
+- Export/Import: CSV, JSON, XSPF, Text
+- Backup: snapshot all playlists with metadata
+- History: log of all transfers with per-track detail
+- Clickable filter badges on transfer results
+- Drag & drop + ▲▼ reorder in local playlists (web)
+- Context menu: Transfer / Duplicate / Delete (iOS long-press)
+- Unified Playlists + Manager view (single sidebar entry)
+- Tidal playlists cached 5min server-side (34s → instant)
+
+### 🔊 Zone Manager
+- Hot-swap device without recreating zone
+- Persistent multi-room groups (survive restart)
+- Profiles/Scenarios: save/recall zone configs + volumes
+- Master volume + per-zone offsets in groups
+- Per-zone mute within a group
+- Sync <50ms: 100ms polling, progressive correction
+- Latency measurement + auto-calibration
+- Gapless multi-room: all-or-nothing coordination
+- Health monitor: online/offline/degraded per zone
+
+### 🏷️ Metadata Manager
+- Manual edit: title, artist, album, genre, year, composer, ISRC, BPM, lyrics
+- Tag writing: DB default, write to file on demand (Mutagen)
+- Batch edit + global artist rename
+- MusicBrainz lookup + Last.fm tags + Cover Art Archive
+- AcoustID fingerprinting (batch identification)
+- Auto-fix background scan with suggestions
+- Auto-fix albums from file paths
+- Duplicate detection (audio MD5 hash)
+- Suggestions panel: accept/reject, accept-all ≥90%
+- Cover embed into audio files (ID3/FLAC)
+
+### 🎙️ Podcasts
+- 120+ Radio France shows via Open API
+- Station covers from iTunes (high-res)
+
+### 📱 Native Apps
+- Custom skip buttons |◀ ▶| across all views
+- Heart button on mini player + now playing (radio + tracks)
+- Clickable artist/album → detail views from Now Playing
+- Parallel playlist loading with spinner
+- Genres removed from sidebar
+- Radio Favorites in web sidebar
+
+### 🌐 Flutter (Android)
+- Complete remote mode (API + WebSocket + all views)
+- APK distributed via Firebase App Distribution
+
+### 🔧 Fixes
+- API timeout 15s → 60s (Tidal 280 playlists)
+- PostgreSQL FTS: ILIKE fallback for French accents
+- SSDP Windows: multicast retry with source IP
+- Xcode archive stale cache fix
+- FIP radio metadata in remote mode
+- 903 artist images enriched from Discogs
+
+---
+
 ## v0.5.5 — 2026-04-10
 
 ### Added
