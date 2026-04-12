@@ -169,11 +169,14 @@ async def match_track(body: TrackMatchRequest):
 
 
 def _normalize(s: str) -> str:
-    """Normalize for comparison: lowercase, strip feat/remix/remaster/parens."""
+    """Normalize for comparison: lowercase, strip feat/remix/remaster/parens/The."""
     s = s.lower().strip()
     s = re.sub(r'\(.*?\)', '', s)
     s = re.sub(r'\[.*?\]', '', s)
     s = re.sub(r'\s*-\s*(feat|ft|featuring|remix|remaster|deluxe|bonus).*', '', s, flags=re.IGNORECASE)
+    # Strip leading "The " for artist comparison
+    if s.startswith("the "):
+        s = s[4:]
     return s.strip()
 
 
@@ -187,6 +190,18 @@ def _fuzzy_match_track(title1: str, artist1: str, title2: str, artist2: str) -> 
         return "exact"
     if t1 == t2 or (a1 == a2 and (t1 in t2 or t2 in t1)):
         return "approximate"
+    # Partial title match with same artist
+    if a1 == a2 and t1 and t2 and (len(t1) > 3 and len(t2) > 3):
+        from difflib import SequenceMatcher
+        ratio = SequenceMatcher(None, t1, t2).ratio()
+        if ratio > 0.7:
+            return "approximate"
+    # Title match, artist close
+    if t1 == t2 and a1 and a2:
+        from difflib import SequenceMatcher
+        ratio = SequenceMatcher(None, a1, a2).ratio()
+        if ratio > 0.6:
+            return "approximate"
     return None
 
 

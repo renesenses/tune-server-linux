@@ -634,7 +634,11 @@ class TrackRepo:
             )
             if not rows:
                 # Fallback: ILIKE search (handles accents better)
-                words = query.strip().split()
+                # Strip "the" from query for better artist matching
+                clean_query = query.strip()
+                if clean_query.lower().startswith("the "):
+                    clean_query = clean_query[4:]
+                words = [w for w in clean_query.split() if len(w) > 1]
                 if words:
                     conditions = " AND ".join(
                         f"(t.title ILIKE ? OR ar.name ILIKE ?)" for _ in words
