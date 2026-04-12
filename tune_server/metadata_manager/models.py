@@ -11,6 +11,7 @@ class TrackMetadataUpdate(BaseModel):
     title: Optional[str] = None
     artist_name: Optional[str] = None
     album_title: Optional[str] = None
+    album_id: Optional[int] = None
     track_number: Optional[int] = None
     disc_number: Optional[int] = None
     genre: Optional[str] = None
