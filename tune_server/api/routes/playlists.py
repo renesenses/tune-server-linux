@@ -238,7 +238,10 @@ async def transfer_playlist(body: PlaylistTransferRequest):
 
     for t in source_tracks:
         artist = t.artist_name or ""
-        query = f"{artist} {t.title}"
+        # Normalize query to strip (Radio Edit), [2017 Remaster], etc.
+        clean_title = _normalize(t.title)
+        clean_artist = _normalize(artist)
+        query = f"{clean_artist} {clean_title}"
         result = TransferTrackResult(
             title=t.title,
             artist_name=t.artist_name,
