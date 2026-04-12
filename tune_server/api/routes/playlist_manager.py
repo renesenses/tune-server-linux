@@ -26,6 +26,29 @@ from tune_server.playlist_manager.batch import batch_transfer, merge_playlists
 router = APIRouter(prefix="/playlist-manager", tags=["playlist-manager"])
 
 
+def _is_postgres() -> bool:
+    """Check if we're using PostgreSQL (vs SQLite)."""
+    return deps.db.__class__.__name__ == "PostgresDatabase"
+
+
+async def _search_local_tracks(query: str, limit: int) -> list[dict]:
+    """Search local library — compatible SQLite + PostgreSQL.
+    PostgreSQL doesn't have artist_name on tracks table (uses JOIN).
+    """
+    like = "ILIKE" if _is_postgres() else "LIKE"
+    rows = await deps.db.fetchall(
+        f"""SELECT t.id as source_id, t.title, ar.name as artist_name,
+                   a.title as album_title, t.duration_ms
+            FROM tracks t
+            LEFT JOIN albums a ON a.id = t.album_id
+            LEFT JOIN artists ar ON ar.id = t.artist_id
+            WHERE t.title {like} ? OR ar.name {like} ?
+            LIMIT ?""",
+        (f"%{query}%", f"%{query}%", limit),
+    )
+    return [dict(r) for r in rows]
+
+
 @router.get("/services")
 async def get_services_capabilities():
     """List streaming services with their playlist write capabilities."""
@@ -101,17 +124,7 @@ async def transfer_playlist(req: TransferRequest):
 
     # Build search function for target service
     if req.target_service == "local":
-        # Search local library
-        async def search_func(query: str, limit: int):
-            rows = await deps.db.fetchall(
-                """SELECT t.id as source_id, t.title, t.artist_name,
-                          a.title as album_title, t.duration_ms, t.isrc
-                   FROM tracks t LEFT JOIN albums a ON a.id = t.album_id
-                   WHERE t.title LIKE ? OR t.artist_name LIKE ?
-                   LIMIT ?""",
-                (f"%{query}%", f"%{query}%", limit),
-            )
-            return [dict(r) for r in rows]
+        search_func = _search_local_tracks
     else:
         target_svc = sm.service(req.target_service)
         if not target_svc:
@@ -402,16 +415,7 @@ async def batch_transfer_endpoint(req: BatchTransferRequest):
 
     # Build search func for target
     if req.target_service == "local":
-        async def search_func(query: str, limit: int):
-            rows = await deps.db.fetchall(
-                """SELECT t.id as source_id, t.title, t.artist_name,
-                          a.title as album_title, t.duration_ms, t.isrc
-                   FROM tracks t LEFT JOIN albums a ON a.id = t.album_id
-                   WHERE t.title LIKE ? OR t.artist_name LIKE ?
-                   LIMIT ?""",
-                (f"%{query}%", f"%{query}%", limit),
-            )
-            return [dict(r) for r in rows]
+        search_func = _search_local_tracks
     else:
         target_svc = sm.service(req.target_service)
         if not target_svc:
