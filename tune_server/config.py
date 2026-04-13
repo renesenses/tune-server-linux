@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     db_pool_max: int = 10  # PostgreSQL connection pool max size
 
     # Security
+    # CORS: allow all origins — this is a LAN-only server, protected by API key
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     api_key: str | None = None  # None = no auth required (backward-compatible)
 
