@@ -390,16 +390,17 @@ class DlnaOutput(OutputTarget):
         msg = f"GET /volume HTTP/1.0\r\n\r\nvolume={target_vol:.1f}\r\n"
 
         def _send() -> None:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(3)
                 s.connect((self._device_ip, 7000))
                 s.send(msg.encode())
                 s.shutdown(socket.SHUT_WR)
                 s.recv(256)  # read response
-                s.close()
             except Exception:
                 logger.debug("micromega_volume_error", device=self.name, volume=target_vol)
+            finally:
+                s.close()
 
         await asyncio.to_thread(_send)
         logger.debug("micromega_volume_set", device=self.name, volume=target_vol)

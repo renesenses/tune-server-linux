@@ -22,6 +22,8 @@ from tune_server.metadata_manager.cover_fetcher import search_covers
 
 router = APIRouter(prefix="/metadata", tags=["metadata"])
 
+ALLOWED_METADATA_COLUMNS = {'title', 'artist_name', 'album_title', 'genre', 'year', 'track_number', 'disc_number'}
+
 
 # ---------------------------------------------------------------------------
 # Track edit
@@ -310,6 +312,9 @@ async def accept_suggestion(suggestion_id: int):
         raise HTTPException(status_code=404, detail="Suggestion not found")
 
     # Apply the change
+    if row['field'] not in ALLOWED_METADATA_COLUMNS:
+        raise HTTPException(status_code=400, detail=f"Invalid metadata field: {row['field']}")
+
     if row["track_id"]:
         await deps.db.execute(
             f"UPDATE tracks SET {row['field']} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -349,6 +354,8 @@ async def accept_all_suggestions(min_confidence: float = 0.9):
     )
     applied = 0
     for row in rows:
+        if row['field'] not in ALLOWED_METADATA_COLUMNS:
+            continue  # skip invalid column
         if row["track_id"]:
             await deps.db.execute(
                 f"UPDATE tracks SET {row['field']} = ? WHERE id = ?",

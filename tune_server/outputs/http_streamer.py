@@ -92,6 +92,10 @@ class HttpAudioStreamer:
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         self._route_callbacks: list = []
+        self._sessions: dict[str, StreamSession] = {}
+        self._file_paths: dict[str, str] = {}  # stream_id -> file_path for passthrough
+        self._proxy_urls: dict[str, str] = {}  # stream_id -> upstream HTTPS URL for proxy
+        self._cleanup_task: asyncio.Task | None = None
 
     @property
     def app(self) -> web.Application | None:
@@ -100,11 +104,6 @@ class HttpAudioStreamer:
     def on_app_created(self, callback) -> None:
         """Register a callback to add routes after app creation, before freeze."""
         self._route_callbacks.append(callback)
-
-        self._sessions: dict[str, StreamSession] = {}
-        self._file_paths: dict[str, str] = {}  # stream_id -> file_path for passthrough
-        self._proxy_urls: dict[str, str] = {}  # stream_id -> upstream HTTPS URL for proxy
-        self._cleanup_task: asyncio.Task | None = None
 
     @property
     def port(self) -> int:
@@ -311,7 +310,7 @@ class HttpAudioStreamer:
                         remaining = length
                         while remaining > 0:
                             chunk_size = min(65536, remaining)
-                            chunk = f.read(chunk_size)
+                            chunk = await asyncio.to_thread(f.read, chunk_size)
                             if not chunk:
                                 break
                             await response.write(chunk)
@@ -338,7 +337,7 @@ class HttpAudioStreamer:
         try:
             with open(file_path, "rb") as f:
                 while True:
-                    chunk = f.read(65536)
+                    chunk = await asyncio.to_thread(f.read, 65536)
                     if not chunk:
                         break
                     await response.write(chunk)
