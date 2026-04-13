@@ -129,7 +129,8 @@ class QobuzService(StreamingService):
         try:
             data = await self._api_get("album/get", {"album_id": album_id})
             return self._map_album(data)
-        except Exception:
+        except Exception as e:
+            logger.debug("qobuz_get_album_failed", album_id=album_id, error=str(e))
             return None
 
     async def get_album_tracks(self, album_id: str) -> list[Track]:
@@ -137,14 +138,16 @@ class QobuzService(StreamingService):
             data = await self._api_get("album/get", {"album_id": album_id})
             items = data.get("tracks", {}).get("items", [])
             return [self._map_track(t) for t in items]
-        except Exception:
+        except Exception as e:
+            logger.debug("qobuz_get_album_tracks_failed", album_id=album_id, error=str(e))
             return []
 
     async def get_artist(self, artist_id: str) -> Optional[Artist]:
         try:
             data = await self._api_get("artist/get", {"artist_id": artist_id})
             return self._map_artist(data)
-        except Exception:
+        except Exception as e:
+            logger.debug("qobuz_get_artist_failed", artist_id=artist_id, error=str(e))
             return None
 
     async def get_artist_albums(self, artist_id: str) -> list[Album]:

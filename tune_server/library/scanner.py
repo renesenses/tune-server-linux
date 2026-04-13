@@ -55,7 +55,8 @@ def compute_audio_hash(file_path: str) -> str | None:
             data = f.read(AUDIO_HASH_SAMPLE_SIZE)
             md5.update(data)
         return md5.hexdigest()
-    except (PermissionError, OSError):
+    except (PermissionError, OSError) as e:
+        logger.debug("audio_hash_error", path=str(file_path), error=str(e))
         return None
 
 
@@ -66,7 +67,8 @@ def _list_audio_files(dir_path: Path) -> list[Path]:
             f for f in dir_path.rglob("*")
             if f.suffix.lower() in SUPPORTED_EXTENSIONS
         ]
-    except PermissionError:
+    except PermissionError as e:
+        logger.debug("list_audio_files_permission_denied", path=str(dir_path), error=str(e))
         return []
 
 
@@ -118,7 +120,8 @@ class LibraryScanner:
                     try:
                         if not file_path.is_file():
                             continue
-                    except PermissionError:
+                    except PermissionError as e:
+                        logger.debug("scan_file_permission_denied", path=str(file_path), error=str(e))
                         continue
 
                     path_str = str(file_path).replace("\\", "/")
@@ -198,7 +201,8 @@ class LibraryScanner:
         # Check if file was modified since last scan
         try:
             file_mtime = file_path.stat().st_mtime
-        except OSError:
+        except OSError as e:
+            logger.debug("scan_file_stat_error", path=str(file_path), error=str(e))
             return
         async with self._lock:
             stored_mtime = await self._track_repo.get_mtime(path_str)

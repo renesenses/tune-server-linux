@@ -176,8 +176,8 @@ class LocalOutput(OutputTarget):
             try:
                 self._stream.stop()
                 self._stream.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("local_output_stop_error", error=str(e))
             self._stream = None
 
     async def set_volume(self, volume: float) -> None:

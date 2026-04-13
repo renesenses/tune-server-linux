@@ -46,13 +46,13 @@ class MediaServerDiscovery:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                logger.debug("media_server_discovery_task_cancelled")
             self._task = None
         if self._requester:
             try:
                 await self._requester.async_close_session()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("media_server_requester_close_error", error=str(e))
 
     async def _discovery_loop(self) -> None:
         try:

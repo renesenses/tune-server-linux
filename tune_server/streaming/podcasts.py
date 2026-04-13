@@ -112,7 +112,8 @@ class PodcastService:
         try:
             from tune_server.config import settings
             return settings.radiofrance_api_key
-        except Exception:
+        except Exception as e:
+            logger.debug("radiofrance_api_key_not_available", error=str(e))
             return None
 
     async def search(self, query: str, limit: int = 20) -> list[dict]:
@@ -205,8 +206,8 @@ class PodcastService:
                                 cover = self._extract_channel_image(xml_text)
                                 if cover:
                                     show["cover_url"] = cover
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("radiofrance_show_cover_fetch_failed", error=str(e))
 
             logger.info("radiofrance_shows_loaded", count=len(shows))
             return shows if shows else [p.to_dict() for p in RADIO_FRANCE_PODCASTS]
@@ -277,8 +278,8 @@ class PodcastService:
                 if ts:
                     try:
                         published = datetime.fromtimestamp(int(ts)).strftime("%a, %d %b %Y")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("radiofrance_episode_date_parse_failed", error=str(e))
                 episodes.append(PodcastEpisode(
                     title=node.get("title", ""),
                     description=(node.get("standFirst") or "")[:500],
@@ -297,7 +298,8 @@ class PodcastService:
         """Parse RSS feed XML into episodes."""
         try:
             root = ET.fromstring(xml_text)
-        except ET.ParseError:
+        except ET.ParseError as e:
+            logger.debug("podcast_rss_parse_failed", error=str(e))
             return []
 
         ns = {
@@ -377,8 +379,8 @@ class PodcastService:
             img_url = channel.find("image/url")
             if img_url is not None:
                 return img_url.text or ""
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("podcast_channel_image_extract_failed", error=str(e))
         return ""
 
     @staticmethod
@@ -394,5 +396,6 @@ class PodcastService:
                 elif len(parts) == 2:
                     return (int(parts[0]) * 60 + int(parts[1])) * 1000
             return int(text) * 1000
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
+            logger.debug("podcast_duration_parse_failed", text=text, error=str(e))
             return 0

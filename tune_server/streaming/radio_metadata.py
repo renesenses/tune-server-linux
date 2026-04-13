@@ -59,7 +59,8 @@ async def _fetch_radiofrance(station: str) -> NowPlaying | None:
                 # RadioFrance S3 covers are 403-blocked — skip cover URL
                 # The station logo will be used as fallback by the player callback
                 return NowPlaying(title=title, artist=artist, cover_url=None)
-    except Exception:
+    except Exception as e:
+        logger.debug("radio_metadata_fetch_failed", error=str(e))
         return None
 
 
@@ -123,6 +124,6 @@ class RadioMetadataPoller:
                         ))
                 await asyncio.sleep(POLL_INTERVAL)
         except asyncio.CancelledError:
-            pass
+            logger.debug("radio_metadata_poller_cancelled")
         except Exception:
             logger.exception("radio_metadata_poller_error")

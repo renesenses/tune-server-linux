@@ -39,7 +39,7 @@ class FileSystemWatcher:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                logger.debug("filesystem_watcher_task_cancelled")
             self._task = None
             logger.info("filesystem_watcher_stopped")
 

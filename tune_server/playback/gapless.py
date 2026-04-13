@@ -74,7 +74,7 @@ class GaplessHandler:
             try:
                 await self._preload_task
             except asyncio.CancelledError:
-                pass
+                logger.debug("gapless_preload_cancelled")
             self._preload_task = None
 
         if self._next_pipeline:

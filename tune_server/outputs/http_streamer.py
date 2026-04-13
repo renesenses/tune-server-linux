@@ -76,7 +76,7 @@ class StreamSession:
         try:
             self._chunks.put_nowait(None)
         except asyncio.QueueFull:
-            pass
+            logger.debug("stream_session_queue_full")
 
 
 class HttpAudioStreamer:
@@ -202,8 +202,8 @@ class HttpAudioStreamer:
                         upstream_ct = resp.headers.get("Content-Type")
                         if upstream_ct:
                             headers["Content-Type"] = upstream_ct
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("stream_head_request_failed", error=str(e))
         elif session.stream_info.file_size:
             headers["Content-Length"] = str(session.stream_info.file_size)
 
@@ -269,8 +269,8 @@ class HttpAudioStreamer:
         finally:
             try:
                 await response.write_eof()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("stream_write_eof_failed", stream_id=stream_id, error=str(e))
 
         return response
 
@@ -320,8 +320,8 @@ class HttpAudioStreamer:
                 except Exception:
                     logger.debug("serve_file_client_disconnected", stream_id=request.match_info.get("stream_id"))
                 return response
-            except (ValueError, OSError):
-                pass
+            except (ValueError, OSError) as e:
+                logger.debug("serve_file_range_parse_failed", error=str(e))
 
         # Full file response
         full_headers = {
@@ -399,7 +399,7 @@ class HttpAudioStreamer:
             try:
                 await self._cleanup_task
             except asyncio.CancelledError:
-                pass
+                logger.debug("stream_cleanup_task_cancelled")
             self._cleanup_task = None
 
         for session in list(self._sessions.values()):

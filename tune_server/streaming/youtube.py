@@ -300,7 +300,7 @@ class YouTubeService(StreamingService):
             self._user_code = None
 
         except asyncio.CancelledError:
-            pass
+            logger.debug("youtube_auth_poll_cancelled")
         except Exception:
             logger.exception("youtube_poll_error")
             self._verification_url = None
@@ -375,8 +375,8 @@ class YouTubeService(StreamingService):
                 async with session.post(OAUTH_REVOKE_URL,
                                         params={"token": self._access_token}):
                     pass
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("youtube_token_revoke_failed", error=str(e))
 
         self._access_token = None
         self._refresh_token = None

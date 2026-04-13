@@ -48,14 +48,14 @@ class MdnsDiscovery:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                logger.debug("mdns_discovery_task_cancelled")
             self._task = None
 
         if self._zeroconf:
             try:
                 await asyncio.to_thread(self._zeroconf.close)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("mdns_zeroconf_close_error", error=str(e))
 
     async def _discovery_loop(self) -> None:
         try:
@@ -126,6 +126,7 @@ class MdnsDiscovery:
         try:
             import pyatv
         except ImportError:
+            logger.debug("pyatv_not_available_for_rescan")
             return []
 
         atvs = await pyatv.scan(asyncio.get_running_loop(), timeout=10)

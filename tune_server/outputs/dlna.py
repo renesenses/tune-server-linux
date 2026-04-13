@@ -184,8 +184,8 @@ class DlnaOutput(OutputTarget):
         if self._is_micromega:
             try:
                 await self._dmr_call("async_stop")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("dlna_pre_start_stop_failed", device=self.name, error=str(e))
         if self._stream_id:
             self._streamer.remove_session(self._stream_id)
             self._stream_id = None
@@ -425,7 +425,8 @@ class DlnaOutput(OutputTarget):
             if current != url:
                 logger.info("dlna_redirect_resolved", original=url[:60], final=current[:80])
             return current
-        except Exception:
+        except Exception as e:
+            logger.debug("dlna_redirect_resolve_failed", url=url[:60], error=str(e))
             return url
 
     async def close(self) -> None:
@@ -521,8 +522,8 @@ class DlnaOutput(OutputTarget):
                     latency = time.monotonic() - start
                     logger.info("dlna_latency_measured", device=self.name, latency_s=round(latency, 2))
                     return latency
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("dlna_latency_poll_error", device=self.name, error=str(e))
             await asyncio.sleep(0.2)
         logger.warning("dlna_latency_timeout", device=self.name)
         return None

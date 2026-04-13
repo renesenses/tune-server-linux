@@ -46,13 +46,13 @@ class SsdpDiscovery:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                logger.debug("ssdp_discovery_task_cancelled")
             self._task = None
         if self._requester:
             try:
                 await self._requester.async_close_session()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("ssdp_requester_close_error", error=str(e))
 
     async def _discovery_loop(self) -> None:
         try:
@@ -188,6 +188,7 @@ class SsdpDiscovery:
             from async_upnp_client.search import async_search
             from async_upnp_client.profiles.dlna import DmrDevice
         except ImportError:
+            logger.debug("async_upnp_client_not_available_for_rescan")
             return []
 
         if not self._requester:
@@ -218,8 +219,8 @@ class SsdpDiscovery:
                     if dmr.has_get_protocol_info:
                         await dmr.async_get_protocol_info()
                         sink_protocols = dmr.sink_protocol_info or []
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("ssdp_protocol_info_fetch_error", name=name, error=str(e))
 
                 disc_device = DiscoveredDevice(
                     id=dev_id,
@@ -271,5 +272,6 @@ class SsdpDiscovery:
             ip = s.getsockname()[0]
             s.close()
             return ip
-        except Exception:
+        except Exception as e:
+            logger.debug("ssdp_local_ip_detection_failed", error=str(e))
             return None

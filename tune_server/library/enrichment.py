@@ -110,7 +110,7 @@ class MetadataEnricher:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                logger.debug("enrichment_task_cancelled")
             self._task = None
 
     async def enrich_now(self) -> None:
@@ -204,8 +204,8 @@ class MetadataEnricher:
                                 year = int(date_str[:4])
                                 if 1900 <= year <= 2030:
                                     updates["year"] = year
-                            except ValueError:
-                                pass
+                            except ValueError as e:
+                                logger.debug("enrichment_year_parse_failed", date_str=date_str, error=str(e))
                         tags = mb.get("tag-list", [])
                         if tags:
                             top_tag = sorted(tags, key=lambda t: int(t.get("count", 0)), reverse=True)[0]
@@ -304,8 +304,8 @@ class MetadataEnricher:
                                     year = int(date_str[:4])
                                     if 1900 <= year <= 2030:
                                         updates["year"] = year
-                                except ValueError:
-                                    pass
+                                except ValueError as e:
+                                    logger.debug("enrichment_year_parse_failed", date_str=date_str, error=str(e))
                             # Extract genre from tags
                             tags = mb.get("tag-list", [])
                             if tags:

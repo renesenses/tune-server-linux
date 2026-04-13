@@ -188,7 +188,7 @@ class PlayQueue:
                 try:
                     self._shuffle_index = self._shuffle_order.index(position)
                 except ValueError:
-                    pass
+                    logger.debug("queue_shuffle_index_not_found", position=position)
             return self.current
         return None
 

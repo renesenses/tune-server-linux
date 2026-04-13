@@ -64,23 +64,23 @@ class NetworkShareDiscovery:
         for task in self._enum_tasks.values():
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
-                pass
+            except (asyncio.CancelledError, Exception) as e:
+                logger.debug("network_share_enum_task_cancel", error=str(e))
         self._enum_tasks.clear()
 
         # Close browsers
         for browser in self._browsers:
             try:
                 browser.cancel()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("network_share_browser_cancel_error", error=str(e))
         self._browsers.clear()
 
         if self._zeroconf:
             try:
                 await self._zeroconf.async_close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("network_share_zeroconf_close_error", error=str(e))
             self._zeroconf = None
 
     async def on_service_added(self, service_type: str, name: str) -> None:
@@ -218,7 +218,8 @@ class NetworkShareDiscovery:
                             shares.append(name)
             return shares
 
-        except (FileNotFoundError, asyncio.TimeoutError):
+        except (FileNotFoundError, asyncio.TimeoutError) as e:
+            logger.debug("smb_smbutil_list_failed", host=host, error=str(e))
             return []
 
     @staticmethod
@@ -253,7 +254,8 @@ class NetworkShareDiscovery:
                             shares.append(name)
             return shares
 
-        except (FileNotFoundError, asyncio.TimeoutError):
+        except (FileNotFoundError, asyncio.TimeoutError) as e:
+            logger.debug("smb_smbclient_list_failed", host=host, error=str(e))
             return []
 
     @staticmethod
@@ -278,7 +280,8 @@ class NetworkShareDiscovery:
                         exports.append(parts[0])
             return exports
 
-        except (FileNotFoundError, asyncio.TimeoutError):
+        except (FileNotFoundError, asyncio.TimeoutError) as e:
+            logger.debug("nfs_exports_list_failed", host=host, error=str(e))
             return []
 
     async def enumerate_host_shares(self, share_id: str) -> list[str]:

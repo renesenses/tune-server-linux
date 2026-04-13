@@ -64,8 +64,8 @@ class AirPlayOutput(OutputTarget):
                     album=track.album_title or None,
                     duration=track.duration_ms / 1000.0 if track.duration_ms else None,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("airplay_metadata_build_failed", error=str(e))
 
             # stream_file handles encoding + RAOP streaming internally
             logger.info("airplay_streaming", device=self._device_name, track=track.title)
@@ -130,8 +130,8 @@ class AirPlayOutput(OutputTarget):
             self._stream_task.cancel()
             try:
                 await self._stream_task
-            except (asyncio.CancelledError, Exception):
-                pass
+            except (asyncio.CancelledError, Exception) as e:
+                logger.debug("airplay_stream_task_cancel", error=str(e))
             self._stream_task = None
 
         rc = self._atv.remote_control
@@ -158,5 +158,5 @@ class AirPlayOutput(OutputTarget):
         await self.stop()
         try:
             self._atv.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("airplay_close_error", error=str(e))

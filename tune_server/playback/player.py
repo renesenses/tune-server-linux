@@ -149,7 +149,8 @@ class Player:
                 await self._emit_playback_error("stream_url_timeout", f"Timed out resolving URL for '{track.title}'", track)
                 await self._advance_track()
                 return
-            except Exception:
+            except Exception as e:
+                logger.debug("stream_url_resolve_error", track=track.title, error=str(e))
                 url = None
             if url:
                 track.file_path = url
@@ -370,7 +371,7 @@ class Player:
                     await self._advance_track()
 
         except asyncio.CancelledError:
-            pass
+            logger.debug("playback_loop_cancelled", zone_id=self._zone_id)
         except Exception:
             logger.exception("playback_loop_error", zone_id=self._zone_id)
             await self._emit_playback_error("playback_loop_error", "Unexpected error during playback", self._queue.current)
@@ -460,7 +461,7 @@ class Player:
             if self._state == PlaybackState.PLAYING:
                 await self._advance_track()
         except asyncio.CancelledError:
-            pass
+            logger.debug("direct_url_monitor_cancelled", zone_id=self._zone_id)
         except Exception:
             logger.exception("direct_url_monitor_error", zone_id=self._zone_id)
 
@@ -936,7 +937,7 @@ class Player:
                                                 artist, track_title = title.split(" - ", 1)
                                             callback({"title": track_title.strip(), "artist": artist.strip()})
         except asyncio.CancelledError:
-            pass
+            logger.debug("icy_poller_cancelled", zone_id=self._zone_id)
         except Exception:
             logger.debug("icy_poller_stopped", zone_id=self._zone_id)
 
@@ -960,7 +961,7 @@ class Player:
                 try:
                     await self._playback_task
                 except asyncio.CancelledError:
-                    pass
+                    logger.debug("playback_task_cancelled", zone_id=self._zone_id)
             self._playback_task = None
 
         if self._pipeline:

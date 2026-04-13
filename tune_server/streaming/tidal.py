@@ -234,7 +234,8 @@ class TidalService(StreamingService):
                 asyncio.to_thread(self._session.artist, int(artist_id)), timeout=30
             )
             return self._map_artist(ar)
-        except Exception:
+        except Exception as e:
+            logger.debug("tidal_get_artist_failed", artist_id=artist_id, error=str(e))
             return None
 
     async def get_artist_albums(self, artist_id: str) -> list[Album]:
@@ -404,8 +405,8 @@ class TidalService(StreamingService):
                 try:
                     own = self._session.user.playlists()
                     all_playlists.extend([p for p in own if isinstance(p, tidalapi.Playlist)])
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("tidal_own_playlists_fetch_failed", error=str(e))
                 # Fetch favorite playlists (paginated)
                 try:
                     favs = self._session.user.favorites
@@ -418,8 +419,8 @@ class TidalService(StreamingService):
                         if len(batch) < 100:
                             break
                         offset += 100
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("tidal_favorite_playlists_fetch_failed", error=str(e))
                 # Deduplicate by ID
                 seen = set()
                 unique = []
@@ -460,8 +461,8 @@ class TidalService(StreamingService):
         cover_path = None
         try:
             cover_path = p.image(640)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("tidal_playlist_image_failed", error=str(e))
         return StreamingPlaylist(
             source_id=str(p.id),
             name=p.name or "Unknown",
@@ -496,8 +497,8 @@ class TidalService(StreamingService):
         if t.album:
             try:
                 cover_path = t.album.image(640)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("tidal_track_cover_failed", error=str(e))
 
         quality = getattr(t, "audio_quality", None)
         fmt = AudioFormat.FLAC if quality in ("LOSSLESS", "HI_RES", "HI_RES_LOSSLESS") else AudioFormat.AAC
@@ -522,8 +523,8 @@ class TidalService(StreamingService):
         cover_path = None
         try:
             cover_path = a.image(640)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("tidal_album_cover_failed", error=str(e))
         return Album(
             title=a.name or "Unknown",
             artist_name=a.artist.name if a.artist else "Unknown",

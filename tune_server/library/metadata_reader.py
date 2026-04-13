@@ -52,7 +52,8 @@ def _parse_int(value: str, default: int = 0) -> int:
     try:
         # Handle "3/12" style track numbers
         return int(str(value).split("/")[0])
-    except (ValueError, TypeError, IndexError):
+    except (ValueError, TypeError, IndexError) as e:
+        logger.debug("metadata_parse_int_failed", value=str(value)[:50], error=str(e))
         return default
 
 
@@ -164,8 +165,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
         if year_str:
             try:
                 year = int(str(year_str)[:4])
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as e:
+                logger.debug("metadata_year_parse_failed", value=str(year_str)[:20], error=str(e))
 
         duration_ms = int(info.length * 1000) if hasattr(info, "length") else 0
         channels = getattr(info, "channels", 2)
