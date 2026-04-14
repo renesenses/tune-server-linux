@@ -131,9 +131,21 @@ class SADatabase:
                 row = result.first()
                 if row and "id" in row._mapping:
                     lastrowid = row._mapping["id"]
-            elif result.lastrowid:
-                lastrowid = result.lastrowid
-            return ExecuteResult(lastrowid=lastrowid, rowcount=result.rowcount)
+            else:
+                try:
+                    lastrowid = result.lastrowid
+                except AttributeError:
+                    pass  # asyncpg doesn't support lastrowid
+                try:
+                    if not lastrowid and result.inserted_primary_key:
+                        lastrowid = result.inserted_primary_key[0]
+                except AttributeError:
+                    pass
+            try:
+                rowcount = result.rowcount
+            except AttributeError:
+                rowcount = 0
+            return ExecuteResult(lastrowid=lastrowid, rowcount=rowcount)
 
     async def executemany(self, sql: str, params_seq: list[tuple]) -> None:
         """Execute a statement with multiple parameter sets."""
