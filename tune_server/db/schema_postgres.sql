@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS artists (
     bio TEXT,
     image_path TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    source_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_artists_name ON artists(name);
@@ -27,7 +28,15 @@ CREATE TABLE IF NOT EXISTS albums (
     source TEXT NOT NULL DEFAULT 'local',
     source_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    musicbrainz_release_id TEXT,
+    label TEXT,
+    catalog_number TEXT,
+    barcode TEXT,
+    format TEXT,
+    sample_rate INTEGER,
+    bit_depth INTEGER,
+    artist_name TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_albums_title ON albums(title);
@@ -53,7 +62,21 @@ CREATE TABLE IF NOT EXISTS tracks (
     source TEXT NOT NULL DEFAULT 'local',
     source_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    isrc TEXT,
+    genre TEXT,
+    composer TEXT,
+    year INTEGER,
+    lyrics TEXT,
+    comment TEXT,
+    musicbrainz_recording_id TEXT,
+    acoustid TEXT,
+    bpm REAL,
+    label TEXT,
+    custom_tags TEXT,
+    album_title TEXT,
+    artist_name TEXT,
+    cover_path TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks(album_id);
@@ -86,7 +109,10 @@ CREATE TABLE IF NOT EXISTS zones (
     volume REAL DEFAULT 0.5,
     group_id TEXT,
     sync_delay_ms INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    queue_json TEXT,
+    muted BOOLEAN DEFAULT FALSE,
+    online BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE IF NOT EXISTS play_queue (
@@ -105,7 +131,7 @@ CREATE TABLE IF NOT EXISTS streaming_auth (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Radio favorites
+-- Radio favorites (tracks heard on radio, saved by the user)
 CREATE TABLE IF NOT EXISTS radio_favorites (
     id SERIAL PRIMARY KEY,
     title TEXT NOT NULL,
@@ -118,6 +144,163 @@ CREATE TABLE IF NOT EXISTS radio_favorites (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_radio_favorites_dedup
     ON radio_favorites(title, artist);
+
+-- Radio stations
+CREATE TABLE IF NOT EXISTS radio_stations (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    stream_url TEXT NOT NULL,
+    logo_url TEXT,
+    genre TEXT,
+    tags TEXT,
+    codec TEXT,
+    country TEXT,
+    homepage_url TEXT,
+    favorite BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Device credentials (DLNA / renderer auth tokens)
+CREATE TABLE IF NOT EXISTS device_credentials (
+    device_id TEXT PRIMARY KEY,
+    device_name TEXT,
+    credentials TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Duplicate tracks detection
+CREATE TABLE IF NOT EXISTS duplicate_tracks (
+    id SERIAL PRIMARY KEY,
+    track_id_a INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+    track_id_b INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+    audio_hash TEXT,
+    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved BOOLEAN DEFAULT FALSE
+);
+
+-- Metadata fix reports
+CREATE TABLE IF NOT EXISTS metadata_fix_reports (
+    id SERIAL PRIMARY KEY,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    tracks_scanned INTEGER DEFAULT 0,
+    auto_fixed INTEGER DEFAULT 0,
+    suggestions INTEGER DEFAULT 0,
+    errors INTEGER DEFAULT 0,
+    details TEXT
+);
+
+-- Metadata suggestions
+CREATE TABLE IF NOT EXISTS metadata_suggestions (
+    id SERIAL PRIMARY KEY,
+    track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+    album_id INTEGER REFERENCES albums(id) ON DELETE CASCADE,
+    field TEXT,
+    current_value TEXT,
+    suggested_value TEXT,
+    source TEXT,
+    confidence REAL,
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Network mounts (SMB/NFS)
+CREATE TABLE IF NOT EXISTS network_mounts (
+    id SERIAL PRIMARY KEY,
+    host TEXT NOT NULL,
+    share_name TEXT NOT NULL,
+    protocol TEXT NOT NULL DEFAULT 'smb',
+    mount_path TEXT,
+    username TEXT,
+    password TEXT,
+    auto_mount BOOLEAN DEFAULT FALSE,
+    status TEXT DEFAULT 'unmounted',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Playlist links (cross-service sync)
+CREATE TABLE IF NOT EXISTS playlist_links (
+    id SERIAL PRIMARY KEY,
+    local_playlist_id INTEGER REFERENCES playlists(id) ON DELETE CASCADE,
+    service TEXT NOT NULL,
+    service_playlist_id TEXT NOT NULL,
+    service_playlist_name TEXT,
+    sync_direction TEXT DEFAULT 'pull',
+    last_synced_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Playlist snapshots
+CREATE TABLE IF NOT EXISTS playlist_snapshots (
+    id SERIAL PRIMARY KEY,
+    source_service TEXT NOT NULL,
+    source_playlist_id TEXT NOT NULL,
+    playlist_name TEXT,
+    track_count INTEGER DEFAULT 0,
+    snapshot_data TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Sync schedules
+CREATE TABLE IF NOT EXISTS sync_schedules (
+    id SERIAL PRIMARY KEY,
+    playlist_link_id INTEGER REFERENCES playlist_links(id) ON DELETE CASCADE,
+    interval_minutes INTEGER DEFAULT 60,
+    last_run_at TIMESTAMP,
+    next_run_at TIMESTAMP,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Transfer history (playlist import/export)
+CREATE TABLE IF NOT EXISTS transfer_history (
+    id SERIAL PRIMARY KEY,
+    operation TEXT NOT NULL,
+    source_service TEXT,
+    source_playlist_id TEXT,
+    source_playlist_name TEXT,
+    target_service TEXT,
+    target_playlist_id TEXT,
+    target_playlist_name TEXT,
+    total_tracks INTEGER DEFAULT 0,
+    matched INTEGER DEFAULT 0,
+    approximate INTEGER DEFAULT 0,
+    not_found INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending',
+    details TEXT,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+-- Zone groups (multi-room)
+CREATE TABLE IF NOT EXISTS zone_groups (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    leader_zone_id INTEGER REFERENCES zones(id) ON DELETE SET NULL,
+    master_volume REAL DEFAULT 0.5,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Zone group members
+CREATE TABLE IF NOT EXISTS zone_group_members (
+    group_id INTEGER NOT NULL REFERENCES zone_groups(id) ON DELETE CASCADE,
+    zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+    volume_offset REAL DEFAULT 0.0,
+    muted BOOLEAN DEFAULT FALSE,
+    PRIMARY KEY (group_id, zone_id)
+);
+
+-- Zone profiles (saved zone configurations)
+CREATE TABLE IF NOT EXISTS zone_profiles (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    config TEXT,
+    icon TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- Full-Text Search using tsvector + GIN indexes
 
@@ -202,3 +385,142 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_track ON user_favorites(user_id, 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_album ON user_favorites(user_id, album_id) WHERE album_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_artist ON user_favorites(user_id, artist_id) WHERE artist_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_user_favorites_user ON user_favorites(user_id);
+
+-- =============================================================================
+-- Backward-compatible column additions for existing databases
+-- (idempotent: safe to run on databases that already have these columns)
+-- =============================================================================
+
+-- artists: add source_id
+DO $$ BEGIN
+    ALTER TABLE artists ADD COLUMN source_id TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- albums: add metadata columns
+DO $$ BEGIN
+    ALTER TABLE albums ADD COLUMN musicbrainz_release_id TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE albums ADD COLUMN label TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE albums ADD COLUMN catalog_number TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE albums ADD COLUMN barcode TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE albums ADD COLUMN format TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE albums ADD COLUMN sample_rate INTEGER;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE albums ADD COLUMN bit_depth INTEGER;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE albums ADD COLUMN artist_name TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- tracks: add extended metadata columns
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN isrc TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN genre TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN composer TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN year INTEGER;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN lyrics TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN comment TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN musicbrainz_recording_id TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN acoustid TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN bpm REAL;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN label TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN custom_tags TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN album_title TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN artist_name TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracks ADD COLUMN cover_path TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- zones: add queue_json, muted, online
+DO $$ BEGIN
+    ALTER TABLE zones ADD COLUMN queue_json TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE zones ADD COLUMN muted BOOLEAN DEFAULT FALSE;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE zones ADD COLUMN online BOOLEAN DEFAULT TRUE;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
