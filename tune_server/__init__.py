@@ -1,1 +1,3 @@
-__version__ = "0.6.0"
+from importlib.metadata import version as _get_version
+
+__version__ = _get_version("tune-server")
