@@ -531,3 +531,27 @@ zone_profiles = sa.Table(
     sa.Column("icon", sa.Text),
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
 )
+
+# ---------------------------------------------------------------------------
+# users — application users (auth-ready, no auth implemented yet)
+# ---------------------------------------------------------------------------
+users = sa.Table(
+    "users",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("username", sa.Text, nullable=False, unique=True),
+    sa.Column("email", sa.Text, unique=True),
+    sa.Column("display_name", sa.Text),
+    sa.Column("password_hash", sa.Text),  # bcrypt hash, NULL if no auth
+    sa.Column("role", sa.Text, nullable=False, server_default="user"),  # admin, user, guest
+    sa.Column("avatar_color", sa.Text, server_default="'#FF6B35'"),
+    sa.Column("preferences", sa.Text),  # JSON: theme, language, default_zone, etc.
+    sa.Column("default_zone_id", sa.Integer, sa.ForeignKey("zones.id", ondelete="SET NULL")),
+    sa.Column("last_login_at", sa.DateTime),
+    sa.Column("is_active", sa.Boolean, server_default=sa.text("TRUE")),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_users_username", users.c.username)
+sa.Index("idx_users_email", users.c.email)
