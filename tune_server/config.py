@@ -129,8 +129,8 @@ class Settings(BaseSettings):
     tidal_quality: str = "HI_RES_LOSSLESS"  # LOW, HIGH, LOSSLESS, HI_RES_LOSSLESS
 
     qobuz_enabled: bool = False
-    qobuz_app_id: str | None = None
-    qobuz_app_secret: str | None = None
+    qobuz_app_id: str | None = "798273057"
+    qobuz_app_secret: str | None = "abb21364945c0583309667d13ca3d93a"
 
     # YouTube (Data API v3 + IFrame Player)
     youtube_enabled: bool = False
