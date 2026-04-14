@@ -555,3 +555,176 @@ users = sa.Table(
 
 sa.Index("idx_users_username", users.c.username)
 sa.Index("idx_users_email", users.c.email)
+
+# ---------------------------------------------------------------------------
+# user_sessions — JWT/API tokens, device tracking
+# ---------------------------------------------------------------------------
+user_sessions = sa.Table(
+    "user_sessions",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("token_hash", sa.Text, nullable=False, unique=True),  # SHA256 of JWT/API token
+    sa.Column("device_id", sa.Integer, sa.ForeignKey("user_devices.id", ondelete="SET NULL")),
+    sa.Column("ip_address", sa.Text),
+    sa.Column("user_agent", sa.Text),
+    sa.Column("expires_at", sa.DateTime),
+    sa.Column("revoked", sa.Boolean, server_default=sa.text("FALSE")),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("last_used_at", sa.DateTime),
+)
+
+sa.Index("idx_sessions_user", user_sessions.c.user_id)
+sa.Index("idx_sessions_token", user_sessions.c.token_hash)
+
+# ---------------------------------------------------------------------------
+# user_devices — registered devices per user
+# ---------------------------------------------------------------------------
+user_devices = sa.Table(
+    "user_devices",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("name", sa.Text, nullable=False),  # "iPhone de Bertrand", "MacBook Pro"
+    sa.Column("device_type", sa.Text),  # mobile, desktop, tablet, tv, watch, web
+    sa.Column("platform", sa.Text),  # ios, android, macos, windows, linux, web
+    sa.Column("app_version", sa.Text),
+    sa.Column("push_token", sa.Text),  # FCM/APNs push notification token
+    sa.Column("last_seen_at", sa.DateTime),
+    sa.Column("is_active", sa.Boolean, server_default=sa.text("TRUE")),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_user_devices_user", user_devices.c.user_id)
+
+# ---------------------------------------------------------------------------
+# playback_history — scrobble-style listening history per user
+# ---------------------------------------------------------------------------
+playback_history = sa.Table(
+    "playback_history",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE")),
+    sa.Column("track_id", sa.Integer, sa.ForeignKey("tracks.id", ondelete="SET NULL")),
+    sa.Column("zone_id", sa.Integer, sa.ForeignKey("zones.id", ondelete="SET NULL")),
+    sa.Column("track_title", sa.Text),  # denormalized for deleted tracks
+    sa.Column("artist_name", sa.Text),
+    sa.Column("album_title", sa.Text),
+    sa.Column("cover_path", sa.Text),
+    sa.Column("duration_ms", sa.Integer),
+    sa.Column("listened_ms", sa.Integer),  # how long they actually listened
+    sa.Column("source", sa.Text),  # local, tidal, qobuz, radio, etc.
+    sa.Column("played_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_history_user", playback_history.c.user_id)
+sa.Index("idx_history_track", playback_history.c.track_id)
+sa.Index("idx_history_played", playback_history.c.played_at)
+
+# ---------------------------------------------------------------------------
+# listening_stats — aggregated stats per user (materialized/cached)
+# ---------------------------------------------------------------------------
+listening_stats = sa.Table(
+    "listening_stats",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE")),
+    sa.Column("period", sa.Text, nullable=False),  # day, week, month, year, all
+    sa.Column("period_start", sa.DateTime),
+    sa.Column("artist_id", sa.Integer, sa.ForeignKey("artists.id", ondelete="SET NULL")),
+    sa.Column("album_id", sa.Integer, sa.ForeignKey("albums.id", ondelete="SET NULL")),
+    sa.Column("genre", sa.Text),
+    sa.Column("play_count", sa.Integer, server_default="0"),
+    sa.Column("total_ms", sa.Integer, server_default="0"),  # total listening time
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_stats_user_period", listening_stats.c.user_id, listening_stats.c.period)
+
+# ---------------------------------------------------------------------------
+# api_keys — API access tokens for third-party integrations
+# ---------------------------------------------------------------------------
+api_keys = sa.Table(
+    "api_keys",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE")),
+    sa.Column("name", sa.Text, nullable=False),  # "Home Assistant", "Shortcut iOS"
+    sa.Column("key_hash", sa.Text, nullable=False, unique=True),  # SHA256 of API key
+    sa.Column("key_prefix", sa.Text),  # first 8 chars for identification: "tune_abc1..."
+    sa.Column("scopes", sa.Text),  # JSON array: ["read", "write", "playback", "admin"]
+    sa.Column("last_used_at", sa.DateTime),
+    sa.Column("expires_at", sa.DateTime),
+    sa.Column("is_active", sa.Boolean, server_default=sa.text("TRUE")),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_api_keys_hash", api_keys.c.key_hash)
+
+# ---------------------------------------------------------------------------
+# notifications — in-app notifications
+# ---------------------------------------------------------------------------
+notifications = sa.Table(
+    "notifications",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE")),
+    sa.Column("type", sa.Text, nullable=False),  # scan_complete, update_available, import_done, error
+    sa.Column("title", sa.Text, nullable=False),
+    sa.Column("message", sa.Text),
+    sa.Column("data", sa.Text),  # JSON payload (track_id, album_id, error details, etc.)
+    sa.Column("read", sa.Boolean, server_default=sa.text("FALSE")),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_notifications_user", notifications.c.user_id)
+sa.Index("idx_notifications_unread", notifications.c.user_id, notifications.c.read)
+
+# ---------------------------------------------------------------------------
+# tags — custom tags on albums/tracks/artists
+# ---------------------------------------------------------------------------
+tags = sa.Table(
+    "tags",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("color", sa.Text),  # hex color for UI
+    sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE")),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_tags_name", tags.c.name)
+
+tag_items = sa.Table(
+    "tag_items",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("tag_id", sa.Integer, sa.ForeignKey("tags.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("track_id", sa.Integer, sa.ForeignKey("tracks.id", ondelete="CASCADE")),
+    sa.Column("album_id", sa.Integer, sa.ForeignKey("albums.id", ondelete="CASCADE")),
+    sa.Column("artist_id", sa.Integer, sa.ForeignKey("artists.id", ondelete="CASCADE")),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_tag_items_tag", tag_items.c.tag_id)
+
+# ---------------------------------------------------------------------------
+# smart_playlists — dynamic playlists with rules
+# ---------------------------------------------------------------------------
+smart_playlists = sa.Table(
+    "smart_playlists",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE")),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text),
+    sa.Column("rules", sa.Text, nullable=False),  # JSON: [{"field":"genre","op":"eq","value":"Jazz"},{"field":"year","op":"gt","value":2000}]
+    sa.Column("match_mode", sa.Text, server_default="all"),  # all (AND) / any (OR)
+    sa.Column("sort_by", sa.Text, server_default="title"),  # title, artist, year, random, recently_added
+    sa.Column("sort_order", sa.Text, server_default="asc"),  # asc, desc
+    sa.Column("max_tracks", sa.Integer),  # limit, NULL = unlimited
+    sa.Column("auto_refresh", sa.Boolean, server_default=sa.text("TRUE")),
+    sa.Column("last_refreshed_at", sa.DateTime),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
+)
