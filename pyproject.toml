@@ -29,10 +29,12 @@ dependencies = [
     "python-multipart>=0.0.6",
     "spotipy>=2.24.0",
     "deezer-python>=7.0.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
-postgres = ["asyncpg>=0.29"]
 test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

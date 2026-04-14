@@ -92,18 +92,22 @@ class TuneServer:
             logger.error("ffmpeg_not_found",
                 hint="Install with: sudo apt install ffmpeg")
 
-        # Database
-        self._db = create_database(settings)
+        # Database — use SQLAlchemy Core engine (database-independent)
+        self._db = create_database(settings, use_sa=True)
         await self._db.connect()
 
-        # Repos
-        track_repo = TrackRepo(self._db)
-        album_repo = AlbumRepo(self._db)
-        artist_repo = ArtistRepo(self._db)
-        queue_repo = PlayQueueRepo(self._db)
-        zone_repo = ZoneRepo(self._db)
-        playlist_repo = PlaylistRepo(self._db)
-        radio_repo = RadioStationRepo(self._db)
+        # Repos — SA Core (database-independent)
+        from tune_server.db.sa_repository import (
+            SAArtistRepo, SAAlbumRepo, SATrackRepo,
+            SAPlayQueueRepo, SAZoneRepo, SAPlaylistRepo, SARadioStationRepo,
+        )
+        track_repo = SATrackRepo(self._db)
+        album_repo = SAAlbumRepo(self._db)
+        artist_repo = SAArtistRepo(self._db)
+        queue_repo = SAPlayQueueRepo(self._db)
+        zone_repo = SAZoneRepo(self._db)
+        playlist_repo = SAPlaylistRepo(self._db)
+        radio_repo = SARadioStationRepo(self._db)
 
         # Library scanner
         self._scanner = LibraryScanner(self._db, self._event_bus)
@@ -198,7 +202,8 @@ class TuneServer:
         deps.queue_repo = queue_repo
         deps.zone_repo = zone_repo
         deps.radio_repo = radio_repo
-        deps.radio_fav_repo = RadioFavoriteRepo(self._db)
+        from tune_server.db.sa_repository import SARadioFavoriteRepo
+        deps.radio_fav_repo = SARadioFavoriteRepo(self._db)
 
         # Auto-update checker
         from tune_server.updater import UpdateChecker
