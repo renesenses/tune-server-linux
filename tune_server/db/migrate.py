@@ -37,7 +37,16 @@ def _convert_value(value, column: str, ts_columns: set[str], target_engine: str)
     # PostgreSQL doesn't accept null bytes in text
     if target_engine == "postgres" and isinstance(value, str) and "\x00" in value:
         return value.replace("\x00", "")
+    # SQLite stores booleans as 0/1; PostgreSQL needs real bools
+    if target_engine == "postgres" and column in _BOOL_COLUMNS and isinstance(value, int):
+        return bool(value)
     return value
+
+
+_BOOL_COLUMNS = {
+    "favorite", "muted", "online", "auto_mount", "enabled", "resolved",
+    "is_current",
+}
 
 
 # Tables in dependency order (foreign keys)
@@ -51,10 +60,32 @@ TABLES_ORDERED = [
     "play_queue",
     "streaming_auth",
     "radio_favorites",
+    "radio_stations",
+    "user_profiles",
+    "user_favorites",
+    "device_credentials",
+    "network_mounts",
+    "duplicate_tracks",
+    "metadata_fix_reports",
+    "metadata_suggestions",
+    "playlist_links",
+    "playlist_snapshots",
+    "sync_schedules",
+    "transfer_history",
+    "zone_groups",
+    "zone_group_members",
+    "zone_profiles",
 ]
 
 # Tables with SERIAL/AUTOINCREMENT ids that need sequence reset
-SERIAL_TABLES = ["artists", "albums", "tracks", "playlists", "playlist_tracks", "zones", "play_queue", "radio_favorites"]
+SERIAL_TABLES = [
+    "artists", "albums", "tracks", "playlists", "playlist_tracks",
+    "zones", "play_queue", "radio_favorites", "radio_stations",
+    "user_profiles", "user_favorites", "duplicate_tracks",
+    "metadata_fix_reports", "metadata_suggestions", "network_mounts",
+    "playlist_links", "playlist_snapshots", "sync_schedules",
+    "transfer_history", "zone_groups", "zone_profiles",
+]
 
 
 async def migrate(source_engine: str, target_engine: str) -> None:
