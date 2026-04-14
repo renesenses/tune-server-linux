@@ -639,6 +639,41 @@ class SATrackRepo:
         )
         return row[0] if row else 0
 
+    async def list_by_directory(self, directory: str) -> list[Track]:
+        """Return tracks directly in a directory (not in subdirectories)."""
+        prefix = directory.replace("\\", "/").rstrip("/") + "/"
+        stmt = (
+            self._track_select()
+            .where(tracks.c.file_path.like(prefix + "%"))
+            .where(~tracks.c.file_path.like(prefix + "%/%"))
+            .order_by(tracks.c.file_path)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [_row_to_track(r) for r in rows]
+
+    async def list_subdirectories(self, directory: str) -> list[dict]:
+        """Return immediate subdirectories with recursive track counts."""
+        prefix = directory.replace("\\", "/").rstrip("/") + "/"
+        prefix_len = len(prefix) + 1  # SQL SUBSTR is 1-based
+
+        # Use raw SQL with ? placeholders (translated by SA wrapper)
+        rows = await self._db.fetchall(
+            """SELECT
+                SPLIT_PART(SUBSTR(file_path, ?), '/', 1) AS dir_name,
+                COUNT(*) AS track_count
+               FROM tracks
+               WHERE file_path LIKE ?
+               AND LENGTH(file_path) > ?
+               AND POSITION('/' IN SUBSTR(file_path, ?)) > 0
+               GROUP BY dir_name
+               ORDER BY dir_name""",
+            (prefix_len, prefix + "%", len(prefix), prefix_len),
+        )
+        return [
+            {"name": r["dir_name"], "path": prefix + r["dir_name"], "track_count": r["track_count"]}
+            for r in rows
+        ]
+
     async def all_paths(self) -> set[str]:
         rows = await self._db.sa_fetchall(
             sa.select(tracks.c.file_path).where(tracks.c.file_path.isnot(None))
