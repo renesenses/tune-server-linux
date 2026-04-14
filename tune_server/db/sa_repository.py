@@ -630,6 +630,15 @@ class SATrackRepo:
         )
         return row[0] if row else 0
 
+    async def count_by_root(self, root_dir: str) -> int:
+        prefix = root_dir.replace("\\", "/").rstrip("/") + "/"
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(tracks).where(
+                tracks.c.file_path.like(prefix + "%")
+            )
+        )
+        return row[0] if row else 0
+
     async def all_paths(self) -> set[str]:
         rows = await self._db.sa_fetchall(
             sa.select(tracks.c.file_path).where(tracks.c.file_path.isnot(None))
@@ -702,7 +711,7 @@ class SAPlaylistRepo:
         row = await self._db.sa_fetchone(stmt)
         return _row_to_playlist(row) if row else None
 
-    async def list(self) -> list[Playlist]:
+    async def list(self, limit: int = 500, offset: int = 0) -> list[Playlist]:
         tc = (
             sa.select(sa.func.count().label("tc"))
             .select_from(playlist_tracks)
@@ -710,7 +719,7 @@ class SAPlaylistRepo:
             .correlate(playlists)
             .scalar_subquery()
         )
-        stmt = sa.select(playlists, tc.label("track_count")).order_by(playlists.c.name)
+        stmt = sa.select(playlists, tc.label("track_count")).order_by(playlists.c.name).limit(limit).offset(offset)
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_playlist(r) for r in rows]
 
@@ -777,12 +786,27 @@ class SARadioStationRepo:
     def __init__(self, db: SADatabase) -> None:
         self._db = db
 
-    async def list(self, genre: str = None) -> list[RadioStation]:
+    async def list(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        genre: str | None = None,
+        favorite: bool | None = None,
+    ) -> list[RadioStation]:
         stmt = sa.select(radio_stations).order_by(radio_stations.c.name)
         if genre:
             stmt = stmt.where(radio_stations.c.genre == genre)
+        if favorite is not None:
+            stmt = stmt.where(radio_stations.c.favorite == favorite)
+        stmt = stmt.limit(limit).offset(offset)
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_radio_station(r) for r in rows]
+
+    async def get_by_url(self, stream_url: str) -> RadioStation | None:
+        row = await self._db.sa_fetchone(
+            sa.select(radio_stations).where(radio_stations.c.stream_url == stream_url)
+        )
+        return _row_to_radio_station(row) if row else None
 
     async def get(self, station_id: int) -> Optional[RadioStation]:
         row = await self._db.sa_fetchone(

@@ -5,24 +5,33 @@ import re
 
 
 def parse_m3u(content: str) -> list[dict]:
-    """Parse M3U/M3U8 content, returning [{"name": ..., "url": ...}]."""
+    """Parse M3U/M3U8 content, returning [{"name": ..., "url": ..., "logo": ...}]."""
     entries: list[dict] = []
     current_name: str | None = None
+    current_logo: str | None = None
 
     for line in content.splitlines():
         line = line.strip()
-        if not line or line.startswith("#EXTM3U"):
+        if not line or line.upper().startswith("#EXTM3U"):
             continue
-        if line.startswith("#EXTINF:"):
-            # Format: #EXTINF:duration,title
+        if line.upper().startswith("#EXTINF:"):
+            # Format: #EXTINF:duration tvg-logo="url",title
+            current_logo = None
+            logo_match = re.search(r'tvg-logo="([^"]+)"', line, re.IGNORECASE)
+            if logo_match:
+                current_logo = logo_match.group(1)
             parts = line.split(",", 1)
             current_name = parts[1].strip() if len(parts) > 1 else None
         elif line.startswith("#"):
             continue
-        elif line.startswith(("http://", "https://")):
+        elif line.lower().startswith(("http://", "https://", "rtsp://", "mms://")):
             name = current_name or _name_from_url(line)
-            entries.append({"name": name, "url": line})
+            entry: dict = {"name": name, "url": line}
+            if current_logo:
+                entry["logo"] = current_logo
+            entries.append(entry)
             current_name = None
+            current_logo = None
 
     return entries
 

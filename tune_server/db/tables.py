@@ -168,6 +168,36 @@ sa.Index(
 sa.Index("idx_playlist_tracks_track", playlist_tracks.c.track_id)
 
 # ---------------------------------------------------------------------------
+# output_devices — persisted audio output devices (DLNA, AirPlay, USB, local)
+# ---------------------------------------------------------------------------
+output_devices = sa.Table(
+    "output_devices",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("uid", sa.Text, nullable=False, unique=True),  # DLNA UUID, AirPlay ID, USB hw:x,y
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("type", sa.Text, nullable=False),  # dlna, airplay, local, usb
+    sa.Column("manufacturer", sa.Text),
+    sa.Column("model", sa.Text),
+    sa.Column("ip_address", sa.Text),
+    sa.Column("port", sa.Integer),
+    sa.Column("mac_address", sa.Text),
+    sa.Column("icon", sa.Text),  # speaker, tv, headphones, amplifier, dac, ...
+    sa.Column("capabilities", sa.Text),  # JSON: {formats, max_sample_rate, dsd, channels, ...}
+    sa.Column("firmware_version", sa.Text),
+    sa.Column("is_available", sa.Boolean, server_default=sa.text("TRUE")),
+    sa.Column("is_hidden", sa.Boolean, server_default=sa.text("FALSE")),  # user can hide devices
+    sa.Column("last_seen_at", sa.DateTime),
+    sa.Column("first_seen_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_output_devices_uid", output_devices.c.uid)
+sa.Index("idx_output_devices_type", output_devices.c.type)
+sa.Index("idx_output_devices_available", output_devices.c.is_available)
+
+# ---------------------------------------------------------------------------
 # zones
 # ---------------------------------------------------------------------------
 zones = sa.Table(
@@ -176,7 +206,7 @@ zones = sa.Table(
     sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
     sa.Column("name", sa.Text, nullable=False),
     sa.Column("output_type", sa.Text, nullable=False, server_default="local"),
-    sa.Column("output_device_id", sa.Text),
+    sa.Column("output_device_id", sa.Text, sa.ForeignKey("output_devices.uid", ondelete="SET NULL")),
     sa.Column("volume", sa.Float, server_default="0.5"),
     sa.Column("group_id", sa.Text),
     sa.Column("sync_delay_ms", sa.Integer, server_default="0"),

@@ -279,6 +279,19 @@ async def delete_artist(artist_id: int):
 
 @router.get("/stats/completeness", response_model=CompletenessStats)
 async def completeness_stats():
+    # Count doubtful albums
+    doubtful_row = await deps.db.fetchone(
+        """SELECT count(*) as c FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE (al.artist_name = UPPER(al.artist_name) AND LENGTH(al.artist_name) > 4
+                  AND al.artist_name NOT SIMILAR TO '[A-Z]{2,4}')
+             OR LOWER(al.artist_name) IN ('inconnu', 'various artists', 'none')
+             OR LOWER(al.genre) IN ('other', 'divers')
+             OR (al.year IS NOT NULL AND al.year > 0 AND (al.year < 1920 OR al.year > 2026))
+             OR (al.title = UPPER(al.title) AND LENGTH(al.title) > 4
+                 AND al.title NOT SIMILAR TO '[A-Z]{2,4}')
+             OR al.artist_name ~ '^\d{4}[-\s]'""",
+    )
     return CompletenessStats(
         total_albums=await deps.album_repo.count(),
         albums_without_cover=await deps.album_repo.count_without_cover(),
@@ -288,6 +301,7 @@ async def completeness_stats():
         artists_without_image=await deps.artist_repo.count_without_image(),
         total_tracks=await deps.track_repo.count(),
         tracks_without_artist=await deps.track_repo.count_without_artist(),
+        doubtful_count=doubtful_row["c"] if doubtful_row else 0,
     )
 
 

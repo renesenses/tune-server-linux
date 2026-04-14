@@ -703,6 +703,186 @@ async def embed_cover_in_file(track_id: int):
 
 
 # ---------------------------------------------------------------------------
+# Doubtful metadata — albums with inferred/uncertain data
+# ---------------------------------------------------------------------------
+
+@router.get("/doubtful")
+async def get_doubtful_albums():
+    """Return albums with doubtful metadata (inferred from paths, propagated, etc.)."""
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, al.artist_name, al.genre, al.year,
+                  al.cover_path, al.source, ar.name as artist_resolved
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE
+             -- Artist is ALL CAPS and > 3 chars (inferred from folder name)
+             (al.artist_name = UPPER(al.artist_name) AND LENGTH(al.artist_name) > 4
+              AND al.artist_name NOT SIMILAR TO '[A-Z]{2,4}')
+             -- Artist is a placeholder
+             OR LOWER(al.artist_name) IN ('inconnu', 'various artists', 'none')
+             -- Genre is a placeholder
+             OR LOWER(al.genre) IN ('other', 'divers')
+             -- Year seems wrong (before 1920 or after current year)
+             OR (al.year IS NOT NULL AND al.year > 0 AND (al.year < 1920 OR al.year > 2026))
+             -- Album title looks like an ALL CAPS path component
+             OR (al.title = UPPER(al.title) AND LENGTH(al.title) > 4
+                 AND al.title NOT SIMILAR TO '[A-Z]{2,4}')
+             -- Artist name contains year prefix (folder-derived like "1970-The Complete...")
+             OR al.artist_name ~ '^\d{4}[-\s]'
+           ORDER BY al.artist_name, al.title""",
+    )
+    return [
+        {
+            "id": r["id"],
+            "title": r["title"],
+            "artist_name": r["artist_name"],
+            "artist_resolved": r["artist_resolved"],
+            "genre": r["genre"],
+            "year": r["year"],
+            "cover_path": r["cover_path"],
+            "source": r["source"],
+            "reasons": _doubtful_reasons(r),
+        }
+        for r in rows
+    ]
+
+
+def _doubtful_reasons(row) -> list[str]:
+    """Determine why an album is flagged as doubtful."""
+    import re
+    reasons = []
+    artist = row.get("artist_name") or ""
+    genre = row.get("genre") or ""
+    year = row.get("year") or 0
+    title = row.get("title") or ""
+
+    if artist and artist == artist.upper() and len(artist) > 4:
+        reasons.append("artist_uppercase")
+    if artist.lower() in ('inconnu', 'various artists', 'none'):
+        reasons.append("artist_placeholder")
+    if re.match(r'^\d{4}[-\s]', artist):
+        reasons.append("artist_has_year")
+    if genre.lower() in ('other', 'divers'):
+        reasons.append("genre_placeholder")
+    if year and (year < 1920 or year > 2026):
+        reasons.append("year_suspicious")
+    if title and len(title) > 4 and title == title.upper():
+        reasons.append("title_uppercase")
+    return reasons
+
+
+# ---------------------------------------------------------------------------
+# Write all metadata to files + covers to folders
+# ---------------------------------------------------------------------------
+
+@router.post("/write-all-tags")
+async def write_all_tags_to_files():
+    """Write DB metadata (genre, year, artist, disc_number) to all local files."""
+    import asyncio as _aio
+
+    rows = await deps.db.fetchall(
+        """SELECT t.id, t.title, t.artist_name, t.track_number, t.disc_number,
+                  t.file_path, t.format,
+                  a.title as album_title, a.genre, a.year
+           FROM tracks t
+           JOIN albums a ON t.album_id = a.id
+           WHERE t.source = 'local' AND t.file_path IS NOT NULL
+           ORDER BY t.file_path""",
+    )
+
+    total = len(rows)
+    updated = 0
+    skipped = 0
+    errors = 0
+
+    for row in rows:
+        fmt = (row["format"] or "").lower()
+        if fmt in ("wav",):
+            skipped += 1
+            continue
+
+        metadata = {}
+        if row["artist_name"]:
+            metadata["artist_name"] = row["artist_name"]
+        if row["album_title"]:
+            metadata["album_title"] = row["album_title"]
+        if row["title"]:
+            metadata["title"] = row["title"]
+        if row["genre"]:
+            metadata["genre"] = row["genre"]
+        if row["year"] and row["year"] > 0:
+            metadata["year"] = str(row["year"])
+        if row["track_number"] and row["track_number"] > 0:
+            metadata["track_number"] = str(row["track_number"])
+        if row["disc_number"] and row["disc_number"] > 0:
+            metadata["disc_number"] = str(row["disc_number"])
+
+        if not metadata:
+            skipped += 1
+            continue
+
+        try:
+            result = await _aio.to_thread(write_tags, row["file_path"], metadata)
+            if result.get("written"):
+                updated += 1
+            else:
+                skipped += 1
+        except Exception:
+            errors += 1
+
+    return {"ok": True, "total": total, "updated": updated, "skipped": skipped, "errors": errors}
+
+
+@router.post("/write-all-covers")
+async def write_all_covers_to_folders():
+    """Copy cover.jpg from artwork_cache to each album folder."""
+    import shutil
+    from pathlib import Path
+    from tune_server.config import settings
+
+    cache_dir = Path(settings.artwork_cache_dir)
+
+    rows = await deps.db.fetchall(
+        """SELECT DISTINCT a.id, a.cover_path,
+                  (SELECT regexp_replace(t.file_path, '/[^/]+$', '')
+                   FROM tracks t WHERE t.album_id = a.id AND t.source = 'local' LIMIT 1) as folder
+           FROM albums a
+           JOIN tracks t ON t.album_id = a.id
+           WHERE a.cover_path IS NOT NULL AND a.cover_path != ''
+           AND t.source = 'local'""",
+    )
+
+    written = 0
+    skipped = 0
+    errors = 0
+
+    for row in rows:
+        folder = row["folder"]
+        cover = row["cover_path"]
+        if not folder or not cover:
+            skipped += 1
+            continue
+
+        target = Path(folder) / "cover.jpg"
+        if target.exists():
+            skipped += 1
+            continue
+
+        source = cache_dir.parent / cover  # cover_path is relative like "artwork_cache/xxx.jpg"
+        if not source.exists():
+            errors += 1
+            continue
+
+        try:
+            shutil.copy2(str(source), str(target))
+            written += 1
+        except Exception:
+            errors += 1
+
+    return {"ok": True, "written": written, "skipped": skipped, "errors": errors}
+
+
+# ---------------------------------------------------------------------------
 # Auto-fix albums from file paths
 # ---------------------------------------------------------------------------
 

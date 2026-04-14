@@ -179,6 +179,26 @@ class SignalPath(BaseModel):
     checksum_verified: bool | None = None  # True if source==output hash
 
 
+class OutputDevice(BaseModel):
+    """Persisted audio output device (DLNA, AirPlay, USB, local)."""
+    id: int | None = None
+    uid: str
+    name: str
+    type: str  # dlna, airplay, local, usb
+    manufacturer: str | None = None
+    model: str | None = None
+    ip_address: str | None = None
+    port: int | None = None
+    mac_address: str | None = None
+    icon: str | None = None  # speaker, tv, headphones, amplifier, dac
+    capabilities: dict = Field(default_factory=dict)
+    firmware_version: str | None = None
+    is_available: bool = True
+    is_hidden: bool = False
+    last_seen_at: str | None = None
+    first_seen_at: str | None = None
+
+
 class DiscoveredDevice(BaseModel):
     id: str
     name: str
@@ -660,6 +680,7 @@ class CompletenessStats(BaseModel):
     artists_without_image: int = 0
     total_tracks: int = 0
     tracks_without_artist: int = 0
+    doubtful_count: int = 0
 
 
 # --- Browse by directory models ---

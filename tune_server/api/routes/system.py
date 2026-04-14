@@ -213,6 +213,16 @@ async def migrate_database(
     return {"status": "started", "from": current, "to": target}
 
 
+@router.post("/library/clear", status_code=200)
+async def clear_library():
+    """Clear all tracks, albums, and artists from the library. Keeps zones, playlists, radios."""
+    await deps.db.execute("DELETE FROM tracks")
+    await deps.db.execute("DELETE FROM albums")
+    await deps.db.execute("DELETE FROM artists")
+    await deps.db.commit()
+    return {"cleared": True, "message": "Library cleared (tracks, albums, artists)"}
+
+
 @router.post("/scan", status_code=202)
 async def trigger_scan(path: Optional[str] = Query(None, description="Scan a single directory instead of all music_dirs")):
     if not deps.scanner:

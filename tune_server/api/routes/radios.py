@@ -187,7 +187,18 @@ async def import_radios(file: UploadFile):
     if not deps.radio_repo:
         raise HTTPException(status_code=503, detail="Radio repository not available")
 
-    content = (await file.read()).decode("utf-8", errors="replace")
+    raw = await file.read()
+    # Handle BOM + Windows encodings
+    if raw.startswith(b"\xef\xbb\xbf"):
+        content = raw[3:].decode("utf-8", errors="replace")
+    else:
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            content = raw.decode("latin-1", errors="replace")
+    # Normalize line endings (Windows CRLF → LF)
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+
     filename = (file.filename or "").lower()
 
     if filename.endswith(".pls"):
@@ -208,6 +219,7 @@ async def import_radios(file: UploadFile):
             await deps.radio_repo.create(RadioStationCreate(
                 name=entry["name"],
                 stream_url=entry["url"],
+                logo_url=entry.get("logo"),
             ))
             imported += 1
         except Exception as e:

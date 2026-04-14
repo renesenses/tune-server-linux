@@ -101,11 +101,36 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
 
 CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist ON playlist_tracks(playlist_id, position);
 
+CREATE TABLE IF NOT EXISTS output_devices (
+    id SERIAL PRIMARY KEY,
+    uid TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    manufacturer TEXT,
+    model TEXT,
+    ip_address TEXT,
+    port INTEGER,
+    mac_address TEXT,
+    icon TEXT,
+    capabilities TEXT,
+    firmware_version TEXT,
+    is_available BOOLEAN DEFAULT TRUE,
+    is_hidden BOOLEAN DEFAULT FALSE,
+    last_seen_at TIMESTAMP,
+    first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_output_devices_uid ON output_devices(uid);
+CREATE INDEX IF NOT EXISTS idx_output_devices_type ON output_devices(type);
+CREATE INDEX IF NOT EXISTS idx_output_devices_available ON output_devices(is_available);
+
 CREATE TABLE IF NOT EXISTS zones (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     output_type TEXT NOT NULL DEFAULT 'local',
-    output_device_id TEXT,
+    output_device_id TEXT REFERENCES output_devices(uid) ON DELETE SET NULL,
     volume REAL DEFAULT 0.5,
     group_id TEXT,
     sync_delay_ms INTEGER DEFAULT 0,
