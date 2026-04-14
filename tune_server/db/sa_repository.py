@@ -729,3 +729,239 @@ class SARadioStationRepo:
             .values(favorite=new_val)
         )
         return new_val
+
+
+# ===================================================================
+# PlayQueueRepo — SA Core
+# ===================================================================
+
+class SAPlayQueueRepo:
+    def __init__(self, db: SADatabase) -> None:
+        self._db = db
+
+    def _queue_select(self):
+        """Queue items with track, album, and artist info."""
+        return (
+            sa.select(
+                play_queue,
+                tracks.c.title, tracks.c.file_path, tracks.c.duration_ms,
+                tracks.c.format, tracks.c.sample_rate, tracks.c.bit_depth,
+                tracks.c.channels, tracks.c.source, tracks.c.source_id,
+                albums.c.title.label("album_title"),
+                artists.c.name.label("artist_name"),
+            )
+            .join(tracks, play_queue.c.track_id == tracks.c.id)
+            .outerjoin(albums, tracks.c.album_id == albums.c.id)
+            .outerjoin(artists, tracks.c.artist_id == artists.c.id)
+        )
+
+    async def get_queue(self, zone_id: int) -> list[dict]:
+        stmt = (
+            self._queue_select()
+            .where(play_queue.c.zone_id == zone_id)
+            .order_by(play_queue.c.position)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [dict(r) for r in rows]
+
+    async def get_current(self, zone_id: int) -> dict | None:
+        stmt = (
+            self._queue_select()
+            .where(sa.and_(
+                play_queue.c.zone_id == zone_id,
+                play_queue.c.is_current == True,
+            ))
+        )
+        row = await self._db.sa_fetchone(stmt)
+        return dict(row) if row else None
+
+    async def set_queue(self, zone_id: int, track_ids: list[int]) -> None:
+        async with self._db.sa_engine.begin() as conn:
+            await conn.execute(
+                play_queue.delete().where(play_queue.c.zone_id == zone_id)
+            )
+            for i, track_id in enumerate(track_ids):
+                await conn.execute(
+                    play_queue.insert().values(
+                        zone_id=zone_id, track_id=track_id,
+                        position=i, is_current=(i == 0),
+                    )
+                )
+
+    async def add_tracks(self, zone_id: int, track_ids: list[int], position: int | None = None) -> None:
+        if position is not None:
+            await self._db.sa_execute(
+                play_queue.update()
+                .where(sa.and_(
+                    play_queue.c.zone_id == zone_id,
+                    play_queue.c.position >= position,
+                ))
+                .values(position=play_queue.c.position + len(track_ids))
+            )
+        else:
+            row = await self._db.sa_fetchone(
+                sa.select(
+                    sa.func.coalesce(sa.func.max(play_queue.c.position), -1) + 1
+                ).where(play_queue.c.zone_id == zone_id)
+            )
+            position = row[0] if row else 0
+
+        async with self._db.sa_engine.begin() as conn:
+            for i, track_id in enumerate(track_ids):
+                await conn.execute(
+                    play_queue.insert().values(
+                        zone_id=zone_id, track_id=track_id,
+                        position=position + i,
+                    )
+                )
+
+    async def set_current(self, zone_id: int, position: int) -> None:
+        async with self._db.sa_engine.begin() as conn:
+            await conn.execute(
+                play_queue.update()
+                .where(play_queue.c.zone_id == zone_id)
+                .values(is_current=False)
+            )
+            await conn.execute(
+                play_queue.update()
+                .where(sa.and_(
+                    play_queue.c.zone_id == zone_id,
+                    play_queue.c.position == position,
+                ))
+                .values(is_current=True)
+            )
+
+    async def clear(self, zone_id: int) -> None:
+        await self._db.sa_execute(
+            play_queue.delete().where(play_queue.c.zone_id == zone_id)
+        )
+
+    async def count(self, zone_id: int) -> int:
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(play_queue)
+            .where(play_queue.c.zone_id == zone_id)
+        )
+        return row[0] if row else 0
+
+
+# ===================================================================
+# RadioFavoriteRepo — SA Core
+# ===================================================================
+
+class SARadioFavoriteRepo:
+    def __init__(self, db: SADatabase) -> None:
+        self._db = db
+
+    async def list(self, limit: int = 200, offset: int = 0) -> list[dict]:
+        stmt = (
+            sa.select(radio_favorites)
+            .order_by(radio_favorites.c.saved_at.desc())
+            .limit(limit).offset(offset)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [dict(r) for r in rows]
+
+    async def count(self) -> int:
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(radio_favorites)
+        )
+        return row[0] if row else 0
+
+    async def save(self, title: str, artist: str, station_name: str = "",
+                   cover_url: str | None = None, stream_url: str | None = None) -> dict | None:
+        if not title:
+            return None
+        try:
+            # Use raw SQL for ON CONFLICT since SA dialect handling varies
+            await self._db.execute(
+                """INSERT INTO radio_favorites
+                   (title, artist, station_name, cover_url, stream_url)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (title, artist) DO NOTHING""",
+                (title, artist, station_name, cover_url, stream_url),
+            )
+            row = await self._db.sa_fetchone(
+                sa.select(radio_favorites).where(
+                    sa.and_(
+                        radio_favorites.c.title == title,
+                        radio_favorites.c.artist == artist,
+                    )
+                )
+            )
+            return dict(row) if row else None
+        except Exception:
+            return None
+
+    async def is_favorite(self, title: str, artist: str) -> bool:
+        row = await self._db.sa_fetchone(
+            sa.select(sa.literal(1)).select_from(radio_favorites).where(
+                sa.and_(
+                    radio_favorites.c.title == title,
+                    radio_favorites.c.artist == artist,
+                )
+            )
+        )
+        return row is not None
+
+    async def delete(self, fav_id: int) -> None:
+        await self._db.sa_execute(
+            radio_favorites.delete().where(radio_favorites.c.id == fav_id)
+        )
+
+    async def clear(self) -> None:
+        await self._db.sa_execute(radio_favorites.delete())
+
+    async def export_csv(self) -> str:
+        rows = await self._db.sa_fetchall(
+            sa.select(
+                radio_favorites.c.artist, radio_favorites.c.title,
+                radio_favorites.c.station_name, radio_favorites.c.saved_at,
+            ).order_by(radio_favorites.c.saved_at.desc())
+        )
+        lines = ["Artist,Title,Station,Date"]
+        for r in rows:
+            artist = str(r["artist"]).replace('"', '""')
+            title = str(r["title"]).replace('"', '""')
+            station = str(r["station_name"]).replace('"', '""')
+            lines.append(f'"{artist}","{title}","{station}","{r["saved_at"]}"')
+        return "\n".join(lines)
+
+
+# ===================================================================
+# Full-Text Search — SA Core (aggregated)
+# ===================================================================
+
+async def sa_full_text_search(db: SADatabase, query: str, limit: int = 50) -> SearchResult:
+    """Federated FTS across artists, albums, tracks — database independent."""
+    artist_repo = SAArtistRepo(db)
+    album_repo = SAAlbumRepo(db)
+    track_repo = SATrackRepo(db)
+
+    found_tracks = await track_repo.search(query, limit)
+    found_albums = await album_repo.search(query, limit)
+    found_artists = await artist_repo.search(query, limit)
+
+    # Enrich: also fetch albums/tracks for matching artists
+    seen_album_ids = {a.id for a in found_albums if a.id}
+    seen_track_ids = {t.id for t in found_tracks if t.id}
+    for artist in found_artists:
+        if not artist.id:
+            continue
+        artist_albums = await album_repo.list_by_artist(artist.id)
+        for al in artist_albums:
+            if al.id and al.id not in seen_album_ids:
+                found_albums.append(al)
+                seen_album_ids.add(al.id)
+        artist_tracks = await track_repo.list_by_artist(artist.id)
+        for tr in artist_tracks:
+            if tr.id and tr.id not in seen_track_ids:
+                found_tracks.append(tr)
+                seen_track_ids.add(tr.id)
+        if len(found_albums) >= limit and len(found_tracks) >= limit:
+            break
+
+    return SearchResult(
+        tracks=found_tracks[:limit],
+        albums=found_albums[:limit],
+        artists=found_artists,
+    )
