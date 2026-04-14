@@ -195,3 +195,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_track ON user_favorites(user_id, 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_album ON user_favorites(user_id, album_id) WHERE album_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_artist ON user_favorites(user_id, artist_id) WHERE artist_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_user_favorites_user ON user_favorites(user_id);
+
+-- Performance indexes (v0.6.1)
+CREATE INDEX IF NOT EXISTS idx_albums_created_at ON albums(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_albums_genre ON albums(genre);
+CREATE INDEX IF NOT EXISTS idx_tracks_created_at ON tracks(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tracks_format_sr ON tracks(format, sample_rate);
+CREATE INDEX IF NOT EXISTS idx_tracks_audio_hash ON tracks(audio_hash);
+CREATE INDEX IF NOT EXISTS idx_radio_stations_genre ON radio_stations(genre);
+CREATE INDEX IF NOT EXISTS idx_radio_stations_favorite ON radio_stations(favorite);
+CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);
+CREATE INDEX IF NOT EXISTS idx_metadata_suggestions_status ON metadata_suggestions(status);

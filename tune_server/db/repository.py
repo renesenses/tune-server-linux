@@ -474,6 +474,24 @@ class TrackRepo:
         )
         return _row_to_track(row) if row else None
 
+    async def get_by_sources(self, items: list[tuple[str, str]]) -> dict[tuple[str, str], Track]:
+        """Batch lookup tracks by (source, source_id) pairs."""
+        if not items:
+            return {}
+        conditions = " OR ".join(["(t.source = ? AND t.source_id = ?)"] * len(items))
+        params: list = []
+        for source, source_id in items:
+            params.extend([source, source_id])
+        rows = await self._db.fetchall(
+            f"{self._SELECT} WHERE {conditions}",
+            tuple(params),
+        )
+        result: dict[tuple[str, str], Track] = {}
+        for r in rows:
+            t = _row_to_track(r)
+            result[(t.source, t.source_id)] = t
+        return result
+
     async def list(self, limit: int = 100, offset: int = 0) -> list[Track]:
         rows = await self._db.fetchall(
             f"{self._SELECT} ORDER BY t.title LIMIT ? OFFSET ?",
@@ -792,11 +810,11 @@ class PlayQueueRepo:
 
     async def set_queue(self, zone_id: int, track_ids: list[int]) -> None:
         await self._db.execute("DELETE FROM play_queue WHERE zone_id = ?", (zone_id,))
-        for i, track_id in enumerate(track_ids):
-            await self._db.execute(
-                """INSERT INTO play_queue (zone_id, track_id, position, is_current)
-                   VALUES (?, ?, ?, ?)""",
-                (zone_id, track_id, i, 1 if i == 0 else 0),
+        if track_ids:
+            params = [(zone_id, track_id, i, 1 if i == 0 else 0) for i, track_id in enumerate(track_ids)]
+            await self._db.executemany(
+                "INSERT INTO play_queue (zone_id, track_id, position, is_current) VALUES (?, ?, ?, ?)",
+                params,
             )
         await self._db.commit()
 
@@ -813,10 +831,11 @@ class PlayQueueRepo:
             )
             position = row["next_pos"]
 
-        for i, track_id in enumerate(track_ids):
-            await self._db.execute(
+        if track_ids:
+            params = [(zone_id, track_id, position + i) for i, track_id in enumerate(track_ids)]
+            await self._db.executemany(
                 "INSERT INTO play_queue (zone_id, track_id, position) VALUES (?, ?, ?)",
-                (zone_id, track_id, position + i),
+                params,
             )
         await self._db.commit()
 
@@ -966,10 +985,11 @@ class PlaylistRepo:
             )
             position = row["next_pos"]
 
-        for i, track_id in enumerate(track_ids):
-            await self._db.execute(
+        if track_ids:
+            params = [(playlist_id, track_id, position + i) for i, track_id in enumerate(track_ids)]
+            await self._db.executemany(
                 "INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)",
-                (playlist_id, track_id, position + i),
+                params,
             )
         await self._db.commit()
 
@@ -994,10 +1014,11 @@ class PlaylistRepo:
             "DELETE FROM playlist_tracks WHERE playlist_id = ?",
             (playlist_id,),
         )
-        for i, track_id in enumerate(track_ids):
-            await self._db.execute(
+        if track_ids:
+            params = [(playlist_id, track_id, i) for i, track_id in enumerate(track_ids)]
+            await self._db.executemany(
                 "INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)",
-                (playlist_id, track_id, i),
+                params,
             )
         await self._db.commit()
 
@@ -1089,10 +1110,12 @@ async def full_text_search(db: Database, query: str, limit: int = 50) -> SearchR
     albums = await album_repo.search(query, limit)
     artists = await artist_repo.search(query, limit)
 
-    # Enrich: also fetch albums/tracks for matching artists
+    # Enrich: also fetch albums/tracks for matching artists.
+    # Limit to 5 artists to avoid N+1 explosion on broad queries
+    # (each artist triggers 2 extra queries for albums + tracks).
     seen_album_ids = {a.id for a in albums if a.id}
     seen_track_ids = {t.id for t in tracks if t.id}
-    for artist in artists:
+    for artist in artists[:5]:
         if not artist.id:
             continue
         artist_albums = await album_repo.list_by_artist(artist.id)

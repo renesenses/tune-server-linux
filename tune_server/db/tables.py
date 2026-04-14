@@ -66,6 +66,8 @@ sa.Index("idx_albums_title", albums.c.title)
 sa.Index("idx_albums_artist_id", albums.c.artist_id)
 sa.Index("idx_albums_year", albums.c.year)
 sa.Index("idx_albums_source", albums.c.source, albums.c.source_id)
+sa.Index("idx_albums_created_at", albums.c.created_at)
+sa.Index("idx_albums_genre", albums.c.genre)
 
 # ---------------------------------------------------------------------------
 # tracks
@@ -119,6 +121,9 @@ sa.Index("idx_tracks_album_id", tracks.c.album_id)
 sa.Index("idx_tracks_artist_id", tracks.c.artist_id)
 sa.Index("idx_tracks_file_path", tracks.c.file_path)
 sa.Index("idx_tracks_source", tracks.c.source, tracks.c.source_id)
+sa.Index("idx_tracks_created_at", tracks.c.created_at)
+sa.Index("idx_tracks_format_sr", tracks.c.format, tracks.c.sample_rate)
+sa.Index("idx_tracks_audio_hash", tracks.c.audio_hash)
 
 # ---------------------------------------------------------------------------
 # playlists
@@ -160,6 +165,7 @@ sa.Index(
     playlist_tracks.c.playlist_id,
     playlist_tracks.c.position,
 )
+sa.Index("idx_playlist_tracks_track", playlist_tracks.c.track_id)
 
 # ---------------------------------------------------------------------------
 # zones
@@ -257,6 +263,9 @@ radio_stations = sa.Table(
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
 )
+
+sa.Index("idx_radio_stations_genre", radio_stations.c.genre)
+sa.Index("idx_radio_stations_favorite", radio_stations.c.favorite)
 
 # ---------------------------------------------------------------------------
 # user_profiles
@@ -400,6 +409,8 @@ metadata_suggestions = sa.Table(
     sa.Column("status", sa.Text, server_default="pending"),
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
 )
+
+sa.Index("idx_metadata_suggestions_status", metadata_suggestions.c.status)
 
 # ---------------------------------------------------------------------------
 # playlist_links
