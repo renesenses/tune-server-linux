@@ -127,23 +127,25 @@ class SADatabase:
         async with self._engine.begin() as conn:
             result = await conn.execute(sa.text(text_sql), bound_params)
             lastrowid = None
+            is_insert = text_sql.strip().upper().startswith("INSERT")
             if result.returns_rows:
                 row = result.first()
                 if row and "id" in row._mapping:
                     lastrowid = row._mapping["id"]
-            else:
+            elif is_insert:
                 try:
                     lastrowid = result.lastrowid
-                except AttributeError:
-                    pass  # asyncpg doesn't support lastrowid
-                try:
-                    if not lastrowid and result.inserted_primary_key:
-                        lastrowid = result.inserted_primary_key[0]
-                except AttributeError:
+                except (AttributeError, Exception):
                     pass
+                if not lastrowid:
+                    try:
+                        if result.inserted_primary_key:
+                            lastrowid = result.inserted_primary_key[0]
+                    except (AttributeError, Exception):
+                        pass
             try:
                 rowcount = result.rowcount
-            except AttributeError:
+            except (AttributeError, Exception):
                 rowcount = 0
             return ExecuteResult(lastrowid=lastrowid, rowcount=rowcount)
 
