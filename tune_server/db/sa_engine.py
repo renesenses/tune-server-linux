@@ -195,9 +195,16 @@ class SADatabase:
         async with self._engine.begin() as conn:
             result = await conn.execute(stmt)
             lastrowid = None
-            if result.inserted_primary_key:
-                lastrowid = result.inserted_primary_key[0]
-            return ExecuteResult(lastrowid=lastrowid, rowcount=result.rowcount)
+            try:
+                if result.inserted_primary_key:
+                    lastrowid = result.inserted_primary_key[0]
+            except Exception:
+                pass
+            try:
+                rowcount = result.rowcount
+            except Exception:
+                rowcount = 0
+            return ExecuteResult(lastrowid=lastrowid, rowcount=rowcount)
 
     async def sa_fetchone(self, stmt) -> Any | None:
         """Execute a SA Core SELECT and return one row mapping."""
