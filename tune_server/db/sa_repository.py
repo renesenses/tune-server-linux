@@ -56,11 +56,13 @@ def _row_to_album(row) -> Album:
     sr = row.get("max_sample_rate") if "max_sample_rate" in keys else None
     bd = row.get("max_bit_depth") if "max_bit_depth" in keys else None
     fmt = row.get("dominant_format") if "dominant_format" in keys else None
+    artist_name = (row.get("artist_name_resolved") if "artist_name_resolved" in keys
+                   else row.get("artist_name") if "artist_name" in keys else None)
     return Album(
         id=row["id"],
         title=row["title"],
         artist_id=row["artist_id"],
-        artist_name=row.get("artist_name") if "artist_name" in keys else None,
+        artist_name=artist_name,
         year=row["year"],
         genre=row["genre"],
         disc_count=row["disc_count"],
@@ -77,13 +79,20 @@ def _row_to_album(row) -> Album:
 
 def _row_to_track(row) -> Track:
     keys = row.keys() if hasattr(row, "keys") else []
+    # Prefer resolved (joined) values, fallback to denormalized columns
+    album_title = (row.get("album_title_resolved") if "album_title_resolved" in keys
+                   else row.get("album_title") if "album_title" in keys else None)
+    artist_name = (row.get("artist_name_resolved") if "artist_name_resolved" in keys
+                   else row.get("artist_name") if "artist_name" in keys else None)
+    cover_path = (row.get("cover_path_resolved") if "cover_path_resolved" in keys
+                  else row.get("cover_path") if "cover_path" in keys else None)
     return Track(
         id=row["id"],
         title=row["title"],
         album_id=row["album_id"],
-        album_title=row.get("album_title") if "album_title" in keys else None,
+        album_title=album_title,
         artist_id=row["artist_id"],
-        artist_name=row.get("artist_name") if "artist_name" in keys else None,
+        artist_name=artist_name,
         disc_number=row["disc_number"],
         track_number=row["track_number"],
         duration_ms=row["duration_ms"],
@@ -92,7 +101,7 @@ def _row_to_track(row) -> Track:
         sample_rate=row["sample_rate"],
         bit_depth=row["bit_depth"],
         channels=row["channels"],
-        cover_path=row.get("cover_path") if "cover_path" in keys else None,
+        cover_path=cover_path,
         source=row["source"],
         source_id=row["source_id"],
         isrc=row.get("isrc") if "isrc" in keys else None,
@@ -261,32 +270,36 @@ class SAAlbumRepo:
         self._db = db
 
     def _album_select(self):
-        """Base SELECT with artist name and track quality subquery."""
+        """Base SELECT with artist name and track quality stats."""
+        # Track quality subquery — simple aggregation, no correlated subquery
         tq = (
             sa.select(
                 tracks.c.album_id,
                 sa.func.max(tracks.c.sample_rate).label("max_sample_rate"),
                 sa.func.max(tracks.c.bit_depth).label("max_bit_depth"),
-                # Dominant format: pick the format of the highest-quality track
-                sa.select(tracks.c.format)
-                .where(tracks.c.album_id == albums.c.id)
-                .where(tracks.c.format.isnot(None))
-                .order_by(tracks.c.sample_rate.desc().nullslast(), tracks.c.bit_depth.desc().nullslast())
-                .limit(1)
-                .correlate(albums)
-                .scalar_subquery()
-                .label("dominant_format"),
             )
             .where(tracks.c.album_id.isnot(None))
             .group_by(tracks.c.album_id)
             .subquery("tq")
         )
+        # Dominant format as correlated scalar subquery on main albums table
+        dominant_fmt = (
+            sa.select(tracks.c.format)
+            .where(tracks.c.album_id == albums.c.id)
+            .where(tracks.c.format.isnot(None))
+            .order_by(tracks.c.sample_rate.desc().nullslast(), tracks.c.bit_depth.desc().nullslast())
+            .limit(1)
+            .correlate(albums)
+            .scalar_subquery()
+            .label("dominant_format")
+        )
         return (
             sa.select(
                 albums,
-                artists.c.name.label("artist_name"),
+                sa.func.coalesce(artists.c.name, albums.c.artist_name).label("artist_name_resolved"),
                 tq.c.max_sample_rate,
                 tq.c.max_bit_depth,
+                dominant_fmt,
             )
             .outerjoin(artists, albums.c.artist_id == artists.c.id)
             .outerjoin(tq, tq.c.album_id == albums.c.id)
@@ -413,13 +426,17 @@ class SATrackRepo:
         self._db = db
 
     def _track_select(self):
-        """Base SELECT with album title and artist name."""
+        """Base SELECT with album title and artist name from JOINs.
+
+        Uses COALESCE to prefer the joined value over the denormalized one.
+        Labels use _joined suffix to avoid ambiguity with tracks columns.
+        """
         return (
             sa.select(
                 tracks,
-                albums.c.title.label("album_title"),
-                artists.c.name.label("artist_name"),
-                albums.c.cover_path.label("cover_path"),
+                sa.func.coalesce(albums.c.title, tracks.c.album_title).label("album_title_resolved"),
+                sa.func.coalesce(artists.c.name, tracks.c.artist_name).label("artist_name_resolved"),
+                sa.func.coalesce(albums.c.cover_path, tracks.c.cover_path).label("cover_path_resolved"),
             )
             .outerjoin(albums, tracks.c.album_id == albums.c.id)
             .outerjoin(artists, tracks.c.artist_id == artists.c.id)

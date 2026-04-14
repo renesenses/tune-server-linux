@@ -5,6 +5,7 @@ Validates backward compatibility with raw SQL and SA-native methods.
 import pytest
 from tune_server.db.sa_engine import SADatabase
 from tune_server.db.tables import artists, albums, tracks
+from tune_server.models import Artist
 
 
 @pytest.fixture
@@ -273,3 +274,62 @@ async def test_sa_insert_then_delete(db: SADatabase):
         artists.delete().where(artists.c.id == aid)
     )
     assert del_result.rowcount == 1
+
+
+# ---------------------------------------------------------------------------
+# SA Repository integration tests
+# ---------------------------------------------------------------------------
+
+async def test_album_repo_list(db: SADatabase):
+    """SAAlbumRepo.list() with subquery should work."""
+    from tune_server.db.sa_repository import SAArtistRepo, SAAlbumRepo, SATrackRepo
+
+    artist_repo = SAArtistRepo(db)
+    album_repo = SAAlbumRepo(db)
+    track_repo = SATrackRepo(db)
+
+    # Create test data
+    aid = await artist_repo.create(Artist(name="Test Artist", sort_name="Test Artist"))
+    from tune_server.models import Album, Track
+    album_id = await album_repo.create(Album(title="Test Album", artist_id=aid, source="local"))
+    await track_repo.create(Track(
+        title="Track 1", album_id=album_id, artist_id=aid,
+        source="local", format="flac", sample_rate=44100, bit_depth=16,
+    ))
+
+    # List albums — triggers the subquery
+    result = await album_repo.list(limit=10)
+    assert len(result) == 1
+    assert result[0].title == "Test Album"
+    assert result[0].artist_name == "Test Artist"
+
+    # Count
+    count = await album_repo.count()
+    assert count == 1
+
+    # List by artist
+    by_artist = await album_repo.list_by_artist(aid)
+    assert len(by_artist) == 1
+
+
+async def test_track_repo_list_by_album(db: SADatabase):
+    """SATrackRepo.list_by_album() should return ordered tracks."""
+    from tune_server.db.sa_repository import SAArtistRepo, SAAlbumRepo, SATrackRepo
+    from tune_server.models import Album, Track
+
+    artist_repo = SAArtistRepo(db)
+    album_repo = SAAlbumRepo(db)
+    track_repo = SATrackRepo(db)
+
+    aid = await artist_repo.create(Artist(name="Band", sort_name="Band"))
+    album_id = await album_repo.create(Album(title="Album", artist_id=aid, source="local"))
+
+    await track_repo.create(Track(title="C", album_id=album_id, artist_id=aid, source="local", track_number=3, disc_number=1))
+    await track_repo.create(Track(title="A", album_id=album_id, artist_id=aid, source="local", track_number=1, disc_number=1))
+    await track_repo.create(Track(title="B", album_id=album_id, artist_id=aid, source="local", track_number=2, disc_number=1))
+
+    tracks_list = await track_repo.list_by_album(album_id)
+    assert len(tracks_list) == 3
+    assert tracks_list[0].title == "A"  # track_number=1
+    assert tracks_list[1].title == "B"  # track_number=2
+    assert tracks_list[2].title == "C"  # track_number=3
