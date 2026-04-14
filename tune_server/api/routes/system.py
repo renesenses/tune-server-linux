@@ -109,6 +109,110 @@ async def test_database():
         return {"ok": False, "error": str(e)}
 
 
+@router.get("/database/status")
+async def database_status():
+    """Get current database engine, stats, and capabilities."""
+    if not deps.db:
+        return {"engine": "none", "connected": False}
+
+    engine = getattr(deps.db, "engine_name", "sqlite")
+    stats = {}
+    try:
+        for table in ("tracks", "albums", "artists", "playlists", "zones", "radio_stations"):
+            row = await deps.db.fetchone(f"SELECT COUNT(*) as cnt FROM {table}")
+            stats[table] = row["cnt"] if row else 0
+    except Exception:
+        pass
+
+    result = {
+        "engine": engine,
+        "connected": True,
+        "stats": stats,
+    }
+
+    # SQLite-specific info
+    if engine == "sqlite":
+        db_path = getattr(settings, "db_path", "tune_server.db")
+        result["path"] = db_path
+        try:
+            import os
+            result["size_mb"] = round(os.path.getsize(db_path) / (1024 * 1024), 1)
+        except Exception:
+            pass
+
+    # PostgreSQL-specific info
+    if engine == "postgres":
+        result["url"] = settings.db_url.split("@")[-1] if settings.db_url else None
+        try:
+            row = await deps.db.fetchone("SELECT pg_database_size(current_database()) as size")
+            result["size_mb"] = round(row["size"] / (1024 * 1024), 1) if row else None
+        except Exception:
+            pass
+
+    return result
+
+
+class _MigrationRequest:
+    pass
+
+
+@router.post("/database/test-connection")
+async def test_pg_connection(url: str = Query(..., description="PostgreSQL connection URL")):
+    """Test a PostgreSQL connection before migrating."""
+    try:
+        import asyncpg
+        conn = await asyncpg.connect(url)
+        version = conn.get_server_version()
+        await conn.close()
+        return {"ok": True, "version": f"{version.major}.{version.minor}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@router.post("/database/migrate", status_code=202)
+async def migrate_database(
+    target: str = Query(..., description="Target engine: 'postgres' or 'sqlite'"),
+    url: str = Query(None, description="PostgreSQL connection URL (required if target=postgres)"),
+):
+    """Migrate database from current engine to target engine.
+
+    This runs in the background. Check /database/status for progress.
+    """
+    current = getattr(deps.db, "engine_name", "sqlite")
+    if current == target:
+        raise HTTPException(400, f"Already using {target}")
+
+    if target == "postgres" and not url:
+        raise HTTPException(400, "url parameter required for postgres migration")
+
+    # Test target connection first
+    if target == "postgres":
+        try:
+            import asyncpg
+            conn = await asyncpg.connect(url)
+            await conn.close()
+        except Exception as e:
+            raise HTTPException(400, f"Cannot connect to PostgreSQL: {e}")
+
+    # Run migration in background
+    async def _do_migrate():
+        import os
+        os.environ["TUNE_DB_URL"] = url or ""
+        from tune_server.db.migrate import migrate
+        try:
+            await migrate(current, target)
+            # Update .env for persistence
+            persist_env_var("TUNE_DB_ENGINE", target)
+            if url:
+                persist_env_var("TUNE_DB_URL", url)
+        except Exception:
+            import structlog
+            structlog.get_logger().exception("migration_error")
+
+    asyncio.create_task(_do_migrate())
+    return {"status": "started", "from": current, "to": target}
+
+
 @router.post("/scan", status_code=202)
 async def trigger_scan(path: Optional[str] = Query(None, description="Scan a single directory instead of all music_dirs")):
     if not deps.scanner:
