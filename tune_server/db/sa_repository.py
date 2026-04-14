@@ -310,12 +310,62 @@ class SAAlbumRepo:
         row = await self._db.sa_fetchone(stmt)
         return _row_to_album(row) if row else None
 
-    async def list(self, limit: int = 100, offset: int = 0) -> list[Album]:
-        stmt = (
-            self._album_select()
-            .order_by(albums.c.title)
-            .limit(limit).offset(offset)
-        )
+    async def list(self, limit: int = 100, offset: int = 0,
+                   quality: str | None = None, format: str | None = None,
+                   sample_rate: int | None = None) -> list[Album]:
+        stmt = self._album_select()
+
+        # Quality/format/sample_rate filters via track subquery
+        if quality or format or sample_rate:
+            has_track = sa.exists(
+                sa.select(sa.literal(1)).select_from(tracks)
+                .where(tracks.c.album_id == albums.c.id)
+            )
+            if format:
+                has_track = sa.exists(
+                    sa.select(sa.literal(1)).select_from(tracks)
+                    .where(tracks.c.album_id == albums.c.id)
+                    .where(tracks.c.format == format)
+                )
+                stmt = stmt.where(has_track)
+            if sample_rate:
+                has_track_sr = sa.exists(
+                    sa.select(sa.literal(1)).select_from(tracks)
+                    .where(tracks.c.album_id == albums.c.id)
+                    .where(tracks.c.sample_rate >= sample_rate)
+                )
+                stmt = stmt.where(has_track_sr)
+            if quality == "hi-res":
+                has_hires = sa.exists(
+                    sa.select(sa.literal(1)).select_from(tracks)
+                    .where(tracks.c.album_id == albums.c.id)
+                    .where(sa.or_(tracks.c.sample_rate > 44100, tracks.c.bit_depth > 16))
+                )
+                stmt = stmt.where(has_hires)
+            elif quality == "dsd":
+                has_dsd = sa.exists(
+                    sa.select(sa.literal(1)).select_from(tracks)
+                    .where(tracks.c.album_id == albums.c.id)
+                    .where(tracks.c.format.in_(["dsd", "dsf", "dff"]))
+                )
+                stmt = stmt.where(has_dsd)
+            elif quality == "lossy":
+                has_lossy = sa.exists(
+                    sa.select(sa.literal(1)).select_from(tracks)
+                    .where(tracks.c.album_id == albums.c.id)
+                    .where(tracks.c.format.in_(["mp3", "aac", "ogg", "opus", "wma"]))
+                )
+                stmt = stmt.where(has_lossy)
+            elif quality == "cd":
+                has_cd = sa.exists(
+                    sa.select(sa.literal(1)).select_from(tracks)
+                    .where(tracks.c.album_id == albums.c.id)
+                    .where(tracks.c.sample_rate <= 44100)
+                    .where(~tracks.c.format.in_(["mp3", "aac", "ogg", "opus", "wma", "dsd", "dsf", "dff"]))
+                )
+                stmt = stmt.where(has_cd)
+
+        stmt = stmt.order_by(albums.c.title).limit(limit).offset(offset)
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_album(r) for r in rows]
 
