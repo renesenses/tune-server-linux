@@ -21,6 +21,41 @@ from tune_server.db.fts import create_fts_plugin, FTSPlugin
 
 logger = structlog.get_logger()
 
+
+class _SARow:
+    """Row wrapper supporting both row["key"] and row[0] access.
+
+    SA RowMapping only supports key access. This wrapper adds integer index
+    access for backward compatibility with code like `row[0]`.
+    """
+
+    def __init__(self, mapping):
+        self._mapping = mapping
+        self._values = list(mapping.values())
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return self._mapping[key]
+
+    def __contains__(self, key):
+        return key in self._mapping
+
+    def get(self, key, default=None):
+        return self._mapping.get(key, default)
+
+    def keys(self):
+        return self._mapping.keys()
+
+    def values(self):
+        return self._mapping.values()
+
+    def items(self):
+        return self._mapping.items()
+
+    def __repr__(self):
+        return f"_SARow({dict(self._mapping)})"
+
 # Map config engine names to SA URL prefixes
 _DIALECT_MAP = {
     "sqlite": "sqlite+aiosqlite",
@@ -159,19 +194,19 @@ class SADatabase:
                 await conn.execute(sa.text(text_sql), bound)
 
     async def fetchone(self, sql: str, params: tuple = ()) -> Any | None:
-        """Fetch a single row. Returns a mapping (row['column']) or None."""
+        """Fetch a single row. Returns _SARow (supports row['key'] and row[0])."""
         text_sql, bound_params = self._prepare_raw(sql, params)
         async with self._engine.connect() as conn:
             result = await conn.execute(sa.text(text_sql), bound_params)
             row = result.first()
-            return row._mapping if row else None
+            return _SARow(row._mapping) if row else None
 
     async def fetchall(self, sql: str, params: tuple = ()) -> list[Any]:
-        """Fetch all rows. Returns list of mappings."""
+        """Fetch all rows. Returns list of _SARow."""
         text_sql, bound_params = self._prepare_raw(sql, params)
         async with self._engine.connect() as conn:
             result = await conn.execute(sa.text(text_sql), bound_params)
-            return [row._mapping for row in result.all()]
+            return [_SARow(row._mapping) for row in result.all()]
 
     async def commit(self) -> None:
         """No-op — SA engine.begin() auto-commits."""
@@ -209,17 +244,20 @@ class SADatabase:
             return ExecuteResult(lastrowid=lastrowid, rowcount=rowcount)
 
     async def sa_fetchone(self, stmt) -> Any | None:
-        """Execute a SA Core SELECT and return one row mapping."""
+        """Execute a SA Core SELECT and return one row.
+
+        Returns a _SARow that supports both row["key"] and row[0] access.
+        """
         async with self._engine.connect() as conn:
             result = await conn.execute(stmt)
             row = result.first()
-            return row._mapping if row else None
+            return _SARow(row._mapping) if row else None
 
     async def sa_fetchall(self, stmt) -> list[Any]:
-        """Execute a SA Core SELECT and return all row mappings."""
+        """Execute a SA Core SELECT and return all rows."""
         async with self._engine.connect() as conn:
             result = await conn.execute(stmt)
-            return [row._mapping for row in result.all()]
+            return [_SARow(row._mapping) for row in result.all()]
 
     # -----------------------------------------------------------------------
     # Internal helpers
