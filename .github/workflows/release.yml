@@ -148,3 +148,34 @@ jobs:
             artifacts/tune-server-*.tar.gz.sha256
             artifacts/tune-server-*.zip
             artifacts/tune-server-*.zip.sha256
+
+      - name: Update mozaiklabs.fr download page
+        if: success()
+        env:
+          MOZAIKLABS_DEPLOY_KEY: ${{ secrets.MOZAIKLABS_DEPLOY_KEY }}
+        run: |
+          VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
+          BASE_URL="https://github.com/renesenses/tune-server-linux/releases/download/v${VERSION}"
+
+          # Get file sizes
+          LINUX_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-linux.tar.gz" 2>/dev/null || echo 0)
+          MACOS_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-macos.tar.gz" 2>/dev/null || echo 0)
+          WINDOWS_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-windows.zip" 2>/dev/null || echo 0)
+
+          # Build JSON payload
+          ASSETS_JSON=$(cat <<JSONEOF
+          {
+            "macos": [{"name": "tune-server-${VERSION}-macos.tar.gz", "url": "${BASE_URL}/tune-server-${VERSION}-macos.tar.gz", "size": ${MACOS_SIZE}}],
+            "windows": [{"name": "tune-server-${VERSION}-windows.zip", "url": "${BASE_URL}/tune-server-${VERSION}-windows.zip", "size": ${WINDOWS_SIZE}}],
+            "linux": [{"name": "tune-server-${VERSION}-linux.tar.gz", "url": "${BASE_URL}/tune-server-${VERSION}-linux.tar.gz", "size": ${LINUX_SIZE}}]
+          }
+          JSONEOF
+          )
+
+          # Update via mozaiklabs API (webhook)
+          curl -sf -X POST "https://mozaiklabs.fr/webhooks/github/release" \
+            -H "Content-Type: application/json" \
+            -H "X-Deploy-Key: ${MOZAIKLABS_DEPLOY_KEY}" \
+            -d "{\"version\": \"${VERSION}\", \"assets\": ${ASSETS_JSON}}" \
+            && echo "mozaiklabs.fr updated to v${VERSION}" \
+            || echo "Warning: mozaiklabs.fr update failed (non-blocking)"
