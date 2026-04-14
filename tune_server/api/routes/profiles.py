@@ -26,13 +26,37 @@ async def list_profiles() -> list[UserProfile]:
 
 @router.post("", status_code=201)
 async def create_profile(body: UserProfileCreate) -> UserProfile:
+    # Check for existing profile (case-insensitive)
+    existing = await deps.db.fetchone(
+        "SELECT * FROM user_profiles WHERE LOWER(name) = LOWER(?)",
+        (body.name.strip(),),
+    )
+    if existing:
+        raise HTTPException(
+            409,
+            detail={
+                "error": "profile_exists",
+                "message": f"A profile named '{existing['name']}' already exists",
+                "existing_profile": UserProfile(**_clean_row(existing)).model_dump(),
+            },
+        )
     result = await deps.db.execute(
         "INSERT INTO user_profiles (name, avatar_color) VALUES (?, ?) RETURNING id",
-        (body.name, body.avatar_color),
+        (body.name.strip(), body.avatar_color),
     )
     await deps.db.commit()
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (result.lastrowid,))
     return UserProfile(**_clean_row(row))
+
+
+@router.get("/search")
+async def search_profiles(q: str = Query(..., min_length=1)) -> list[UserProfile]:
+    """Search profiles by name (case-insensitive, partial match)."""
+    rows = await deps.db.fetchall(
+        "SELECT * FROM user_profiles WHERE LOWER(name) LIKE LOWER(?) ORDER BY name",
+        (f"%{q.strip()}%",),
+    )
+    return [UserProfile(**_clean_row(r)) for r in rows]
 
 
 @router.get("/{profile_id}")
@@ -45,9 +69,22 @@ async def get_profile(profile_id: int) -> UserProfile:
 
 @router.put("/{profile_id}")
 async def update_profile(profile_id: int, body: UserProfileCreate) -> UserProfile:
+    # Check name collision (exclude current profile)
+    existing = await deps.db.fetchone(
+        "SELECT * FROM user_profiles WHERE LOWER(name) = LOWER(?) AND id != ?",
+        (body.name.strip(), profile_id),
+    )
+    if existing:
+        raise HTTPException(
+            409,
+            detail={
+                "error": "profile_exists",
+                "message": f"A profile named '{existing['name']}' already exists",
+            },
+        )
     await deps.db.execute(
         "UPDATE user_profiles SET name = ?, avatar_color = ? WHERE id = ?",
-        (body.name, body.avatar_color, profile_id),
+        (body.name.strip(), body.avatar_color, profile_id),
     )
     await deps.db.commit()
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
