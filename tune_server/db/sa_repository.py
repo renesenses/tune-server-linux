@@ -457,6 +457,30 @@ class SAAlbumRepo:
         rows = await self._db.sa_fetchall(stmt)
         return [{"genre": r["genre"], "count": r["count"]} for r in rows]
 
+    async def count_without_cover(self) -> int:
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(albums).where(
+                sa.or_(albums.c.cover_path.is_(None), albums.c.cover_path == "")
+            )
+        )
+        return row[0] if row else 0
+
+    async def count_without_genre(self) -> int:
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(albums).where(
+                sa.or_(albums.c.genre.is_(None), albums.c.genre == "")
+            )
+        )
+        return row[0] if row else 0
+
+    async def count_without_year(self) -> int:
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(albums).where(
+                albums.c.year.is_(None)
+            )
+        )
+        return row[0] if row else 0
+
     async def list_without_cover(self) -> list[Album]:
         stmt = (
             self._album_select()
@@ -597,6 +621,14 @@ class SATrackRepo:
         )
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_track(r) for r in rows]
+
+    async def count_without_artist(self) -> int:
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(tracks).where(
+                tracks.c.artist_id.is_(None)
+            )
+        )
+        return row[0] if row else 0
 
     async def all_paths(self) -> set[str]:
         rows = await self._db.sa_fetchall(
