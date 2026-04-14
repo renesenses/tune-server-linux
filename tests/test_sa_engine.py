@@ -219,3 +219,57 @@ async def test_engine_name(db: SADatabase):
 async def test_commit_noop(db: SADatabase):
     """commit() should not raise."""
     await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Scanner-like patterns (raw SQL edge cases)
+# ---------------------------------------------------------------------------
+
+async def test_raw_insert_returning(db: SADatabase):
+    """INSERT ... RETURNING id should return lastrowid."""
+    result = await db.execute(
+        "INSERT INTO artists (name) VALUES (?) RETURNING id",
+        ("Test Artist",),
+    )
+    assert result.lastrowid is not None
+    assert result.lastrowid > 0
+
+
+async def test_raw_delete_no_crash(db: SADatabase):
+    """DELETE should NOT crash (no inserted_primary_key access)."""
+    await db.execute("INSERT INTO artists (name) VALUES (?)", ("ToDelete",))
+    result = await db.execute("DELETE FROM artists WHERE name = ?", ("ToDelete",))
+    assert result.rowcount == 1
+
+
+async def test_raw_update_no_crash(db: SADatabase):
+    """UPDATE should NOT crash."""
+    await db.execute("INSERT INTO artists (name) VALUES (?)", ("Original",))
+    result = await db.execute(
+        "UPDATE artists SET name = ? WHERE name = ?", ("Changed", "Original")
+    )
+    assert result.rowcount == 1
+
+
+async def test_raw_select_count(db: SADatabase):
+    """SELECT COUNT(*) should work."""
+    await db.execute("INSERT INTO artists (name) VALUES (?)", ("A",))
+    await db.execute("INSERT INTO artists (name) VALUES (?)", ("B",))
+    row = await db.fetchone("SELECT COUNT(*) as cnt FROM artists")
+    assert row["cnt"] == 2
+
+
+async def test_sa_insert_then_delete(db: SADatabase):
+    """SA insert + delete cycle should work."""
+    import sqlalchemy as sa
+
+    result = await db.sa_execute(
+        artists.insert().values(name="Temp")
+    )
+    aid = result.lastrowid
+    assert aid is not None
+
+    del_result = await db.sa_execute(
+        artists.delete().where(artists.c.id == aid)
+    )
+    assert del_result.rowcount == 1
