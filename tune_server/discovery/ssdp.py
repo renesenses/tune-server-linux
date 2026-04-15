@@ -136,8 +136,46 @@ class SsdpDiscovery:
                                     sink_protocol_count=len(sink_protocols),
                                 )
 
-                        except Exception:
-                            logger.debug("ssdp_device_create_error", location=location)
+                        except Exception as exc:
+                            # Extract name from USN for better logging
+                            _name = usn.split("uuid:")[-1].split("::")[0] if "uuid:" in usn else usn
+                            logger.warning(
+                                "ssdp_device_create_error",
+                                location=location, usn=usn, name=_name,
+                                error=str(exc),
+                            )
+                            # Fallback: register device from SSDP headers alone
+                            # so it at least appears in the device list
+                            parsed_loc = urlparse(location)
+                            fallback_id = usn or location
+                            fallback_name = _name or "Unknown DLNA"
+                            fallback_device = DiscoveredDevice(
+                                id=fallback_id,
+                                name=fallback_name,
+                                type=OutputType.DLNA,
+                                host=parsed_loc.hostname or "",
+                                port=parsed_loc.port or 0,
+                                available=True,
+                                capabilities={
+                                    "dlna": True,
+                                    "model": "",
+                                    "sink_protocols": [],
+                                    "device_name": fallback_name,
+                                    "xml_unavailable": True,
+                                },
+                            )
+                            async with self._lock:
+                                if fallback_id not in self._devices:
+                                    self._devices[fallback_id] = fallback_device
+                                    await self._event_bus.emit(Event(
+                                        type=EventType.DEVICE_DISCOVERED,
+                                        data=fallback_device.model_dump(),
+                                        source="ssdp",
+                                    ))
+                                    logger.info(
+                                        "dlna_device_fallback_registered",
+                                        name=fallback_name, host=parsed_loc.hostname,
+                                    )
 
                     # Try SSDP search — handle Windows multicast errors gracefully
                     try:
@@ -251,8 +289,32 @@ class SsdpDiscovery:
                     ))
                     logger.info("dlna_device_found", name=name, id=dev_id, recovered=was_lost)
 
-            except Exception:
-                logger.debug("ssdp_device_create_error", location=location)
+            except Exception as exc:
+                _name = usn.split("uuid:")[-1].split("::")[0] if "uuid:" in usn else usn
+                logger.warning(
+                    "ssdp_device_create_error",
+                    location=location, usn=usn, name=_name, error=str(exc),
+                )
+                # Fallback: register from SSDP headers
+                parsed_loc = urlparse(location)
+                fallback_id = usn or location
+                fallback_name = _name or "Unknown DLNA"
+                fallback_device = DiscoveredDevice(
+                    id=fallback_id,
+                    name=fallback_name,
+                    type=OutputType.DLNA,
+                    host=parsed_loc.hostname or "",
+                    port=parsed_loc.port or 0,
+                    available=True,
+                    capabilities={
+                        "dlna": True, "model": "", "sink_protocols": [],
+                        "device_name": fallback_name, "xml_unavailable": True,
+                    },
+                )
+                async with self._lock:
+                    if fallback_id not in self._devices:
+                        self._devices[fallback_id] = fallback_device
+                        logger.info("dlna_device_fallback_registered", name=fallback_name, host=parsed_loc.hostname)
 
         try:
             await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN)
