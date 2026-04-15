@@ -587,41 +587,193 @@ async def scan_duplicates_endpoint(limit: int = 5000):
 
 @router.get("/duplicates")
 async def list_duplicates():
-    """List detected duplicate groups."""
+    """List detected duplicate groups with full metadata for comparison."""
     rows = await deps.db.fetchall(
         """SELECT d.id, d.audio_hash, d.resolved,
-                  ta.id as track_a_id, ta.title as track_a_title, ta.file_path as track_a_path,
-                  tb.id as track_b_id, tb.title as track_b_title, tb.file_path as track_b_path
+                  ta.id as a_id, ta.title as a_title, ta.artist_name as a_artist,
+                  ta.file_path as a_path, ta.format as a_format,
+                  ta.sample_rate as a_sr, ta.bit_depth as a_bd,
+                  ta.genre as a_genre, ta.year as a_year,
+                  ta.album_title as a_album,
+                  tb.id as b_id, tb.title as b_title, tb.artist_name as b_artist,
+                  tb.file_path as b_path, tb.format as b_format,
+                  tb.sample_rate as b_sr, tb.bit_depth as b_bd,
+                  tb.genre as b_genre, tb.year as b_year,
+                  tb.album_title as b_album
            FROM duplicate_tracks d
            JOIN tracks ta ON ta.id = d.track_id_a
            JOIN tracks tb ON tb.id = d.track_id_b
-           WHERE d.resolved = 0
+           WHERE d.resolved = false
            ORDER BY d.audio_hash""",
     )
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        # Compute file sizes
+        import os
+        a_size = 0
+        b_size = 0
+        try:
+            a_size = os.path.getsize(r["a_path"]) if r["a_path"] and os.path.exists(r["a_path"]) else 0
+        except OSError:
+            pass
+        try:
+            b_size = os.path.getsize(r["b_path"]) if r["b_path"] and os.path.exists(r["b_path"]) else 0
+        except OSError:
+            pass
+
+        # Flag metadata differences
+        diffs = []
+        if (r["a_artist"] or "") != (r["b_artist"] or ""):
+            diffs.append("artist")
+        if (r["a_genre"] or "") != (r["b_genre"] or ""):
+            diffs.append("genre")
+        if (r.get("a_year") or 0) != (r.get("b_year") or 0):
+            diffs.append("year")
+        if (r["a_title"] or "") != (r["b_title"] or ""):
+            diffs.append("title")
+        if (r["a_album"] or "") != (r["b_album"] or ""):
+            diffs.append("album")
+
+        result.append({
+            "id": r["id"],
+            "audio_hash": r["audio_hash"],
+            "differences": diffs,
+            "a": {
+                "track_id": r["a_id"], "title": r["a_title"], "artist": r["a_artist"],
+                "album": r["a_album"], "genre": r["a_genre"], "year": r.get("a_year"),
+                "path": r["a_path"], "format": r["a_format"],
+                "sample_rate": r["a_sr"], "bit_depth": r["a_bd"], "size": a_size,
+            },
+            "b": {
+                "track_id": r["b_id"], "title": r["b_title"], "artist": r["b_artist"],
+                "album": r["b_album"], "genre": r["b_genre"], "year": r.get("b_year"),
+                "path": r["b_path"], "format": r["b_format"],
+                "sample_rate": r["b_sr"], "bit_depth": r["b_bd"], "size": b_size,
+            },
+        })
+
+    # Group by album pairs to detect full album duplicates
+    album_pairs: dict[tuple, list] = {}
+    for d in result:
+        key = tuple(sorted([d["a"].get("album") or "", d["b"].get("album") or ""]))
+        if key not in album_pairs:
+            album_pairs[key] = []
+        album_pairs[key].append(d)
+
+    # Annotate each duplicate with type: "track" or "album"
+    for d in result:
+        key = tuple(sorted([d["a"].get("album") or "", d["b"].get("album") or ""]))
+        group = album_pairs[key]
+        if len(group) >= 3:
+            d["type"] = "album"
+            d["album_duplicate_count"] = len(group)
+        else:
+            d["type"] = "track"
+            d["album_duplicate_count"] = 1
+
+    return result
 
 
 @router.post("/duplicates/resolve")
 async def resolve_duplicate(duplicate_id: int, keep_track_id: int):
-    """Resolve a duplicate — keep one track, optionally delete the other."""
+    """Resolve a duplicate — keep one track, move the other to /data/duplicates/."""
+    import shutil
+    from pathlib import Path
+    from tune_server.config import settings
+
     row = await deps.db.fetchone(
         "SELECT * FROM duplicate_tracks WHERE id = ?", (duplicate_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Duplicate not found")
 
-    # Mark as resolved
-    await deps.db.execute(
-        "UPDATE duplicate_tracks SET resolved = 1 WHERE id = ?", (duplicate_id,))
-    await deps.db.commit()
-
     # Determine which to remove
     remove_id = row["track_id_b"] if keep_track_id == row["track_id_a"] else row["track_id_a"]
+
+    # Get the file path of the track to remove
+    remove_track = await deps.db.fetchone("SELECT file_path FROM tracks WHERE id = ?", (remove_id,))
+
+    moved = False
+    if remove_track and remove_track["file_path"]:
+        src = Path(remove_track["file_path"])
+        if src.exists():
+            # Move to duplicates dir, preserving relative path
+            dup_dir = Path(settings.duplicates_dir)
+            dup_dir.mkdir(parents=True, exist_ok=True)
+            dest = dup_dir / src.name
+            # Avoid name collision
+            if dest.exists():
+                dest = dup_dir / f"{src.stem}_{remove_id}{src.suffix}"
+            shutil.move(str(src), str(dest))
+            moved = True
+
+    # Remove from database
+    await deps.db.execute("DELETE FROM tracks WHERE id = ?", (remove_id,))
+
+    # Mark as resolved
+    await deps.db.execute(
+        "UPDATE duplicate_tracks SET resolved = true WHERE id = ?", (duplicate_id,))
+    await deps.db.commit()
 
     return {
         "ok": True,
         "kept": keep_track_id,
-        "removable": remove_id,
-        "note": "Track not deleted — use DELETE /library/tracks/{id} to remove",
+        "removed": remove_id,
+        "moved": moved,
+        "destination": str(Path(settings.duplicates_dir)) if moved else None,
+    }
+
+
+@router.post("/duplicates/move-album")
+async def move_album_to_duplicates(album_id: int):
+    """Move all tracks of an album to /data/duplicates/ and remove from library."""
+    import shutil
+    from pathlib import Path
+    from tune_server.config import settings
+
+    # Get album
+    album = await deps.db.fetchone("SELECT * FROM albums WHERE id = ?", (album_id,))
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    # Get all tracks
+    tracks = await deps.db.fetchall("SELECT id, file_path FROM tracks WHERE album_id = ?", (album_id,))
+
+    dup_dir = Path(settings.duplicates_dir)
+    try:
+        dup_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Fallback: try under /opt/tune-server/duplicates
+        dup_dir = Path("/opt/tune-server/duplicates")
+        dup_dir.mkdir(parents=True, exist_ok=True)
+
+    moved_count = 0
+    for t in tracks:
+        src = Path(t["file_path"]) if t["file_path"] else None
+        if src and src.exists():
+            # Preserve album folder structure in duplicates dir
+            album_folder = src.parent.name
+            dest_dir = dup_dir / album_folder
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / src.name
+            if dest.exists():
+                dest = dest_dir / f"{src.stem}_{t['id']}{src.suffix}"
+            try:
+                shutil.move(str(src), str(dest))
+                moved_count += 1
+            except Exception as e:
+                logger.warning("move_duplicate_error", track_id=t["id"], error=str(e))
+
+    # Remove tracks and album from database
+    await deps.db.execute("DELETE FROM tracks WHERE album_id = ?", (album_id,))
+    await deps.db.execute("DELETE FROM albums WHERE id = ?", (album_id,))
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "album_id": album_id,
+        "tracks_moved": moved_count,
+        "total_tracks": len(tracks),
+        "destination": str(dup_dir),
     }
 
 

@@ -50,13 +50,20 @@ async def scan_duplicates(
 
     Returns: {total_scanned, duplicates_found, groups: [{hash, tracks: [...]}]}
     """
-    rows = await db.fetchall(
-        """SELECT id, file_path, title, artist_name, audio_hash
-           FROM tracks
-           WHERE source = 'local' AND file_path IS NOT NULL
-           LIMIT ?""",
-        (limit,),
-    )
+    if limit and limit > 0:
+        rows = await db.fetchall(
+            """SELECT id, file_path, title, artist_name, audio_hash
+               FROM tracks
+               WHERE source = 'local' AND file_path IS NOT NULL
+               LIMIT ?""",
+            (limit,),
+        )
+    else:
+        rows = await db.fetchall(
+            """SELECT id, file_path, title, artist_name, audio_hash
+               FROM tracks
+               WHERE source = 'local' AND file_path IS NOT NULL""",
+        )
 
     total = len(rows)
     hash_map: dict[str, list[dict]] = {}
