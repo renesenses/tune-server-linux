@@ -261,11 +261,40 @@ class TuneServer:
                 return None
             dmr = self._discovery_manager.ssdp.get_dmr_device(device_id)
             if not dmr:
+                # Fallback: match by IP address if device_id looks like an IP
+                if "." in device_id and "uuid:" not in device_id:
+                    for did, dev in self._discovery_manager.ssdp.devices.items():
+                        if dev.host == device_id and dev.type == "dlna":
+                            dmr = self._discovery_manager.ssdp.get_dmr_device(did)
+                            if dmr:
+                                logger.info("dlna_factory_matched_by_ip", ip=device_id, uuid=did)
+                                # Update DB with correct UUID for future boots
+                                try:
+                                    zone_rows = await self._zone_manager._zone_repo.list()
+                                    for zr in zone_rows:
+                                        if zr.get("output_device_id") == device_id:
+                                            await self._zone_manager._zone_repo.update(
+                                                zr["id"], output_device_id=did
+                                            )
+                                            logger.info("zone_device_id_corrected", zone_id=zr["id"], old=device_id, new=did)
+                                except Exception:
+                                    pass
+                                break
+            if not dmr:
                 # Wait for SSDP discovery to find the device (up to 15s)
                 logger.info("dlna_factory_waiting_for_device", device_id=device_id)
                 for _ in range(15):
                     await asyncio.sleep(1)
                     dmr = self._discovery_manager.ssdp.get_dmr_device(device_id)
+                    if dmr:
+                        break
+                    # Also retry IP fallback
+                    if "." in device_id and "uuid:" not in device_id:
+                        for did, dev in self._discovery_manager.ssdp.devices.items():
+                            if dev.host == device_id and dev.type == "dlna":
+                                dmr = self._discovery_manager.ssdp.get_dmr_device(did)
+                                if dmr:
+                                    break
                     if dmr:
                         break
             if not dmr:
