@@ -122,6 +122,9 @@ class Settings(BaseSettings):
 
     # Artwork
     artwork_cache_dir: str = "artwork_cache"
+
+    # Duplicates — moved here instead of deleted
+    duplicates_dir: str = "/data/duplicates"
     artwork_max_size: int = 1200  # max dimension in pixels
 
     # Streaming services

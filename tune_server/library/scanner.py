@@ -60,12 +60,18 @@ def compute_audio_hash(file_path: str) -> str | None:
         return None
 
 
+# Directories to exclude from scanning
+SKIP_DIRS = {"duplicates", ".tune", ".Spotlight-V100", ".Trashes", "@eaDir", "#recycle", ".DS_Store"}
+
+
 def _list_audio_files(dir_path: Path) -> list[Path]:
     """List audio files in a directory tree (blocking, runs in thread)."""
     try:
         return [
             f for f in dir_path.rglob("*")
             if f.suffix.lower() in SUPPORTED_EXTENSIONS
+            and not any(skip in f.parts for skip in SKIP_DIRS)
+            and not f.name.startswith("._")
         ]
     except PermissionError as e:
         logger.debug("list_audio_files_permission_denied", path=str(dir_path), error=str(e))

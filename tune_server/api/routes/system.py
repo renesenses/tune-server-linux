@@ -213,6 +213,40 @@ async def migrate_database(
     return {"status": "started", "from": current, "to": target}
 
 
+@router.get("/duplicates-dir")
+async def get_duplicates_dir():
+    """Get duplicates directory info — size, file count."""
+    from pathlib import Path
+    dup_dir = Path(settings.duplicates_dir)
+    if not dup_dir.exists():
+        return {"path": str(dup_dir), "exists": False, "files": 0, "size_bytes": 0}
+    files = list(dup_dir.rglob("*"))
+    audio_files = [f for f in files if f.is_file()]
+    total_size = sum(f.stat().st_size for f in audio_files)
+    return {
+        "path": str(dup_dir),
+        "exists": True,
+        "files": len(audio_files),
+        "size_bytes": total_size,
+    }
+
+
+@router.post("/duplicates-dir/clear", status_code=200)
+async def clear_duplicates_dir():
+    """Delete all files in the duplicates directory."""
+    import shutil
+    from pathlib import Path
+    dup_dir = Path(settings.duplicates_dir)
+    if not dup_dir.exists():
+        return {"cleared": False, "message": "Directory does not exist"}
+    files = list(dup_dir.rglob("*"))
+    audio_files = [f for f in files if f.is_file()]
+    total_size = sum(f.stat().st_size for f in audio_files)
+    shutil.rmtree(str(dup_dir))
+    dup_dir.mkdir(parents=True, exist_ok=True)
+    return {"cleared": True, "files_deleted": len(audio_files), "size_freed": total_size}
+
+
 @router.post("/library/clear", status_code=200)
 async def clear_library():
     """Clear all tracks, albums, and artists from the library. Keeps zones, playlists, radios."""
@@ -278,6 +312,11 @@ async def add_music_dir(body: MusicDirRequest):
 
     if not Path(resolved).is_dir():
         raise HTTPException(status_code=400, detail=f"Path does not exist or is not a directory on this server: {resolved}")
+
+    # Prevent adding the duplicates directory as a music source
+    dup_dir = str(Path(settings.duplicates_dir).resolve())
+    if resolved == dup_dir or resolved.startswith(dup_dir + "/"):
+        raise HTTPException(status_code=400, detail="Cannot add the duplicates directory as a music source")
 
     current = [str(Path(d).resolve()) for d in settings.music_dirs]
     if resolved in current:
