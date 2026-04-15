@@ -81,7 +81,30 @@ async def list_albums(
         limit=limit, offset=offset, quality=quality,
         format=format, sample_rate=sample_rate,
     )
-    return [a.model_dump(exclude_none=False) for a in albums]
+    result = [a.model_dump(exclude_none=False) for a in albums]
+
+    # Add folder_path from first track of each album
+    album_ids = [a.id for a in albums if a.id]
+    if album_ids:
+        placeholders = ", ".join(["?" for _ in album_ids])
+        paths = await deps.db.fetchall(
+            f"""SELECT album_id, MIN(file_path) as file_path
+                FROM tracks
+                WHERE album_id IN ({placeholders}) AND file_path IS NOT NULL
+                GROUP BY album_id""",
+            tuple(album_ids),
+        )
+        path_map = {}
+        for r in paths:
+            fp = r["file_path"]
+            if fp:
+                # Remove filename to get folder
+                idx = fp.rfind("/")
+                path_map[r["album_id"]] = fp[:idx] if idx > 0 else fp
+        for item in result:
+            item["folder_path"] = path_map.get(item.get("id"))
+
+    return result
 
 
 @router.get("/albums/filters")

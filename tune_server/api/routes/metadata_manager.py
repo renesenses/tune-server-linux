@@ -154,6 +154,82 @@ async def update_album_metadata(album_id: int, update: AlbumMetadataUpdate):
     return {"ok": True, "updated": len(fields), "fields": list(fields.keys())}
 
 
+@router.post("/albums/merge")
+async def merge_albums(request: dict):
+    """Merge multiple album entries into one, keeping the best metadata."""
+    album_ids = request.get("album_ids", [])
+    if len(album_ids) < 2:
+        raise HTTPException(400, "Need at least 2 album IDs to merge")
+
+    # Fetch all albums
+    placeholders = ", ".join(["?" for _ in album_ids])
+    albums = await deps.db.fetchall(
+        f"SELECT * FROM albums WHERE id IN ({placeholders})", tuple(album_ids)
+    )
+    if len(albums) < 2:
+        raise HTTPException(404, "Albums not found")
+
+    # Pick master: the one with most tracks
+    track_counts = {}
+    for a in albums:
+        count = await deps.db.fetchone(
+            "SELECT count(*) as c FROM tracks WHERE album_id = ?", (a["id"],)
+        )
+        track_counts[a["id"]] = count["c"] if count else 0
+
+    master_id = max(track_counts, key=track_counts.get)
+    master = next(a for a in albums if a["id"] == master_id)
+    others = [a for a in albums if a["id"] != master_id]
+
+    # Merge best metadata into master
+    updates = {}
+    if not master.get("cover_path"):
+        for o in others:
+            if o.get("cover_path"):
+                updates["cover_path"] = o["cover_path"]
+                break
+    if not master.get("genre"):
+        for o in others:
+            if o.get("genre"):
+                updates["genre"] = o["genre"]
+                break
+    if not master.get("year") or master.get("year", 0) == 0:
+        for o in others:
+            if o.get("year") and o["year"] > 0:
+                updates["year"] = o["year"]
+                break
+
+    if updates:
+        sets = ", ".join(f"{k} = ?" for k in updates)
+        vals = list(updates.values()) + [master_id]
+        await deps.db.execute(f"UPDATE albums SET {sets} WHERE id = ?", tuple(vals))
+
+    # Move all tracks from others to master
+    moved = 0
+    for o in others:
+        result = await deps.db.execute(
+            "UPDATE tracks SET album_id = ?, album_title = ? WHERE album_id = ?",
+            (master_id, master["title"], o["id"]),
+        )
+        moved += track_counts.get(o["id"], 0)
+
+        # Delete the now-empty album
+        await deps.db.execute("DELETE FROM albums WHERE id = ?", (o["id"],))
+
+    await deps.db.commit()
+
+    final_count = await deps.db.fetchone(
+        "SELECT count(*) as c FROM tracks WHERE album_id = ?", (master_id,)
+    )
+
+    return {
+        "master_id": master_id,
+        "merged": len(others),
+        "tracks_moved": moved,
+        "total_tracks": final_count["c"] if final_count else 0,
+    }
+
+
 @router.post("/albums/{album_id}/write-tags")
 async def write_album_tags(album_id: int):
     """Write DB metadata to all track files in an album."""
@@ -184,7 +260,30 @@ async def write_album_tags(album_id: int):
         results.append({"track_id": t["id"], **r})
 
     ok_count = sum(1 for r in results if r.get("ok"))
-    return {"album_id": album_id, "tracks_processed": len(results), "success": ok_count}
+
+    # Also write cover to album folder if available
+    cover_written = False
+    if album.get("cover_path"):
+        import shutil
+        from pathlib import Path as _Path
+        from tune_server.config import settings as _settings
+        cache_dir = _Path(_settings.artwork_cache_dir)
+        first_track = await deps.db.fetchone(
+            "SELECT file_path FROM tracks WHERE album_id = ? AND source = 'local' AND file_path IS NOT NULL LIMIT 1",
+            (album_id,),
+        )
+        if first_track and first_track["file_path"]:
+            folder = _Path(first_track["file_path"]).parent
+            source = cache_dir.parent / album["cover_path"]
+            target = folder / "cover.jpg"
+            if source.exists() and folder.exists():
+                try:
+                    shutil.copy2(str(source), str(target))
+                    cover_written = True
+                except Exception:
+                    pass
+
+    return {"album_id": album_id, "tracks_processed": len(results), "success": ok_count, "cover_written": cover_written}
 
 
 # ---------------------------------------------------------------------------
@@ -869,9 +968,12 @@ async def get_doubtful_albums():
            WHERE
              -- Artist is ALL CAPS and > 3 chars (inferred from folder name)
              (al.artist_name = UPPER(al.artist_name) AND LENGTH(al.artist_name) > 4
-              AND al.artist_name NOT SIMILAR TO '[A-Z]{2,4}')
+              AND al.artist_name NOT SIMILAR TO '[A-Z]{2,4}'
+              AND LOWER(al.artist_name) NOT IN ('various artists', 'various', 'compilation',
+                  'compilations', 'multi-artistes', 'multi artistes',
+                  'various artists & performers'))
              -- Artist is a placeholder
-             OR LOWER(al.artist_name) IN ('inconnu', 'various artists', 'none')
+             OR LOWER(al.artist_name) IN ('inconnu', 'none')
              -- Genre is a placeholder
              OR LOWER(al.genre) IN ('other', 'divers')
              -- Year seems wrong (before 1920 or after current year)
@@ -883,8 +985,12 @@ async def get_doubtful_albums():
              OR al.artist_name ~ '^\d{4}[-\s]'
            ORDER BY al.artist_name, al.title""",
     )
-    return [
-        {
+    results = []
+    for r in rows:
+        reasons = _doubtful_reasons(r)
+        if not reasons:
+            continue
+        results.append({
             "id": r["id"],
             "title": r["title"],
             "artist_name": r["artist_name"],
@@ -893,10 +999,9 @@ async def get_doubtful_albums():
             "year": r["year"],
             "cover_path": r["cover_path"],
             "source": r["source"],
-            "reasons": _doubtful_reasons(r),
-        }
-        for r in rows
-    ]
+            "reasons": reasons,
+        })
+    return results
 
 
 def _doubtful_reasons(row) -> list[str]:
@@ -908,9 +1013,11 @@ def _doubtful_reasons(row) -> list[str]:
     year = row.get("year") or 0
     title = row.get("title") or ""
 
-    if artist and artist == artist.upper() and len(artist) > 4:
+    _compilation_artists = {'various artists', 'various', 'compilation', 'compilations',
+                             'multi-artistes', 'multi artistes', 'various artists & performers'}
+    if artist and artist == artist.upper() and len(artist) > 4 and artist.lower() not in _compilation_artists:
         reasons.append("artist_uppercase")
-    if artist.lower() in ('inconnu', 'various artists', 'none'):
+    if artist.lower() in ('inconnu', 'none'):
         reasons.append("artist_placeholder")
     if re.match(r'^\d{4}[-\s]', artist):
         reasons.append("artist_has_year")
@@ -974,11 +1081,11 @@ async def write_all_tags_to_files():
             continue
 
         try:
-            result = await _aio.to_thread(write_tags, row["file_path"], metadata)
-            if result.get("written"):
+            result = await write_tags(row["file_path"], metadata)
+            if result.get("ok"):
                 updated += 1
             else:
-                skipped += 1
+                errors += 1
         except Exception:
             errors += 1
 
