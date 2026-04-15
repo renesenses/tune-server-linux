@@ -232,12 +232,31 @@ class LibraryScanner:
             if existing:
                 return False
 
-            # Get or create artist
+            # Get or create artist — fallback to folder name if tags are empty
             artist_name = metadata.album_artist or metadata.artist
+            if not artist_name:
+                # Extract from file path: .../Artist/Album/track.ext
+                parts = file_path.replace("\\", "/").split("/")
+                _skip = {"AA_FLAC","AA_WAV","AA_MP3","AA_DSD","JAZZ","CLASSICAL","ROCK",
+                         "POP","BLUES","SOUL","ELECTRO","WORLD","CHANSON","COMPILATION",
+                         "music","recordings","data","Qobuz","Tidal","Local","Deezer",
+                         "Spotify","YouTube","Unknown Artist","V_DSF"}
+                for idx in [-3, -4]:
+                    if len(parts) >= abs(idx) + 1 and parts[idx] not in _skip and not parts[idx].startswith("AA_"):
+                        artist_name = parts[idx]
+                        break
+                if not artist_name:
+                    artist_name = "Unknown Artist"
+                logger.debug("artist_from_path", path=file_path, artist=artist_name)
             artist = await self._artist_repo.get_or_create(artist_name)
 
             # Get or create album — separate albums when sample rates differ
             base_title = metadata.album
+            if not base_title:
+                # Fallback to folder name
+                parts = file_path.replace("\\", "/").split("/")
+                base_title = parts[-2] if len(parts) >= 3 else "Unknown Album"
+                logger.debug("album_from_path", path=file_path, album=base_title)
             if metadata.album_artist:
                 album = await self._album_repo.get_by_title_and_artist(base_title, artist.id)
             else:
@@ -267,9 +286,11 @@ class LibraryScanner:
 
             # Create track
             track = Track(
-                title=metadata.title,
+                title=metadata.title or Path(file_path).stem,
                 album_id=album.id,
                 artist_id=artist.id,
+                artist_name=artist_name,
+                album_title=base_title,
                 disc_number=metadata.disc_number,
                 track_number=metadata.track_number,
                 duration_ms=metadata.duration_ms,
