@@ -42,6 +42,7 @@ class ZoneInstance:
             self._player.set_volume_change_callback(self.save_volume)
         self._group_id: str | None = None
         self._sync_delay_ms: int = 0
+        self._online: bool = True
 
     @property
     def zone_id(self) -> int:
@@ -88,6 +89,14 @@ class ZoneInstance:
         self._sync_delay_ms = value
 
     @property
+    def online(self) -> bool:
+        return self._online
+
+    @online.setter
+    def online(self, value: bool) -> None:
+        self._online = value
+
+    @property
     def state(self) -> PlaybackState:
         return self._player.state
 
@@ -112,6 +121,7 @@ class ZoneInstance:
             position_ms=self._player.position_ms,
             queue_length=self._player.queue.length,
             signal_path=self._player.signal_path,
+            online=self._online,
         )
 
     async def _save_queue(self, tracks: list[Track], position: int) -> None:

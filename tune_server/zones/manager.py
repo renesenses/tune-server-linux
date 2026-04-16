@@ -34,6 +34,10 @@ class ZoneManager:
 
     async def initialize(self) -> None:
         """Load persisted zones from DB and create instances."""
+        # Listen for device discovery changes to mark zones online/offline
+        self._event_bus.on(EventType.DEVICE_LOST, self._on_device_lost)
+        self._event_bus.on(EventType.DEVICE_DISCOVERED, self._on_device_discovered)
+
         zone_rows = await self._zone_repo.list()
         for row in zone_rows:
             try:
@@ -300,3 +304,37 @@ class ZoneManager:
         for zone in self._zones.values():
             await zone.cleanup()
         self._zones.clear()
+
+    # -----------------------------------------------------------------
+    # Device availability listeners
+    # -----------------------------------------------------------------
+
+    async def _on_device_lost(self, event: Event) -> None:
+        """A discovered device went offline — flag zones using it as offline."""
+        dev_id = event.data.get("id") if event.data else None
+        if not dev_id:
+            return
+        for zone in self._zones.values():
+            if zone.output_device_id == dev_id and zone.online:
+                zone.online = False
+                logger.info("zone_offline", zone_id=zone.zone_id, device=dev_id)
+                await self._event_bus.emit(Event(
+                    type=EventType.ZONE_UPDATED,
+                    data={"zone_id": zone.zone_id, "online": False},
+                    source="zone_manager",
+                ))
+
+    async def _on_device_discovered(self, event: Event) -> None:
+        """A device came back online (or fresh discovery) — flag zones using it."""
+        dev_id = event.data.get("id") if event.data else None
+        if not dev_id:
+            return
+        for zone in self._zones.values():
+            if zone.output_device_id == dev_id and not zone.online:
+                zone.online = True
+                logger.info("zone_online", zone_id=zone.zone_id, device=dev_id)
+                await self._event_bus.emit(Event(
+                    type=EventType.ZONE_UPDATED,
+                    data={"zone_id": zone.zone_id, "online": True},
+                    source="zone_manager",
+                ))

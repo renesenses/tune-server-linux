@@ -112,9 +112,11 @@ class AirPlayOutput(OutputTarget):
             return True
         except asyncio.TimeoutError:
             logger.warning("airplay_timeout", action=label, device=self._device_name)
+            self._available = False
             return False
         except Exception:
             logger.debug("airplay_call_error", action=label, device=self._device_name)
+            self._available = False
             return False
 
     async def pause(self) -> None:
