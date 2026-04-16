@@ -149,6 +149,30 @@ jobs:
             artifacts/tune-server-*.zip
             artifacts/tune-server-*.zip.sha256
 
+      - name: Wait for GitHub release assets to be fully available
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
+          EXPECTED_LINUX=$(stat -c%s "artifacts/tune-server-${VERSION}-linux.tar.gz")
+          EXPECTED_MACOS=$(stat -c%s "artifacts/tune-server-${VERSION}-macos.tar.gz")
+          EXPECTED_WINDOWS=$(stat -c%s "artifacts/tune-server-${VERSION}-windows.zip")
+
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            LINUX_SIZE=$(gh release view "v${VERSION}" --repo "${{ github.repository }}" --json assets --jq ".assets[] | select(.name == \"tune-server-${VERSION}-linux.tar.gz\") | .size" 2>/dev/null || echo 0)
+            MACOS_SIZE=$(gh release view "v${VERSION}" --repo "${{ github.repository }}" --json assets --jq ".assets[] | select(.name == \"tune-server-${VERSION}-macos.tar.gz\") | .size" 2>/dev/null || echo 0)
+            WINDOWS_SIZE=$(gh release view "v${VERSION}" --repo "${{ github.repository }}" --json assets --jq ".assets[] | select(.name == \"tune-server-${VERSION}-windows.zip\") | .size" 2>/dev/null || echo 0)
+
+            if [ "$LINUX_SIZE" = "$EXPECTED_LINUX" ] && [ "$MACOS_SIZE" = "$EXPECTED_MACOS" ] && [ "$WINDOWS_SIZE" = "$EXPECTED_WINDOWS" ]; then
+              echo "All assets fully uploaded (attempt $attempt): linux=$LINUX_SIZE macos=$MACOS_SIZE windows=$WINDOWS_SIZE"
+              exit 0
+            fi
+            echo "Attempt $attempt: linux=$LINUX_SIZE/$EXPECTED_LINUX macos=$MACOS_SIZE/$EXPECTED_MACOS windows=$WINDOWS_SIZE/$EXPECTED_WINDOWS — retrying in 15s"
+            sleep 15
+          done
+          echo "Warning: asset sizes on GitHub still differ from local artifacts after 10 attempts — proceeding anyway"
+
       - name: Update mozaiklabs.fr download page
         if: success()
         env:
