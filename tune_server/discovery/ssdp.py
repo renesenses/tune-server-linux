@@ -26,6 +26,7 @@ class SsdpDiscovery:
         self._task: asyncio.Task | None = None
         self._running = False
         self._lock = asyncio.Lock()
+        self._advertisement_listener = None
 
     @property
     def devices(self) -> dict[str, DiscoveredDevice]:
@@ -37,10 +38,33 @@ class SsdpDiscovery:
     async def start(self) -> None:
         self._running = True
         self._task = asyncio.create_task(self._discovery_loop())
+        # Start passive SSDP NOTIFY listener for real-time alive/byebye events
+        # (drops detection latency from ~30s polling to <1s for devices that
+        # properly advertise their lifecycle).
+        try:
+            from async_upnp_client.advertisement import SsdpAdvertisementListener
+
+            self._advertisement_listener = SsdpAdvertisementListener(
+                async_on_alive=self._on_ssdp_alive,
+                async_on_byebye=self._on_ssdp_byebye,
+            )
+            await self._advertisement_listener.async_start()
+            logger.info("ssdp_advertisement_listener_started")
+        except ImportError:
+            logger.debug("ssdp_advertisement_listener_unavailable")
+        except Exception as e:
+            logger.warning("ssdp_advertisement_listener_error", error=str(e))
+            self._advertisement_listener = None
         logger.info("ssdp_discovery_started")
 
     async def stop(self) -> None:
         self._running = False
+        if self._advertisement_listener:
+            try:
+                await self._advertisement_listener.async_stop()
+            except Exception as e:
+                logger.debug("ssdp_advertisement_stop_error", error=str(e))
+            self._advertisement_listener = None
         if self._task:
             self._task.cancel()
             try:
@@ -53,6 +77,43 @@ class SsdpDiscovery:
                 await self._requester.async_close_session()
             except Exception as e:
                 logger.debug("ssdp_requester_close_error", error=str(e))
+
+    async def _on_ssdp_alive(self, headers) -> None:
+        """Real-time SSDP NOTIFY ssdp:alive — device is announcing itself."""
+        usn = headers.get("usn", "") or ""
+        st = headers.get("nt", "") or ""
+        if MEDIA_RENDERER_URN not in st:
+            return
+        async with self._lock:
+            # Only interesting if we haven't seen it yet, or it was marked lost
+            existing = self._devices.get(usn)
+            if existing and existing.available:
+                return
+        logger.info("ssdp_alive_received", usn=usn)
+        # Let the next rescan do the heavy lifting (creating the UPnP device).
+        # Trigger it now so we don't wait up to 30s for the polling cycle.
+        try:
+            asyncio.create_task(self.rescan())
+        except Exception:
+            pass
+
+    async def _on_ssdp_byebye(self, headers) -> None:
+        """Real-time SSDP NOTIFY ssdp:byebye — device is going offline."""
+        usn = headers.get("usn", "") or ""
+        st = headers.get("nt", "") or ""
+        if MEDIA_RENDERER_URN not in st:
+            return
+        async with self._lock:
+            device = self._devices.get(usn)
+            if not device or not device.available:
+                return
+            device.available = False
+        logger.info("ssdp_byebye_received", usn=usn, name=device.name)
+        await self._event_bus.emit(Event(
+            type=EventType.DEVICE_LOST,
+            data={"id": usn, "name": device.name},
+            source="ssdp",
+        ))
 
     async def _discovery_loop(self) -> None:
         try:

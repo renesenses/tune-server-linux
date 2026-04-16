@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import structlog
 
 from tune_server.db.engine import Database
@@ -25,6 +27,9 @@ class ZoneManager:
         self._output_factory: dict[OutputType, callable] = {}
         self._pending_zones: list = []
         self._stream_url_resolver = None
+        # Map zone_id → bool remembering whether a zone was playing when
+        # its device went offline, so we can resume on recovery.
+        self._resume_on_recovery: dict[int, bool] = {}
 
     def set_stream_url_resolver(self, resolver) -> None:
         self._stream_url_resolver = resolver
@@ -310,31 +315,72 @@ class ZoneManager:
     # -----------------------------------------------------------------
 
     async def _on_device_lost(self, event: Event) -> None:
-        """A discovered device went offline — flag zones using it as offline."""
+        """A discovered device went offline — flag zones using it as offline
+        and auto-pause playback so nothing blasts to a ghost output."""
         dev_id = event.data.get("id") if event.data else None
         if not dev_id:
             return
+        from tune_server.models import PlaybackState
         for zone in self._zones.values():
-            if zone.output_device_id == dev_id and zone.online:
-                zone.online = False
-                logger.info("zone_offline", zone_id=zone.zone_id, device=dev_id)
-                await self._event_bus.emit(Event(
-                    type=EventType.ZONE_UPDATED,
-                    data={"zone_id": zone.zone_id, "online": False},
-                    source="zone_manager",
-                ))
+            if zone.output_device_id != dev_id or not zone.online:
+                continue
+            zone.online = False
+            # Remember if we were playing so we can resume on recovery
+            was_playing = zone.player.state == PlaybackState.PLAYING
+            self._resume_on_recovery[zone.zone_id] = was_playing
+
+            if was_playing:
+                try:
+                    await zone.player.pause()
+                    logger.info("zone_auto_paused", zone_id=zone.zone_id, device=dev_id)
+                except Exception:
+                    logger.exception("zone_auto_pause_error", zone_id=zone.zone_id)
+
+            logger.info("zone_offline", zone_id=zone.zone_id, device=dev_id, was_playing=was_playing)
+            await self._event_bus.emit(Event(
+                type=EventType.ZONE_UPDATED,
+                data={
+                    "zone_id": zone.zone_id,
+                    "online": False,
+                    "error_code": "device_unavailable",
+                    "was_playing": was_playing,
+                },
+                source="zone_manager",
+            ))
 
     async def _on_device_discovered(self, event: Event) -> None:
-        """A device came back online (or fresh discovery) — flag zones using it."""
+        """A device came back online — flag zones and resume if they were playing."""
         dev_id = event.data.get("id") if event.data else None
         if not dev_id:
             return
         for zone in self._zones.values():
-            if zone.output_device_id == dev_id and not zone.online:
-                zone.online = True
-                logger.info("zone_online", zone_id=zone.zone_id, device=dev_id)
-                await self._event_bus.emit(Event(
-                    type=EventType.ZONE_UPDATED,
-                    data={"zone_id": zone.zone_id, "online": True},
-                    source="zone_manager",
-                ))
+            if zone.output_device_id != dev_id or zone.online:
+                continue
+            zone.online = True
+            should_resume = self._resume_on_recovery.pop(zone.zone_id, False)
+            logger.info("zone_online", zone_id=zone.zone_id, device=dev_id, will_resume=should_resume)
+
+            if should_resume:
+                # Fire-and-forget retry loop: give the device a few seconds to
+                # settle, then attempt resume. Log but don't crash on failure.
+                asyncio.create_task(self._resume_zone_with_retry(zone))
+
+            await self._event_bus.emit(Event(
+                type=EventType.ZONE_UPDATED,
+                data={"zone_id": zone.zone_id, "online": True, "resuming": should_resume},
+                source="zone_manager",
+            ))
+
+    async def _resume_zone_with_retry(self, zone: "ZoneInstance") -> None:
+        """Wait briefly for a recovered device then resume playback (best-effort)."""
+        for delay in (2, 5, 10):
+            await asyncio.sleep(delay)
+            if not zone.online:
+                return  # Device disappeared again
+            try:
+                await zone.player.resume()
+                logger.info("zone_auto_resumed", zone_id=zone.zone_id)
+                return
+            except Exception as e:
+                logger.warning("zone_resume_attempt_failed", zone_id=zone.zone_id, error=str(e))
+        logger.warning("zone_resume_gave_up", zone_id=zone.zone_id)

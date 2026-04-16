@@ -27,6 +27,10 @@ class MdnsDiscovery:
         self._running = False
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        self._passive_zc = None  # AsyncZeroconf for real-time byebye events
+        self._passive_browsers: list = []
+        # Map service name → device id so we can emit DEVICE_LOST promptly
+        self._service_to_device: dict[str, str] = {}
 
     @property
     def devices(self) -> dict[str, DiscoveredDevice]:
@@ -38,7 +42,58 @@ class MdnsDiscovery:
     async def start(self) -> None:
         self._running = True
         self._task = asyncio.create_task(self._discovery_loop())
+        # Passive zeroconf browser: receive remove_service callbacks in
+        # real time when AirPlay devices disappear (instead of waiting up
+        # to 30s for the next pyatv scan).
+        try:
+            from zeroconf import ServiceStateChange
+            from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
+
+            self._passive_zc = AsyncZeroconf()
+
+            def _on_state_change(zeroconf, service_type, name, state_change):
+                # Only react to removals — additions are handled by pyatv scan
+                # which produces richer DiscoveredDevice records.
+                if state_change != ServiceStateChange.Removed:
+                    return
+                # Schedule the emit on the main loop
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    return
+                loop.create_task(self._on_service_removed(name))
+
+            for svc in (AIRPLAY_SERVICE, AIRPLAY_SERVICE_ALT):
+                browser = AsyncServiceBrowser(
+                    self._passive_zc.zeroconf,
+                    svc,
+                    handlers=[_on_state_change],
+                )
+                self._passive_browsers.append(browser)
+            logger.info("mdns_passive_browser_started", services=[AIRPLAY_SERVICE, AIRPLAY_SERVICE_ALT])
+        except ImportError:
+            logger.debug("zeroconf_not_available_for_passive_browser")
+        except Exception as e:
+            logger.warning("mdns_passive_browser_error", error=str(e))
+            self._passive_zc = None
         logger.info("mdns_discovery_started")
+
+    async def _on_service_removed(self, service_name: str) -> None:
+        """Called when zeroconf sees a service withdrawal (ssdp byebye-like)."""
+        dev_id = self._service_to_device.get(service_name)
+        if not dev_id:
+            return
+        async with self._lock:
+            device = self._devices.get(dev_id)
+            if not device or not device.available:
+                return
+            device.available = False
+        logger.info("mdns_service_removed", name=device.name, service=service_name)
+        await self._event_bus.emit(Event(
+            type=EventType.DEVICE_LOST,
+            data={"id": dev_id, "name": device.name},
+            source="mdns",
+        ))
 
     async def stop(self) -> None:
         self._running = False
@@ -50,6 +105,19 @@ class MdnsDiscovery:
             except asyncio.CancelledError:
                 logger.debug("mdns_discovery_task_cancelled")
             self._task = None
+
+        for browser in self._passive_browsers:
+            try:
+                await browser.async_cancel()
+            except Exception:
+                pass
+        self._passive_browsers = []
+        if self._passive_zc:
+            try:
+                await self._passive_zc.async_close()
+            except Exception as e:
+                logger.debug("mdns_passive_zc_close_error", error=str(e))
+            self._passive_zc = None
 
         if self._zeroconf:
             try:
@@ -89,6 +157,8 @@ class MdnsDiscovery:
                             is_new = dev_id not in self._devices
                             self._devices[dev_id] = disc_device
                             self._atv_configs[dev_id] = atv_config
+                            # Track zeroconf service name → device id for real-time removals
+                            self._service_to_device[f"{name}.{AIRPLAY_SERVICE_ALT}"] = dev_id
 
                         if is_new or was_lost:
                             await self._event_bus.emit(Event(
