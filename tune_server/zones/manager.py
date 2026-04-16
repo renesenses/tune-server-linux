@@ -209,6 +209,73 @@ class ZoneManager:
             source="zone_manager",
         ))
 
+    async def set_output(
+        self,
+        zone_id: int,
+        output_type: OutputType | str,
+        output_device_id: str | None = None,
+    ) -> ZoneInstance:
+        """Hot-swap a zone's output target without recreating the zone.
+
+        Rejects the swap if another zone already uses the same (type, device).
+        """
+        zone = self._zones.get(zone_id)
+        if not zone:
+            raise KeyError(f"Zone {zone_id} not found")
+
+        if isinstance(output_type, str):
+            output_type = OutputType(output_type)
+
+        # Prevent duplicate device assignment (exclude the zone being swapped)
+        if output_device_id:
+            for other in self._zones.values():
+                if other.zone_id == zone_id:
+                    continue
+                if (other.output_type == output_type
+                        and other.output_device_id == output_device_id):
+                    raise ValueError(
+                        f"Device already in use by zone '{other.name}'"
+                    )
+
+        # No-op if the target is identical
+        if (zone.output_type == output_type
+                and zone.output_device_id == output_device_id):
+            return zone
+
+        # Create the new output first — fail fast before touching the zone
+        new_output = await self._create_output(output_type, output_device_id)
+        if not new_output:
+            raise RuntimeError(
+                f"Could not create output for type={output_type} device={output_device_id}"
+            )
+
+        await zone.update_output(output_type, new_output, output_device_id)
+
+        # Persist the change
+        await self._zone_repo.update(
+            zone_id,
+            output_type=output_type.value,
+            output_device_id=output_device_id,
+        )
+
+        await self._event_bus.emit(Event(
+            type=EventType.ZONE_UPDATED,
+            data={
+                "zone_id": zone_id,
+                "output_type": output_type.value,
+                "output_device_id": output_device_id,
+            },
+            source="zone_manager",
+        ))
+
+        logger.info(
+            "zone_output_swapped",
+            id=zone_id,
+            type=output_type.value,
+            device=output_device_id,
+        )
+        return zone
+
     def get_zone(self, zone_id: int) -> ZoneInstance | None:
         return self._zones.get(zone_id)
 

@@ -52,32 +52,35 @@ class CreateProfileRequest(BaseModel):
 
 @router.post("/zones/{zone_id}/hot-swap")
 async def hot_swap_device(zone_id: int, req: HotSwapRequest):
-    """Change the output device of a zone. Stops playback, swaps device."""
+    """Change the output device/type of a zone without recreating it.
+
+    Stops current playback, swaps output in place, persists to DB.
+    """
     zm = deps.zone_manager
     zone = zm.get_zone(zone_id)
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
 
-    # Stop current playback
     try:
         await zone.player.stop()
     except Exception:
         pass
 
-    # Update zone output
     try:
         await zm.set_output(zone_id, req.output_type, req.output_device_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Update DB
-    await deps.db.execute(
-        "UPDATE zones SET output_type = ?, output_device_id = ? WHERE id = ?",
-        (req.output_type, req.output_device_id, zone_id),
-    )
-    await deps.db.commit()
-
-    return {"ok": True, "zone_id": zone_id, "new_device": req.output_device_id}
+    return {
+        "ok": True,
+        "zone_id": zone_id,
+        "output_type": req.output_type,
+        "output_device_id": req.output_device_id,
+    }
 
 
 # ---------------------------------------------------------------------------

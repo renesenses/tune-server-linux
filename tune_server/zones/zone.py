@@ -225,5 +225,27 @@ class ZoneInstance:
         if self._zone_repo:
             await self._zone_repo.update(self._zone_id, volume=volume)
 
+    async def update_output(
+        self,
+        output_type: OutputType,
+        output: OutputTarget,
+        output_device_id: str | None,
+    ) -> None:
+        """Swap this zone's output target in place without recreating the zone.
+
+        The caller must have created the new output. The previous output is closed.
+        """
+        old_output = self._output
+        self._output_type = output_type
+        self._output = output
+        self._output_device_id = output_device_id
+        self._player.set_output(output)
+
+        # Close the previous output (best-effort — device may be unreachable)
+        try:
+            await old_output.close()
+        except Exception:
+            logger.exception("zone_old_output_close_error", zone_id=self._zone_id)
+
     async def cleanup(self) -> None:
         await self._player.cleanup()
