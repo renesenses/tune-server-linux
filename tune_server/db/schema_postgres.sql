@@ -253,9 +253,11 @@ CREATE TABLE IF NOT EXISTS playlist_links (
     service_playlist_id TEXT NOT NULL,
     service_playlist_name TEXT,
     sync_direction TEXT DEFAULT 'pull',
+    sync_interval_minutes INTEGER NOT NULL DEFAULT 0,
     last_synced_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE playlist_links ADD COLUMN IF NOT EXISTS sync_interval_minutes INTEGER NOT NULL DEFAULT 0;
 
 -- Playlist snapshots
 CREATE TABLE IF NOT EXISTS playlist_snapshots (

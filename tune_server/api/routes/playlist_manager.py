@@ -7,6 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 from tune_server.api.deps import deps
 from tune_server.playlist_manager.models import (
@@ -146,6 +147,18 @@ async def transfer_playlist(req: TransferRequest):
                 for r in results
             ]
 
+    # Wire up remote playlist creation if target is a streaming service with write support
+    create_playlist_func = None
+    add_tracks_func = None
+    if req.create_on_target and req.target_service != "local":
+        target_svc = sm.service(req.target_service)
+        if target_svc and getattr(target_svc, "supports_playlist_write", False):
+            async def create_playlist_func(name: str) -> str | None:  # type: ignore[no-redef]
+                return await target_svc.create_playlist(name)
+
+            async def add_tracks_func(playlist_id: str, track_ids: list[str]) -> int:  # type: ignore[no-redef]
+                return await target_svc.add_tracks_to_playlist(playlist_id, track_ids)
+
     # Execute transfer
     result = await execute_transfer(
         source_tracks=source_tracks,
@@ -161,6 +174,8 @@ async def transfer_playlist(req: TransferRequest):
         include_approximate=req.include_approximate,
         dry_run=req.dry_run,
         create_on_target=req.create_on_target,
+        create_playlist_func=create_playlist_func,
+        add_tracks_func=add_tracks_func,
     )
 
     return result
@@ -501,23 +516,27 @@ async def restore_snapshot(snapshot_id: int, req: RestoreRequest | None = None):
 # Sync Links
 # ---------------------------------------------------------------------------
 
+def _row_to_playlist_link(r) -> PlaylistLink:
+    keys = r.keys() if hasattr(r, "keys") else []
+    sync_interval = r["sync_interval_minutes"] if "sync_interval_minutes" in keys else 0
+    return PlaylistLink(
+        id=r["id"],
+        local_playlist_id=r["local_playlist_id"],
+        service=r["service"],
+        service_playlist_id=r["service_playlist_id"],
+        service_playlist_name=r["service_playlist_name"] if "service_playlist_name" in keys else None,
+        sync_direction=r["sync_direction"],
+        sync_interval_minutes=sync_interval or 0,
+        last_synced_at=str(r["last_synced_at"]) if r["last_synced_at"] else None,
+        created_at=str(r["created_at"]) if r["created_at"] else None,
+    )
+
+
 @router.get("/links")
 async def list_links():
     """List all playlist sync links."""
     rows = await deps.db.fetchall("SELECT * FROM playlist_links ORDER BY created_at DESC")
-    return [
-        PlaylistLink(
-            id=r["id"],
-            local_playlist_id=r["local_playlist_id"],
-            service=r["service"],
-            service_playlist_id=r["service_playlist_id"],
-            service_playlist_name=r["service_playlist_name"],
-            sync_direction=r["sync_direction"],
-            last_synced_at=r["last_synced_at"],
-            created_at=r["created_at"],
-        )
-        for r in rows
-    ]
+    return [_row_to_playlist_link(r) for r in rows]
 
 
 @router.post("/links", response_model=PlaylistLink)
@@ -525,20 +544,49 @@ async def create_link(req: CreateLinkRequest):
     """Create a sync link between a local playlist and a remote playlist."""
     await deps.db.execute(
         """INSERT INTO playlist_links
-           (local_playlist_id, service, service_playlist_id, sync_direction)
-           VALUES (?, ?, ?, ?)""",
-        (req.local_playlist_id, req.service, req.service_playlist_id, req.sync_direction),
+           (local_playlist_id, service, service_playlist_id, sync_direction, sync_interval_minutes)
+           VALUES (?, ?, ?, ?, ?)""",
+        (req.local_playlist_id, req.service, req.service_playlist_id,
+         req.sync_direction, max(0, req.sync_interval_minutes)),
     )
     await deps.db.commit()
     row = await deps.db.fetchone("SELECT * FROM playlist_links WHERE id = last_insert_rowid()")
-    return PlaylistLink(
-        id=row["id"],
-        local_playlist_id=row["local_playlist_id"],
-        service=row["service"],
-        service_playlist_id=row["service_playlist_id"],
-        sync_direction=row["sync_direction"],
-        created_at=row["created_at"],
+    return _row_to_playlist_link(row)
+
+
+class UpdateLinkRequest(BaseModel):
+    sync_direction: str | None = None
+    sync_interval_minutes: int | None = None
+
+
+@router.patch("/links/{link_id}", response_model=PlaylistLink)
+async def update_link(link_id: int, req: UpdateLinkRequest):
+    """Update a sync link — change direction or auto-sync interval."""
+    row = await deps.db.fetchone("SELECT id FROM playlist_links WHERE id = ?", (link_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Link not found")
+
+    updates = []
+    params: list = []
+    if req.sync_direction is not None:
+        if req.sync_direction not in ("pull", "push", "bidirectional"):
+            raise HTTPException(status_code=400, detail="sync_direction must be 'pull', 'push', or 'bidirectional'")
+        updates.append("sync_direction = ?")
+        params.append(req.sync_direction)
+    if req.sync_interval_minutes is not None:
+        updates.append("sync_interval_minutes = ?")
+        params.append(max(0, req.sync_interval_minutes))
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    params.append(link_id)
+    await deps.db.execute(
+        f"UPDATE playlist_links SET {', '.join(updates)} WHERE id = ?", tuple(params)
     )
+    await deps.db.commit()
+    row = await deps.db.fetchone("SELECT * FROM playlist_links WHERE id = ?", (link_id,))
+    return _row_to_playlist_link(row)
 
 
 @router.post("/links/{link_id}/sync")

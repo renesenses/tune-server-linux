@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-SCOPES = "user-read-private user-library-read playlist-read-private playlist-read-collaborative"
+SCOPES = "user-read-private user-library-read playlist-read-private playlist-read-collaborative playlist-modify-private playlist-modify-public"
 
 
 class SpotifyService(StreamingService):
@@ -266,6 +266,53 @@ class SpotifyService(StreamingService):
         except Exception:
             logger.exception("spotify_playlist_tracks_error", playlist_id=playlist_id)
             return []
+
+    # ------------------------------------------------------------------
+    # Playlist write operations
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_playlist_write(self) -> bool:
+        return True
+
+    async def create_playlist(self, name: str, description: str | None = None) -> str | None:
+        if not self._sp:
+            return None
+        try:
+            me = await asyncio.to_thread(self._sp.me)
+            user_id = me.get("id")
+            if not user_id:
+                return None
+            playlist = await asyncio.to_thread(
+                self._sp.user_playlist_create,
+                user_id,
+                name,
+                public=False,
+                description=description or "",
+            )
+            pid = playlist.get("id")
+            logger.info("spotify_playlist_created", name=name, id=pid)
+            return str(pid) if pid else None
+        except Exception:
+            logger.exception("spotify_create_playlist_error")
+            return None
+
+    async def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]) -> int:
+        if not self._sp or not track_ids:
+            return 0
+        try:
+            # Spotify API requires track URIs (spotify:track:<id>) and limits batches to 100
+            uris = [f"spotify:track:{tid}" for tid in track_ids if tid]
+            added = 0
+            for i in range(0, len(uris), 100):
+                batch = uris[i:i + 100]
+                await asyncio.to_thread(self._sp.playlist_add_items, playlist_id, batch)
+                added += len(batch)
+            logger.info("spotify_tracks_added", playlist_id=playlist_id, count=added)
+            return added
+        except Exception:
+            logger.exception("spotify_add_tracks_error")
+            return 0
 
     async def save_auth(self, db: Database) -> None:
         if not self._auth_manager:

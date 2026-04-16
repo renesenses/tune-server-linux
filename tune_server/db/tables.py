@@ -458,6 +458,7 @@ playlist_links = sa.Table(
     sa.Column("service_playlist_id", sa.Text, nullable=False),
     sa.Column("service_playlist_name", sa.Text),
     sa.Column("sync_direction", sa.Text, server_default="pull"),
+    sa.Column("sync_interval_minutes", sa.Integer, nullable=False, server_default="0"),
     sa.Column("last_synced_at", sa.DateTime),
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
 )

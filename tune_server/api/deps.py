@@ -66,6 +66,24 @@ class AppDeps:
         else:
             self.streaming_services["qobuz"] = value
 
+    @property
+    def streaming_manager(self) -> "_StreamingManagerFacade":
+        return _StreamingManagerFacade(self.streaming_services)
+
+
+class _StreamingManagerFacade:
+    """Thin wrapper exposing `.service(name)` and `.status` over the streaming_services dict."""
+
+    def __init__(self, services: dict) -> None:
+        self._services = services
+
+    def service(self, name: str):
+        return self._services.get(name)
+
+    @property
+    def status(self) -> dict[str, bool]:
+        return {name: svc.is_authenticated for name, svc in self._services.items()}
+
 
 # Global instance — populated during app startup
 deps = AppDeps()

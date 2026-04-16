@@ -309,11 +309,19 @@ class SQLiteDatabase:
                 service_playlist_id TEXT NOT NULL,
                 service_playlist_name TEXT,
                 sync_direction TEXT NOT NULL DEFAULT 'pull',
+                sync_interval_minutes INTEGER NOT NULL DEFAULT 0,
                 last_synced_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(local_playlist_id, service, service_playlist_id)
             )
         """)
+        # Idempotent migration for older databases created without sync_interval_minutes
+        try:
+            await self.connection.execute(
+                "ALTER TABLE playlist_links ADD COLUMN sync_interval_minutes INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass  # Column already exists
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS playlist_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

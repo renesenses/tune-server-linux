@@ -127,6 +127,7 @@ class PlaylistLink(BaseModel):
     service_playlist_id: str
     service_playlist_name: Optional[str] = None
     sync_direction: str = "pull"
+    sync_interval_minutes: int = 0
     last_synced_at: Optional[str] = None
     created_at: Optional[str] = None
 

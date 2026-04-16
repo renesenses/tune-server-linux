@@ -211,6 +211,14 @@ class TuneServer:
         deps.update_checker = self._update_checker
         self._update_checker.start()
 
+        # Playlist auto-sync scheduler
+        from tune_server.playlist_manager.scheduler import AutoSyncScheduler
+        self._autosync = AutoSyncScheduler(
+            db=self._db,
+            streaming_manager=deps.streaming_manager,
+        )
+        self._autosync.start()
+
         # Start sync engine
         await self._sync_engine.start()
 
@@ -439,6 +447,9 @@ class TuneServer:
                 await self._scan_task
             except asyncio.CancelledError:
                 pass
+
+        if hasattr(self, "_autosync") and self._autosync:
+            await self._safe_stop("autosync", self._autosync.stop())
 
         if self._enricher:
             await self._safe_stop("enricher", self._enricher.stop())
