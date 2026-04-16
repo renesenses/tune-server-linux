@@ -972,11 +972,36 @@ class PlaylistRepo:
         )
         return [_row_to_track(r) for r in rows]
 
-    async def add_tracks(self, playlist_id: int, track_ids: list[int], position: Optional[int] = None) -> None:
+    async def add_tracks(self, playlist_id: int, track_ids: list[int], position: Optional[int] = None) -> list[int]:
+        """Add tracks to a playlist, skipping tracks already present.
+
+        Returns the list of track_ids that were actually inserted (deduplicated).
+        """
+        if not track_ids:
+            return []
+
+        # Dedup against existing playlist tracks.
+        existing_rows = await self._db.fetchall(
+            "SELECT track_id FROM playlist_tracks WHERE playlist_id = ?",
+            (playlist_id,),
+        )
+        existing = {row["track_id"] for row in existing_rows}
+        # Preserve caller order and also dedup the incoming list itself.
+        seen_in_batch: set[int] = set()
+        new_ids: list[int] = []
+        for tid in track_ids:
+            if tid in existing or tid in seen_in_batch:
+                continue
+            seen_in_batch.add(tid)
+            new_ids.append(tid)
+
+        if not new_ids:
+            return []
+
         if position is not None:
             await self._db.execute(
                 "UPDATE playlist_tracks SET position = position + ? WHERE playlist_id = ? AND position >= ?",
-                (len(track_ids), playlist_id, position),
+                (len(new_ids), playlist_id, position),
             )
         else:
             row = await self._db.fetchone(
@@ -985,13 +1010,13 @@ class PlaylistRepo:
             )
             position = row["next_pos"]
 
-        if track_ids:
-            params = [(playlist_id, track_id, position + i) for i, track_id in enumerate(track_ids)]
-            await self._db.executemany(
-                "INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)",
-                params,
-            )
+        params = [(playlist_id, track_id, position + i) for i, track_id in enumerate(new_ids)]
+        await self._db.executemany(
+            "INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)",
+            params,
+        )
         await self._db.commit()
+        return new_ids
 
     async def remove_track(self, playlist_id: int, track_id: int) -> None:
         row = await self._db.fetchone(

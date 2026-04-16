@@ -789,7 +789,24 @@ class SAPlaylistRepo:
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_track(r) for r in rows]
 
-    async def add_track(self, playlist_id: int, track_id: int, position: int = None) -> None:
+    async def add_track(self, playlist_id: int, track_id: int, position: int = None) -> bool:
+        """Add a track to a playlist, skipping if already present.
+
+        Returns True if inserted, False if the track was already in the playlist.
+        """
+        existing = await self._db.sa_fetchone(
+            sa.select(sa.func.count())
+            .select_from(playlist_tracks)
+            .where(
+                sa.and_(
+                    playlist_tracks.c.playlist_id == playlist_id,
+                    playlist_tracks.c.track_id == track_id,
+                )
+            )
+        )
+        if existing and existing[0] > 0:
+            return False
+
         if position is None:
             row = await self._db.sa_fetchone(
                 sa.select(sa.func.coalesce(sa.func.max(playlist_tracks.c.position), -1) + 1)
@@ -801,6 +818,7 @@ class SAPlaylistRepo:
                 playlist_id=playlist_id, track_id=track_id, position=position
             )
         )
+        return True
 
     async def remove_track(self, playlist_id: int, position: int) -> None:
         await self._db.sa_execute(
