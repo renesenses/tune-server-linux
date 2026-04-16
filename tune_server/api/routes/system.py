@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 
 from tune_server.api.deps import deps
 from tune_server.config import persist_env_var, settings
@@ -377,6 +378,180 @@ async def restore_backup(filename: str):
     if not success:
         raise HTTPException(status_code=404, detail="Backup not found or restore failed")
     return {"restored": True, "filename": filename}
+
+
+@router.get("/database/export")
+async def export_database():
+    """Export the full database as a file download.
+
+    - SQLite: returns the .db file as-is (after a safety checkpoint).
+    - PostgreSQL: returns a pg_dump stream (plain SQL).
+    """
+    if not deps.db:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    engine = getattr(deps.db, "engine_name", "sqlite")
+    timestamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if engine == "sqlite":
+        db_path = Path(getattr(settings, "db_path", "tune_server.db"))
+        if not db_path.exists():
+            raise HTTPException(status_code=404, detail="Database file not found")
+
+        # Checkpoint WAL into the main file to ensure the exported snapshot is complete
+        try:
+            await deps.db.execute("PRAGMA wal_checkpoint(FULL)")
+        except Exception:
+            pass
+
+        filename = f"tune_server_{timestamp}.db"
+        return FileResponse(str(db_path), media_type="application/octet-stream", filename=filename)
+
+    if engine == "postgres":
+        import asyncio as _aio
+        import shutil as _shutil
+
+        pg_dump = _shutil.which("pg_dump")
+        if not pg_dump:
+            raise HTTPException(
+                status_code=501,
+                detail="pg_dump binary not found on the server — cannot export PostgreSQL. Install postgresql-client.",
+            )
+
+        db_url = getattr(settings, "db_url", None)
+        if not db_url:
+            raise HTTPException(status_code=500, detail="PostgreSQL URL not configured")
+
+        async def _stream_dump():
+            proc = await _aio.create_subprocess_exec(
+                pg_dump, "--no-owner", "--no-acl", db_url,
+                stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.PIPE,
+            )
+            assert proc.stdout is not None
+            try:
+                while True:
+                    chunk = await proc.stdout.read(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                await proc.wait()
+
+        filename = f"tune_server_{timestamp}.sql"
+        return StreamingResponse(
+            _stream_dump(),
+            media_type="application/sql",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    raise HTTPException(status_code=501, detail=f"Export not supported for engine '{engine}'")
+
+
+@router.post("/database/import")
+async def import_database(file: UploadFile = File(...)):
+    """Import a database file to replace the current one.
+
+    A safety backup is created first. Caller must restart the server after a successful import.
+    - SQLite: accepts a .db file (validated via SQLite magic bytes).
+    - PostgreSQL: accepts a .sql dump (plain SQL) and applies it via psql.
+    """
+    if not deps.db:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    engine = getattr(deps.db, "engine_name", "sqlite")
+
+    if engine == "sqlite":
+        import os as _os
+
+        db_path = Path(getattr(settings, "db_path", "tune_server.db"))
+
+        # Save upload to a temp file in the same dir (atomic rename requires same filesystem)
+        tmp_path = db_path.with_name(db_path.name + ".import.tmp")
+        size = 0
+        try:
+            with tmp_path.open("wb") as out:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    size += len(chunk)
+
+            # Validate SQLite magic header
+            with tmp_path.open("rb") as f:
+                header = f.read(16)
+            if not header.startswith(b"SQLite format 3\x00"):
+                tmp_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail="Uploaded file is not a valid SQLite database")
+
+            # Create safety backup of current DB before swapping
+            from tune_server.db import backup as _backup
+            try:
+                _backup.create_backup(str(db_path))
+            except Exception:
+                pass
+
+            # Close current DB connection so the file can be replaced
+            try:
+                await deps.db.close()
+            except Exception:
+                pass
+
+            # Remove WAL/SHM files (from old DB)
+            for suffix in ("-wal", "-shm"):
+                wal = db_path.with_name(db_path.name + suffix)
+                if wal.exists():
+                    wal.unlink()
+
+            _os.replace(str(tmp_path), str(db_path))
+
+            return {"imported": True, "engine": "sqlite", "size": size, "restart_required": True}
+        except HTTPException:
+            raise
+        except Exception as e:
+            tmp_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail=f"Import failed: {e}")
+
+    if engine == "postgres":
+        import asyncio as _aio
+        import shutil as _shutil
+        import tempfile as _tempfile
+
+        psql = _shutil.which("psql")
+        if not psql:
+            raise HTTPException(
+                status_code=501,
+                detail="psql binary not found on the server — cannot import into PostgreSQL. Install postgresql-client.",
+            )
+
+        db_url = getattr(settings, "db_url", None)
+        if not db_url:
+            raise HTTPException(status_code=500, detail="PostgreSQL URL not configured")
+
+        # Save upload to temp file
+        with _tempfile.NamedTemporaryFile(mode="wb", suffix=".sql", delete=False) as tmp:
+            size = 0
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                tmp.write(chunk)
+                size += len(chunk)
+            tmp_sql = tmp.name
+
+        try:
+            proc = await _aio.create_subprocess_exec(
+                psql, db_url, "-f", tmp_sql,
+                stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise HTTPException(status_code=400, detail=f"psql failed: {stderr.decode(errors='replace')[:500]}")
+            return {"imported": True, "engine": "postgres", "size": size, "restart_required": True}
+        finally:
+            Path(tmp_sql).unlink(missing_ok=True)
+
+    raise HTTPException(status_code=501, detail=f"Import not supported for engine '{engine}'")
 
 
 
