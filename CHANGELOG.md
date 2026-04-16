@@ -2,6 +2,29 @@
 
 All notable changes to Tune Server.
 
+## v0.6.4 — 2026-04-16
+
+### Playlist Manager
+- Playlist snapshots are now listable, restorable, and deletable — backup is no longer one-way
+- Snapshot restore matches tracks against local library, creates or replaces a local playlist (409 confirm flow)
+- Remote playlist creation on transfer: Tidal, Qobuz and Spotify now create the target playlist on the streaming service when `create_on_target=true` (Spotify scopes updated, re-auth required)
+- Auto-sync scheduler: `playlist_links.sync_interval_minutes` is now honored by a background worker that ticks every 60s
+- `PATCH /playlist-manager/links/{id}` to change direction or interval on an existing link
+- Merge playlists UI in web client (multi-select + floating action bar, deduplicate toggle)
+
+### Database
+- `GET /system/database/export` (SQLite .db or PostgreSQL pg_dump)
+- `POST /system/database/import` (validates magic bytes / applies via psql, creates safety backup first)
+
+### Zones
+- Hot-swap endpoint now actually works: `ZoneManager.set_output()` implemented with duplicate-device check, atomic output swap, event emission
+- Zone `online` flag flips to false when the bound DLNA/AirPlay device goes offline (DEVICE_LOST event), and back to true on rediscovery
+
+### Fixes
+- SSDP discovery logs warning with fallback when device XML is unreachable
+- AirPlay output availability now consistent on timeout/error
+- Webhook release assets on mozaiklabs.fr: idempotent mkdir, fallback to `browser_download_url`, DB write wrapped in `lockForUpdate()` (fixes v0.6.2/v0.6.3 asset download race condition)
+
 ## v0.5.8 — 2026-04-12
 
 ### Metadata — Automatic Enrichment
