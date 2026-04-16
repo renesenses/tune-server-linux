@@ -82,6 +82,32 @@ class BackupResponse(BaseModel):
     services: dict[str, int] = {}
 
 
+class PlaylistSnapshot(BaseModel):
+    id: int
+    source_service: str
+    source_playlist_id: str
+    playlist_name: str
+    track_count: int = 0
+    created_at: Optional[str] = None
+
+
+class SnapshotDetail(PlaylistSnapshot):
+    tracks: list[dict] = []
+
+
+class RestoreRequest(BaseModel):
+    target_name: Optional[str] = None  # Defaults to snapshot's playlist_name
+    overwrite_existing: bool = False  # If a local playlist with same name exists
+
+
+class RestoreResponse(BaseModel):
+    local_playlist_id: int
+    name: str
+    tracks_restored: int
+    tracks_matched: int = 0
+    tracks_not_found: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Sync Links
 # ---------------------------------------------------------------------------

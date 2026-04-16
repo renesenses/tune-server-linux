@@ -17,6 +17,8 @@ from tune_server.playlist_manager.models import (
     MergeRequest,
     ExportRequest,
     TransferHistoryEntry,
+    PlaylistSnapshot, SnapshotDetail,
+    RestoreRequest, RestoreResponse,
 )
 from tune_server.playlist_manager.transfer import execute_transfer
 from tune_server.playlist_manager.export_import import export_playlist, import_playlist
@@ -315,6 +317,183 @@ async def backup_playlists(req: BackupRequest):
         playlists_backed_up=total_playlists,
         total_tracks_snapshot=total_tracks,
         services=service_counts,
+    )
+
+
+@router.get("/backups", response_model=list[PlaylistSnapshot])
+async def list_snapshots(
+    service: str | None = Query(None, description="Filter by source service"),
+    limit: int = Query(500, ge=1, le=5000),
+):
+    """List playlist snapshots (backups), most recent first."""
+    where = ""
+    params: tuple = ()
+    if service:
+        where = "WHERE source_service = ?"
+        params = (service,)
+
+    rows = await deps.db.fetchall(
+        f"""SELECT id, source_service, source_playlist_id, playlist_name,
+                   track_count, created_at
+            FROM playlist_snapshots
+            {where}
+            ORDER BY created_at DESC
+            LIMIT ?""",
+        params + (limit,),
+    )
+    return [
+        PlaylistSnapshot(
+            id=r["id"],
+            source_service=r["source_service"],
+            source_playlist_id=r["source_playlist_id"],
+            playlist_name=r["playlist_name"],
+            track_count=r["track_count"] or 0,
+            created_at=str(r["created_at"]) if r["created_at"] else None,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/backups/{snapshot_id}", response_model=SnapshotDetail)
+async def get_snapshot(snapshot_id: int):
+    """Get full details of a snapshot, including track list."""
+    row = await deps.db.fetchone(
+        """SELECT id, source_service, source_playlist_id, playlist_name,
+                  track_count, created_at, snapshot_data
+           FROM playlist_snapshots WHERE id = ?""",
+        (snapshot_id,),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    tracks: list[dict] = []
+    try:
+        tracks = json.loads(row["snapshot_data"]) if row["snapshot_data"] else []
+    except json.JSONDecodeError:
+        tracks = []
+
+    return SnapshotDetail(
+        id=row["id"],
+        source_service=row["source_service"],
+        source_playlist_id=row["source_playlist_id"],
+        playlist_name=row["playlist_name"],
+        track_count=row["track_count"] or 0,
+        created_at=str(row["created_at"]) if row["created_at"] else None,
+        tracks=tracks,
+    )
+
+
+@router.delete("/backups/{snapshot_id}")
+async def delete_snapshot(snapshot_id: int):
+    """Delete a snapshot."""
+    row = await deps.db.fetchone(
+        "SELECT id FROM playlist_snapshots WHERE id = ?", (snapshot_id,)
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    await deps.db.execute("DELETE FROM playlist_snapshots WHERE id = ?", (snapshot_id,))
+    await deps.db.commit()
+    return {"deleted": True, "id": snapshot_id}
+
+
+@router.post("/backups/{snapshot_id}/restore", response_model=RestoreResponse)
+async def restore_snapshot(snapshot_id: int, req: RestoreRequest | None = None):
+    """Restore a snapshot as a local playlist.
+
+    Matches each track in the snapshot against the local library by title+artist.
+    Tracks not found locally are skipped (but counted).
+    """
+    req = req or RestoreRequest()
+
+    # Fetch snapshot
+    row = await deps.db.fetchone(
+        """SELECT playlist_name, snapshot_data
+           FROM playlist_snapshots WHERE id = ?""",
+        (snapshot_id,),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    try:
+        snapshot_tracks = json.loads(row["snapshot_data"]) if row["snapshot_data"] else []
+    except json.JSONDecodeError:
+        snapshot_tracks = []
+
+    target_name = (req.target_name or row["playlist_name"]).strip() or "Restored Playlist"
+
+    # Check for an existing local playlist with the same name
+    existing = await deps.db.fetchone(
+        "SELECT id FROM playlists WHERE name = ?", (target_name,)
+    )
+    if existing and not req.overwrite_existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Local playlist '{target_name}' already exists. Use overwrite_existing=true to replace its contents.",
+        )
+
+    # Create or reuse the playlist
+    if existing:
+        playlist_id = existing["id"]
+        await deps.db.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?", (playlist_id,)
+        )
+    else:
+        result = await deps.db.execute(
+            "INSERT INTO playlists (name, description) VALUES (?, ?) RETURNING id",
+            (target_name, f"Restored from snapshot #{snapshot_id}"),
+        )
+        row_new = await result.fetchone() if hasattr(result, "fetchone") else None
+        if row_new and "id" in (dict(row_new) if row_new else {}):
+            playlist_id = row_new["id"]
+        else:
+            row_new = await deps.db.fetchone(
+                "SELECT id FROM playlists WHERE name = ? ORDER BY id DESC LIMIT 1",
+                (target_name,),
+            )
+            playlist_id = row_new["id"] if row_new else None
+    if not playlist_id:
+        raise HTTPException(status_code=500, detail="Failed to create local playlist")
+
+    # Match each snapshot track against local tracks
+    matched = 0
+    not_found = 0
+    position = 0
+    for track in snapshot_tracks:
+        title = (track.get("title") or "").strip()
+        artist = (track.get("artist_name") or "").strip()
+        if not title:
+            not_found += 1
+            continue
+
+        # Try exact match first
+        like = "ILIKE" if _is_postgres() else "LIKE"
+        local = await deps.db.fetchone(
+            f"""SELECT t.id FROM tracks t
+                LEFT JOIN artists ar ON ar.id = t.artist_id
+                WHERE LOWER(t.title) = LOWER(?)
+                  AND (? = '' OR LOWER(ar.name) {like} LOWER(?))
+                LIMIT 1""",
+            (title, artist, f"%{artist}%"),
+        )
+        if not local:
+            not_found += 1
+            continue
+
+        await deps.db.execute(
+            "INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)",
+            (playlist_id, local["id"], position),
+        )
+        matched += 1
+        position += 1
+
+    await deps.db.commit()
+
+    return RestoreResponse(
+        local_playlist_id=playlist_id,
+        name=target_name,
+        tracks_restored=matched,
+        tracks_matched=matched,
+        tracks_not_found=not_found,
     )
 
 
