@@ -2,6 +2,25 @@
 
 All notable changes to Tune Server.
 
+## v0.6.5 — 2026-04-16
+
+### Zones — real-time device hot-unplug
+- SSDP passive advertisement listener (alive/byebye) for DLNA — detection
+  latency drops from ~30s polling to <1s when a renderer properly announces
+  its lifecycle
+- mDNS zeroconf passive browser for AirPlay (_raop / _airplay) — real-time
+  `remove_service` triggers DEVICE_LOST immediately
+- Zones auto-pause playback when their bound device goes offline and
+  auto-resume on recovery (backoff 2s/5s/10s)
+- ZONE_UPDATED events now carry `error_code: "device_unavailable"` and
+  `resuming: true` so clients can badge zones correctly
+- AirPlay output availability flag set consistently on timeout/error
+
+### CI / Release infrastructure
+- release.yml: wait up to 150s for GitHub to finalize asset uploads
+  (sizes matching local artifacts) before pinging mozaiklabs.fr — fixes
+  the partial 448 KB asset bug observed in v0.6.3/v0.6.4
+
 ## v0.6.4 — 2026-04-16
 
 ### Playlist Manager
