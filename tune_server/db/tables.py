@@ -206,7 +206,7 @@ zones = sa.Table(
     sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
     sa.Column("name", sa.Text, nullable=False),
     sa.Column("output_type", sa.Text, nullable=False, server_default="local"),
-    sa.Column("output_device_id", sa.Text, sa.ForeignKey("output_devices.uid", ondelete="SET NULL")),
+    sa.Column("output_device_id", sa.Text),
     sa.Column("volume", sa.Float, server_default="0.5"),
     sa.Column("group_id", sa.Text),
     sa.Column("sync_delay_ms", sa.Integer, server_default="0"),

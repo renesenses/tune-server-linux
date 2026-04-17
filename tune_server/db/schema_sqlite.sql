@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS zones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     output_type TEXT NOT NULL DEFAULT 'local',
-    output_device_id TEXT REFERENCES output_devices(uid) ON DELETE SET NULL,
+    output_device_id TEXT,
     volume REAL DEFAULT 0.5,
     group_id TEXT,
     sync_delay_ms INTEGER DEFAULT 0,

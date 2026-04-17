@@ -138,6 +138,10 @@ class SADatabase:
         async with self._engine.begin() as conn:
             await conn.run_sync(metadata.create_all)
 
+        # Migrate: drop FK on zones.output_device_id (SQLite requires table rebuild)
+        if self.engine_name == "sqlite":
+            await self._migrate_zones_drop_fk()
+
         # Set up FTS plugin
         self.fts = create_fts_plugin(self.engine_name)
         async with self._engine.begin() as conn:
@@ -145,6 +149,72 @@ class SADatabase:
 
         logger.info("database_connected", engine=self.engine_name,
                      url=self._sa_url.split("@")[-1] if "@" in self._sa_url else self._sa_url)
+
+    async def _migrate_zones_drop_fk(self) -> None:
+        """Remove FK constraint on zones.output_device_id for existing SQLite DBs."""
+        async with self._engine.begin() as conn:
+            # Check if the FK exists by inspecting the CREATE TABLE statement
+            result = await conn.execute(
+                sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name='zones'")
+            )
+            row = result.first()
+            if not row or not row[0]:
+                return
+            create_sql = row[0]
+            if "output_devices" not in create_sql:
+                return  # FK already removed or never existed
+
+            logger.info("migrating_zones_drop_fk")
+            # SQLite: rebuild table without FK
+            await conn.execute(sa.text("PRAGMA foreign_keys=OFF"))
+            await conn.execute(sa.text("""
+                CREATE TABLE zones_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    output_type TEXT NOT NULL DEFAULT 'local',
+                    output_device_id TEXT,
+                    volume REAL DEFAULT 0.5,
+                    group_id TEXT,
+                    sync_delay_ms INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    queue_json TEXT,
+                    muted BOOLEAN DEFAULT FALSE,
+                    online BOOLEAN DEFAULT TRUE
+                )
+            """))
+            await conn.execute(sa.text(
+                "INSERT INTO zones_new SELECT id, name, output_type, output_device_id, "
+                "volume, group_id, sync_delay_ms, created_at, "
+                "COALESCE(queue_json, NULL), "
+                "COALESCE(muted, FALSE), COALESCE(online, TRUE) FROM zones"
+            ))
+            await conn.execute(sa.text("DROP TABLE zones"))
+            await conn.execute(sa.text("ALTER TABLE zones_new RENAME TO zones"))
+            await conn.execute(sa.text("PRAGMA foreign_keys=ON"))
+            logger.info("migrated_zones_drop_fk")
+
+    def list_backups(self) -> list[dict]:
+        """List available backups, newest first."""
+        from datetime import datetime
+        # Extract DB path from URL
+        if "sqlite" in self._sa_url:
+            db_path = self._sa_url.split("///")[-1]
+        else:
+            return []  # Backups only for SQLite
+        db_file = Path(db_path)
+        backup_dir = db_file.parent / "backups"
+        if not backup_dir.exists():
+            return []
+        backups = sorted(backup_dir.glob(f"{db_file.stem}_*{db_file.suffix}"), reverse=True)
+        result = []
+        for b in backups:
+            stat = b.stat()
+            result.append({
+                "filename": b.name,
+                "size": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+        return result
 
     async def close(self) -> None:
         if self._engine:
