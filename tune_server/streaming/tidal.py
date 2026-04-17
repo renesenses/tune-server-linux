@@ -27,6 +27,9 @@ class TidalService(StreamingService):
         self._pending_session = None
         self._auth_task = None
         self._featured_cache: dict[str, object] = {}  # section_id -> PageCategory
+        self._featured_sections_cache: list | None = None
+        self._featured_cache_time: float = 0
+        self._featured_cache_ttl: float = 1800  # 30 minutes
 
     def _make_session(self):
         """Create a tidalapi Session with configured quality."""
@@ -342,6 +345,14 @@ class TidalService(StreamingService):
     async def get_featured_sections(self) -> list[FeaturedSection]:
         if not await self._ensure_authenticated():
             return []
+
+        import time
+        if (
+            self._featured_sections_cache is not None
+            and (time.monotonic() - self._featured_cache_time) < self._featured_cache_ttl
+        ):
+            return self._featured_sections_cache
+
         try:
             import tidalapi
 
@@ -360,6 +371,8 @@ class TidalService(StreamingService):
                     section_id = f"home-{i}"
                     sections.append(FeaturedSection(id=section_id, name=title))
                     self._featured_cache[section_id] = cat
+            self._featured_sections_cache = sections
+            self._featured_cache_time = time.monotonic()
             return sections
         except Exception:
             logger.exception("tidal_featured_sections_error")
@@ -476,6 +489,8 @@ class TidalService(StreamingService):
     async def disconnect(self, db: Database) -> None:
         self._session = None
         self._featured_cache = {}
+        self._featured_sections_cache = None
+        self._featured_cache_time = 0
         try:
             await db.execute(
                 "DELETE FROM streaming_auth WHERE service = ?", ("tidal",)
