@@ -26,9 +26,11 @@ def _detect_web_dir() -> str | None:
 
 def _detect_bin(name: str) -> str:
     """Auto-detect a bundled binary next to the executable, fallback to bare name (PATH)."""
-    candidate = _detect_base_dir() / name
-    if candidate.is_file():
-        return str(candidate)
+    base = _detect_base_dir()
+    for suffix in ("", ".exe"):
+        candidate = base / (name + suffix)
+        if candidate.is_file():
+            return str(candidate)
     return name
 
 

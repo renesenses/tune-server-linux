@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from pathlib import Path
 
 import structlog
 
@@ -9,13 +10,15 @@ logger = structlog.get_logger()
 
 
 def check_ffmpeg() -> bool:
-    """Check if FFmpeg is available on the system."""
-    return shutil.which("ffmpeg") is not None
+    """Check if FFmpeg is available (bundled or system PATH)."""
+    from tune_server.config import settings
+    return shutil.which(settings.ffmpeg_path) is not None or Path(settings.ffmpeg_path).is_file()
 
 
 def check_ffprobe() -> bool:
-    """Check if ffprobe is available on the system."""
-    return shutil.which("ffprobe") is not None
+    """Check if ffprobe is available (bundled or system PATH)."""
+    from tune_server.config import settings
+    return shutil.which(settings.ffprobe_path) is not None or Path(settings.ffprobe_path).is_file()
 
 
 def format_duration(ms: int) -> str:

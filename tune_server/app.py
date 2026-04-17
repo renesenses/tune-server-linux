@@ -89,8 +89,12 @@ class TuneServer:
                 logger.error("music_dir_not_found", path=music_dir)
 
         if not check_ffmpeg():
-            logger.error("ffmpeg_not_found",
-                hint="Install with: sudo apt install ffmpeg")
+            import platform
+            if platform.system() == "Windows":
+                hint = "Download from https://ffmpeg.org and place ffmpeg.exe next to tune-server.exe"
+            else:
+                hint = "Install with: sudo apt install ffmpeg (or brew install ffmpeg on macOS)"
+            logger.error("ffmpeg_not_found", hint=hint, configured_path=settings.ffmpeg_path)
 
         # Database — use SQLAlchemy Core engine (database-independent)
         self._db = create_database(settings, use_sa=True)
