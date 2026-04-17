@@ -289,23 +289,6 @@ class TuneServer:
                                     pass
                                 break
             if not dmr:
-                # Wait for SSDP discovery to find the device (up to 15s)
-                logger.info("dlna_factory_waiting_for_device", device_id=device_id)
-                for _ in range(15):
-                    await asyncio.sleep(1)
-                    dmr = self._discovery_manager.ssdp.get_dmr_device(device_id)
-                    if dmr:
-                        break
-                    # Also retry IP fallback
-                    if "." in device_id and "uuid:" not in device_id:
-                        for did, dev in self._discovery_manager.ssdp.devices.items():
-                            if dev.host == device_id and dev.type == "dlna":
-                                dmr = self._discovery_manager.ssdp.get_dmr_device(did)
-                                if dmr:
-                                    break
-                    if dmr:
-                        break
-            if not dmr:
                 logger.warning("dlna_factory_device_not_found", device_id=device_id,
                              available=list(self._discovery_manager.ssdp._dmr_devices.keys()))
                 return None
