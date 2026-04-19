@@ -34,6 +34,7 @@ class FFmpegDecoder:
         channels: int = 2,
         output_format: Optional[AudioFormat] = None,
         icy_callback: Optional[IcyMetadataCallback] = None,
+        channel_filter: Optional[str] = None,
     ) -> None:
         self._file_path = file_path
         self._sample_rate = sample_rate
@@ -41,6 +42,7 @@ class FFmpegDecoder:
         self._channels = channels
         self._output_format = output_format
         self._icy_callback = icy_callback
+        self._channel_filter = channel_filter
         self._process: asyncio.subprocess.Process | None = None
         self._buffer = AsyncRingBuffer(max_chunks=512)
         self._read_task: asyncio.Task | None = None
@@ -94,6 +96,9 @@ class FFmpegDecoder:
 
         # DSP filter chain (EQ, convolution, room correction)
         af_filters = self._build_dsp_filters()
+        # Channel filter for stereo pair (extract L or R to mono)
+        if self._channel_filter:
+            af_filters = f"{af_filters},{self._channel_filter}" if af_filters else self._channel_filter
         if af_filters:
             cmd.extend(["-af", af_filters])
 

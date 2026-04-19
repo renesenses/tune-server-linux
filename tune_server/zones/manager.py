@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 import structlog
 
@@ -27,12 +28,16 @@ class ZoneManager:
         self._output_factory: dict[OutputType, callable] = {}
         self._pending_zones: list = []
         self._stream_url_resolver = None
+        self._group_manager = None
         # Map zone_id → bool remembering whether a zone was playing when
         # its device went offline, so we can resume on recovery.
         self._resume_on_recovery: dict[int, bool] = {}
 
     def set_stream_url_resolver(self, resolver) -> None:
         self._stream_url_resolver = resolver
+
+    def set_group_manager(self, group_manager) -> None:
+        self._group_manager = group_manager
 
     def register_output_factory(self, output_type: OutputType, factory: callable) -> None:
         self._output_factory[output_type] = factory
@@ -64,6 +69,8 @@ class ZoneManager:
                     )
                     zone.group_id = row.get("group_id")
                     zone.sync_delay_ms = row.get("sync_delay_ms", 0) or 0
+                    zone.stereo_pair_id = row.get("stereo_pair_id")
+                    zone.stereo_channel = row.get("stereo_channel")
                     if self._stream_url_resolver:
                         zone.player.set_stream_url_resolver(self._stream_url_resolver)
 
@@ -106,6 +113,8 @@ class ZoneManager:
                     )
                     zone.group_id = row.get("group_id")
                     zone.sync_delay_ms = row.get("sync_delay_ms", 0) or 0
+                    zone.stereo_pair_id = row.get("stereo_pair_id")
+                    zone.stereo_channel = row.get("stereo_channel")
                     if self._stream_url_resolver:
                         zone.player.set_stream_url_resolver(self._stream_url_resolver)
                     saved_volume = row.get("volume", 0.5)
@@ -304,6 +313,102 @@ class ZoneManager:
 
         logger.warning("no_output_factory", type=output_type)
         return None
+
+    # -----------------------------------------------------------------
+    # Stereo pairing
+    # -----------------------------------------------------------------
+
+    async def create_stereo_pair(
+        self, name: str, left_device_id: str, right_device_id: str,
+    ) -> str:
+        """Create a stereo pair from two DLNA devices (left + right channels)."""
+        stereo_pair_id = str(uuid.uuid4())
+
+        # Create left and right zones
+        left_zone = await self.create_zone(
+            f"{name} (L)", OutputType.DLNA, output_device_id=left_device_id,
+        )
+        right_zone = await self.create_zone(
+            f"{name} (R)", OutputType.DLNA, output_device_id=right_device_id,
+        )
+
+        # Set stereo pair metadata on both zones
+        left_zone.stereo_pair_id = stereo_pair_id
+        left_zone.stereo_channel = "left"
+        right_zone.stereo_pair_id = stereo_pair_id
+        right_zone.stereo_channel = "right"
+
+        # Persist stereo fields to DB
+        await self._zone_repo.update(
+            left_zone.zone_id,
+            stereo_pair_id=stereo_pair_id, stereo_channel="left",
+        )
+        await self._zone_repo.update(
+            right_zone.zone_id,
+            stereo_pair_id=stereo_pair_id, stereo_channel="right",
+        )
+
+        # Group them: left is leader, right is follower
+        if self._group_manager:
+            await self._group_manager.create_group(left_zone, [right_zone])
+
+        logger.info(
+            "stereo_pair_created",
+            pair_id=stereo_pair_id,
+            name=name,
+            left_zone=left_zone.zone_id,
+            right_zone=right_zone.zone_id,
+        )
+        return stereo_pair_id
+
+    async def dissolve_stereo_pair(self, stereo_pair_id: str) -> None:
+        """Dissolve a stereo pair — ungroup and delete both zones."""
+        zones = [
+            z for z in self._zones.values()
+            if z.stereo_pair_id == stereo_pair_id
+        ]
+        if not zones:
+            raise KeyError(f"Stereo pair {stereo_pair_id} not found")
+
+        # Dissolve the group first
+        if self._group_manager and zones[0].group_id:
+            await self._group_manager.dissolve_group(zones[0].group_id)
+
+        # Delete both zones
+        for zone in zones:
+            await self.delete_zone(zone.zone_id)
+
+        logger.info("stereo_pair_dissolved", pair_id=stereo_pair_id)
+
+    def get_stereo_pairs(self) -> list[dict]:
+        """Return all active stereo pairs."""
+        pairs: dict[str, dict] = {}
+        for zone in self._zones.values():
+            if not zone.stereo_pair_id:
+                continue
+            pair_id = zone.stereo_pair_id
+            if pair_id not in pairs:
+                pairs[pair_id] = {
+                    "stereo_pair_id": pair_id,
+                    "name": None,
+                    "left_zone": None,
+                    "right_zone": None,
+                }
+            entry = pairs[pair_id]
+            if zone.stereo_channel == "left":
+                entry["left_zone"] = zone.to_model()
+                # Derive pair name from zone name (strip " (L)" suffix)
+                raw = zone.name
+                if raw.endswith(" (L)"):
+                    entry["name"] = raw[:-4]
+                else:
+                    entry["name"] = entry["name"] or raw
+            elif zone.stereo_channel == "right":
+                entry["right_zone"] = zone.to_model()
+                if entry["name"] is None:
+                    raw = zone.name
+                    entry["name"] = raw[:-4] if raw.endswith(" (R)") else raw
+        return list(pairs.values())
 
     async def cleanup(self) -> None:
         for zone in self._zones.values():

@@ -134,6 +134,8 @@ CREATE TABLE IF NOT EXISTS zones (
     volume REAL DEFAULT 0.5,
     group_id TEXT,
     sync_delay_ms INTEGER DEFAULT 0,
+    stereo_pair_id TEXT,
+    stereo_channel TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     queue_json TEXT,
     muted BOOLEAN DEFAULT FALSE,
@@ -549,6 +551,16 @@ END $$;
 
 DO $$ BEGIN
     ALTER TABLE zones ADD COLUMN online BOOLEAN DEFAULT TRUE;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE zones ADD COLUMN stereo_pair_id TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE zones ADD COLUMN stereo_channel TEXT;
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
 

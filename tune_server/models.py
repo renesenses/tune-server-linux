@@ -138,6 +138,8 @@ class Zone(BaseModel):
     position_ms: int = 0
     queue_length: int = 0
     signal_path: SignalPath | None = None
+    stereo_pair_id: str | None = None
+    stereo_channel: str | None = None  # "left" or "right"
 
 
 class ZoneGroupModel(BaseModel):
@@ -350,6 +352,18 @@ class ZoneUpdateRequest(BaseModel):
 class ZoneGroupRequest(BaseModel):
     zone_ids: list[int]
     leader_id: int
+
+
+class StereoPairRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    left_device_id: str
+    right_device_id: str
+
+
+class StereoPairResponse(BaseModel):
+    stereo_pair_id: str
+    left_zone_id: int
+    right_zone_id: int
 
 
 class VolumeRequest(BaseModel):

@@ -292,6 +292,8 @@ class SQLiteDatabase:
         migrations_zone = [
             "ALTER TABLE zones ADD COLUMN muted INTEGER DEFAULT 0",
             "ALTER TABLE zones ADD COLUMN online INTEGER DEFAULT 1",
+            "ALTER TABLE zones ADD COLUMN stereo_pair_id TEXT",
+            "ALTER TABLE zones ADD COLUMN stereo_channel TEXT",
         ]
         for sql in migrations_zone:
             try:

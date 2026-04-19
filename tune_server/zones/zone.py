@@ -43,6 +43,8 @@ class ZoneInstance:
         self._group_id: str | None = None
         self._sync_delay_ms: int = 0
         self._online: bool = True
+        self._stereo_pair_id: str | None = None
+        self._stereo_channel: str | None = None
 
     @property
     def zone_id(self) -> int:
@@ -97,6 +99,29 @@ class ZoneInstance:
         self._online = value
 
     @property
+    def stereo_pair_id(self) -> str | None:
+        return self._stereo_pair_id
+
+    @stereo_pair_id.setter
+    def stereo_pair_id(self, value: str | None) -> None:
+        self._stereo_pair_id = value
+
+    @property
+    def stereo_channel(self) -> str | None:
+        return self._stereo_channel
+
+    @stereo_channel.setter
+    def stereo_channel(self, value: str | None) -> None:
+        self._stereo_channel = value
+        # Update the player's channel filter based on stereo channel
+        if value == "left":
+            self._player.set_channel_filter("pan=mono|c0=FL")
+        elif value == "right":
+            self._player.set_channel_filter("pan=mono|c0=FR")
+        else:
+            self._player.set_channel_filter(None)
+
+    @property
     def state(self) -> PlaybackState:
         return self._player.state
 
@@ -122,6 +147,8 @@ class ZoneInstance:
             queue_length=self._player.queue.length,
             signal_path=self._player.signal_path,
             online=self._online,
+            stereo_pair_id=self._stereo_pair_id,
+            stereo_channel=self._stereo_channel,
         )
 
     async def _save_queue(self, tracks: list[Track], position: int) -> None:
