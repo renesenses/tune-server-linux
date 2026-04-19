@@ -227,7 +227,39 @@ CREATE INDEX IF NOT EXISTS idx_albums_genre ON albums(genre);
 CREATE INDEX IF NOT EXISTS idx_tracks_created_at ON tracks(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tracks_format_sr ON tracks(format, sample_rate);
 CREATE INDEX IF NOT EXISTS idx_tracks_audio_hash ON tracks(audio_hash);
-CREATE INDEX IF NOT EXISTS idx_radio_stations_genre ON radio_stations(genre);
-CREATE INDEX IF NOT EXISTS idx_radio_stations_favorite ON radio_stations(favorite);
 CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);
+
+-- Metadata manager
+CREATE TABLE IF NOT EXISTS metadata_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+    album_id INTEGER REFERENCES albums(id) ON DELETE CASCADE,
+    field TEXT NOT NULL,
+    current_value TEXT,
+    suggested_value TEXT NOT NULL,
+    source TEXT NOT NULL,
+    confidence REAL DEFAULT 0.0,
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_metadata_suggestions_status ON metadata_suggestions(status);
+
+CREATE TABLE IF NOT EXISTS metadata_fix_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    tracks_scanned INTEGER DEFAULT 0,
+    auto_fixed INTEGER DEFAULT 0,
+    suggestions INTEGER DEFAULT 0,
+    errors INTEGER DEFAULT 0,
+    details TEXT
+);
+
+CREATE TABLE IF NOT EXISTS duplicate_tracks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id_a INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    track_id_b INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    audio_hash TEXT NOT NULL,
+    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved INTEGER DEFAULT 0
+);
