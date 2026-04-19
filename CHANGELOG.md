@@ -2,6 +2,22 @@
 
 All notable changes to Tune Server.
 
+## v0.6.6 — 2026-04-19
+
+### Streaming Services
+- Enable/disable streaming services directly from the web UI (no more manual .env editing)
+- Activating a service now persists all its config keys to .env (app_id, quality, region, etc.)
+- All 6 services listed even when disabled, with Enable button
+
+### Bug Fixes
+- Fix DLNA startup hang: removed blocking 15s device wait loop (zones now go to pending and retry automatically)
+- Fix ffmpeg detection on Windows (bundled .exe + platform-aware error hint)
+- Fix `zones.output_device_id` FOREIGN KEY constraint error on zone creation
+- Fix missing `list_backups()` method on SADatabase
+- Fix Tidal featured sections going stale (30-min server-side cache + client pull-to-refresh)
+- Fix "Bon après-midi, Default" greeting on iOS (hide Default profile name)
+- Fix zone creation error feedback (visible alert instead of silent failure)
+
 ## v0.6.5 — 2026-04-16
 
 ### Zones — real-time device hot-unplug
