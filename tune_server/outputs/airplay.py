@@ -10,6 +10,9 @@ from tune_server.outputs.base import OutputTarget
 
 logger = structlog.get_logger()
 
+# Exponential backoff schedule for connection retries (seconds)
+_RETRY_DELAYS = (2, 5, 10, 30)
+
 
 class AirPlayOutput(OutputTarget):
     """AirPlay output using pyatv for RAOP streaming.
@@ -24,6 +27,7 @@ class AirPlayOutput(OutputTarget):
         self._available = True
         self._volume: float = 0.5
         self._stream_task: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
 
     @property
     def name(self) -> str:
@@ -90,6 +94,16 @@ class AirPlayOutput(OutputTarget):
 
         except RuntimeError:
             raise
+        except (ConnectionRefusedError, ConnectionResetError, OSError) as exc:
+            logger.warning(
+                "airplay_connection_refused",
+                device=self._device_name,
+                error=str(exc),
+            )
+            self._available = False
+            raise RuntimeError(
+                f"AirPlay device refused connection: {self._device_name}"
+            ) from exc
         except Exception:
             logger.exception("airplay_start_error", device=self._device_name)
             self._available = False
@@ -104,28 +118,86 @@ class AirPlayOutput(OutputTarget):
     async def flush(self) -> None:
         pass
 
-    async def _remote_call(self, label: str, coro) -> bool:
-        """Call a remote/audio coroutine with timeout."""
-        try:
-            await asyncio.wait_for(coro, timeout=10)
-            self._available = True
-            return True
-        except asyncio.TimeoutError:
-            logger.warning("airplay_timeout", action=label, device=self._device_name)
-            self._available = False
-            return False
-        except Exception:
-            logger.debug("airplay_call_error", action=label, device=self._device_name)
-            self._available = False
-            return False
+    async def _remote_call(self, label: str, coro_fn, *, retries: bool = True) -> bool:
+        """Call a remote/audio coroutine factory with timeout and exponential backoff.
+
+        ``coro_fn`` must be a zero-argument callable that returns a new coroutine
+        each time (e.g. ``lambda: rc.pause()``).  On transient failures (timeout,
+        connection errors) the call is retried with exponential backoff (2s, 5s,
+        10s, 30s) before giving up.
+        """
+        delays = _RETRY_DELAYS if retries else ()
+        max_attempts = len(delays) + 1
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await asyncio.wait_for(coro_fn(), timeout=10)
+                if not self._available:
+                    logger.info(
+                        "airplay_reconnected",
+                        action=label,
+                        device=self._device_name,
+                        attempt=attempt,
+                    )
+                self._available = True
+                return True
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "airplay_timeout",
+                    action=label,
+                    device=self._device_name,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                )
+            except (ConnectionRefusedError, ConnectionResetError, OSError) as exc:
+                logger.warning(
+                    "airplay_connection_error",
+                    action=label,
+                    device=self._device_name,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    error=str(exc),
+                )
+            except Exception:
+                logger.debug(
+                    "airplay_call_error",
+                    action=label,
+                    device=self._device_name,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                )
+                # Unknown errors are not retried — bail immediately
+                self._available = False
+                return False
+
+            # Schedule retry with backoff if attempts remain
+            if attempt < max_attempts:
+                delay = delays[attempt - 1]
+                logger.info(
+                    "airplay_retry_scheduled",
+                    action=label,
+                    device=self._device_name,
+                    attempt=attempt,
+                    next_retry_in=delay,
+                )
+                await asyncio.sleep(delay)
+
+        self._available = False
+        logger.warning(
+            "airplay_retry_exhausted",
+            action=label,
+            device=self._device_name,
+            attempts=max_attempts,
+        )
+        return False
 
     async def pause(self) -> None:
         rc = self._atv.remote_control
-        await self._remote_call("pause", rc.pause())
+        await self._remote_call("pause", lambda: rc.pause())
 
     async def resume(self) -> None:
         rc = self._atv.remote_control
-        await self._remote_call("play", rc.play())
+        await self._remote_call("play", lambda: rc.play())
 
     async def stop(self) -> None:
         if self._stream_task:
@@ -137,12 +209,12 @@ class AirPlayOutput(OutputTarget):
             self._stream_task = None
 
         rc = self._atv.remote_control
-        await self._remote_call("stop", rc.stop())
+        await self._remote_call("stop", lambda: rc.stop())
 
     async def set_volume(self, volume: float) -> None:
         self._volume = volume
         audio = self._atv.audio
-        await self._remote_call("set_volume", audio.set_volume(volume * 100))
+        await self._remote_call("set_volume", lambda: audio.set_volume(volume * 100))
 
     async def get_position_ms(self) -> int:
         """Query the AirPlay device's current playback position."""

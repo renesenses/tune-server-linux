@@ -10,7 +10,7 @@ import structlog
 
 from tune_server.config import settings
 from tune_server.models import Album, Artist, AudioFormat, SearchResult, Source, Track
-from tune_server.streaming.base import StreamingService
+from tune_server.streaming.base import StreamingService, http_request_with_retry
 from tune_server.streaming.cache import StreamUrlCache
 
 if TYPE_CHECKING:
@@ -61,7 +61,7 @@ class AmazonMusicService(StreamingService):
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            timeout = aiohttp.ClientTimeout(total=settings.api_timeout, connect=10)
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
@@ -78,21 +78,31 @@ class AmazonMusicService(StreamingService):
 
         url = f"{AMAZON_TUNE_API}{endpoint}"
         try:
-            async with session.request(method, url, params=params, json=json_body, headers=headers) as resp:
-                if resp.status == 401:
-                    # Token expired — attempt refresh
-                    refreshed = await self._refresh_access_token()
-                    if refreshed:
-                        headers["Authorization"] = f"Bearer {self._access_token}"
-                        async with session.request(method, url, params=params, json=json_body, headers=headers) as retry_resp:
-                            retry_resp.raise_for_status()
-                            return await retry_resp.json()
-                    raise aiohttp.ClientResponseError(
-                        resp.request_info, resp.history, status=401, message="Amazon auth expired"
-                    )
+            resp = await http_request_with_retry(
+                session, method, url,
+                params=params, json=json_body, headers=headers,
+                service_name="amazon",
+            )
+            async with resp:
                 resp.raise_for_status()
                 return await resp.json()
-        except aiohttp.ClientResponseError:
+        except aiohttp.ClientResponseError as exc:
+            if exc.status == 401:
+                # Token expired — attempt refresh and retry once
+                refreshed = await self._refresh_access_token()
+                if refreshed:
+                    headers["Authorization"] = f"Bearer {self._access_token}"
+                    try:
+                        retry_resp = await http_request_with_retry(
+                            session, method, url,
+                            params=params, json=json_body, headers=headers,
+                            service_name="amazon",
+                        )
+                        async with retry_resp:
+                            retry_resp.raise_for_status()
+                            return await retry_resp.json()
+                    except aiohttp.ClientResponseError:
+                        raise
             raise
         except Exception:
             logger.exception("amazon_api_request_error", endpoint=endpoint)

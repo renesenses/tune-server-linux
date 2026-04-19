@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     duplicates_dir: str = "/data/duplicates"
     artwork_max_size: int = 1200  # max dimension in pixels
 
+    # Streaming API timeout (seconds) — applies to all connector HTTP calls.
+    # Must be high enough for large Tidal playlist fetches (~34s for 280 playlists).
+    api_timeout: int = 60
+
     # Streaming services
     tidal_enabled: bool = False
     tidal_quality: str = "HI_RES_LOSSLESS"  # LOW, HIGH, LOSSLESS, HI_RES_LOSSLESS

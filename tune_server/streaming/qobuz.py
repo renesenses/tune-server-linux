@@ -10,7 +10,7 @@ import structlog
 
 from tune_server.config import settings
 from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, StreamingPlaylist, Track
-from tune_server.streaming.base import StreamingService
+from tune_server.streaming.base import StreamingService, http_request_with_retry
 from tune_server.streaming.cache import StreamUrlCache
 
 if TYPE_CHECKING:
@@ -41,7 +41,7 @@ class QobuzService(StreamingService):
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            timeout = aiohttp.ClientTimeout(total=settings.api_timeout, connect=10)
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
@@ -52,14 +52,19 @@ class QobuzService(StreamingService):
             headers["X-User-Auth-Token"] = self._user_auth_token
 
         url = f"{QOBUZ_API_BASE}/{endpoint}"
-        async with session.get(url, params=params, headers=headers) as resp:
-            if resp.status == 401:
+        try:
+            resp = await http_request_with_retry(
+                session, "GET", url,
+                params=params, headers=headers,
+                service_name="qobuz",
+            )
+        except aiohttp.ClientResponseError as exc:
+            if exc.status == 401:
                 logger.warning("qobuz_token_expired")
                 self._user_auth_token = None
-                raise aiohttp.ClientResponseError(
-                    resp.request_info, resp.history,
-                    status=401, message="Qobuz auth expired",
-                )
+            raise
+
+        async with resp:
             resp.raise_for_status()
             return await resp.json()
 

@@ -20,7 +20,7 @@ from tune_server.models import (
     StreamingPlaylist,
     Track,
 )
-from tune_server.streaming.base import StreamingService
+from tune_server.streaming.base import StreamingService, http_request_with_retry
 from tune_server.streaming.cache import StreamUrlCache
 
 if TYPE_CHECKING:
@@ -109,7 +109,7 @@ class YouTubeService(StreamingService):
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            timeout = aiohttp.ClientTimeout(total=settings.api_timeout, connect=10)
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
@@ -174,7 +174,12 @@ class YouTubeService(StreamingService):
 
         try:
             session = await self._ensure_session()
-            async with session.get(url, params=req_params, headers=headers) as resp:
+            resp = await http_request_with_retry(
+                session, "GET", url,
+                params=req_params, headers=headers,
+                service_name="youtube",
+            )
+            async with resp:
                 if resp.status != 200:
                     body = await resp.text()
                     logger.warning(

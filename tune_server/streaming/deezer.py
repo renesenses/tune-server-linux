@@ -7,11 +7,12 @@ from typing import TYPE_CHECKING, Optional
 import aiohttp
 import structlog
 
+from tune_server.config import settings
 from tune_server.models import (
     Album, Artist, AudioFormat, FeaturedSection, SearchResult,
     Source, StreamingPlaylist, Track,
 )
-from tune_server.streaming.base import StreamingService
+from tune_server.streaming.base import StreamingService, http_request_with_retry
 from tune_server.streaming.cache import StreamUrlCache
 
 if TYPE_CHECKING:
@@ -62,7 +63,7 @@ class DeezerService(StreamingService):
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            timeout = aiohttp.ClientTimeout(total=settings.api_timeout, connect=10)
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
@@ -71,7 +72,12 @@ class DeezerService(StreamingService):
         session = await self._ensure_session()
         url = f"{DEEZER_API}/{endpoint}"
         try:
-            async with session.get(url, params=params) as resp:
+            resp = await http_request_with_retry(
+                session, "GET", url,
+                params=params,
+                service_name="deezer",
+            )
+            async with resp:
                 if resp.status != 200:
                     logger.warning("deezer_api_error", endpoint=endpoint, status=resp.status)
                     return {}
@@ -93,7 +99,12 @@ class DeezerService(StreamingService):
         }
         cookies = {"arl": self._arl}
         try:
-            async with session.post(DEEZER_GW, params=query, json=params or {}, cookies=cookies) as resp:
+            resp = await http_request_with_retry(
+                session, "POST", DEEZER_GW,
+                params=query, json=params or {}, cookies=cookies,
+                service_name="deezer",
+            )
+            async with resp:
                 if resp.status != 200:
                     return {}
                 data = await resp.json()
@@ -432,8 +443,8 @@ class DeezerService(StreamingService):
 
         session = await self._ensure_session()
         try:
-            async with session.post(
-                f"{DEEZER_MEDIA_URL}/get_url",
+            resp = await http_request_with_retry(
+                session, "POST", f"{DEEZER_MEDIA_URL}/get_url",
                 json={
                     "license_token": self._license_token,
                     "media": [{
@@ -442,7 +453,9 @@ class DeezerService(StreamingService):
                     }],
                     "track_tokens": [token],
                 },
-            ) as resp:
+                service_name="deezer",
+            )
+            async with resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()
