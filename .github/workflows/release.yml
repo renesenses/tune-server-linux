@@ -83,6 +83,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          cp install.sh tune-server.service README.md CHANGELOG.md dist/tune-server/
           cd dist && tar czf "../tune-server-${VERSION}-linux.tar.gz" tune-server/
           cd .. && sha256sum "tune-server-${VERSION}-linux.tar.gz" | awk '{print $1}' > "tune-server-${VERSION}-linux.tar.gz.sha256"
 
@@ -90,6 +91,7 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          cp install.sh README.md CHANGELOG.md dist/tune-server/
           cd dist && tar czf "../tune-server-${VERSION}-macos.tar.gz" tune-server/
           cd .. && shasum -a 256 "tune-server-${VERSION}-macos.tar.gz" | awk '{print $1}' > "tune-server-${VERSION}-macos.tar.gz.sha256"
 
