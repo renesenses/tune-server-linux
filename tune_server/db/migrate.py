@@ -11,7 +11,6 @@ Environment:
 from __future__ import annotations
 
 import asyncio
-import sys
 
 import structlog
 
@@ -94,11 +93,11 @@ async def migrate(source_engine: str, target_engine: str) -> None:
     from tune_server.db.postgres import PostgresDatabase
 
     if source_engine == target_engine:
-        print(f"Source and target are both '{source_engine}'. Nothing to do.")
+        logger.info("migration_noop", engine=source_engine)
         return
 
     # Connect to source
-    print(f"Connecting to source ({source_engine})...")
+    logger.info("connecting_source", engine=source_engine)
     if source_engine == "sqlite":
         source = SQLiteDatabase(settings.db_path)
     else:
@@ -106,7 +105,7 @@ async def migrate(source_engine: str, target_engine: str) -> None:
     await source.connect()
 
     # Connect to target
-    print(f"Connecting to target ({target_engine})...")
+    logger.info("connecting_target", engine=target_engine)
     if target_engine == "sqlite":
         target = SQLiteDatabase(settings.db_path.replace(".db", "_migrated.db"))
     else:
@@ -129,13 +128,13 @@ async def migrate(source_engine: str, target_engine: str) -> None:
                     (table,),
                 )
             if not check:
-                print(f"  {table}: skipped (not in source)")
+                logger.debug("table_skipped", table=table, reason="not in source")
                 continue
 
             # Read all rows from source
             rows = await source.fetchall(f"SELECT * FROM {table}")
             if not rows:
-                print(f"  {table}: 0 rows")
+                logger.debug("table_empty", table=table)
                 continue
 
             # Get column names from first row
@@ -163,11 +162,11 @@ async def migrate(source_engine: str, target_engine: str) -> None:
                 count += len(batch)
 
             total_rows += count
-            print(f"  {table}: {count} rows migrated")
+            logger.info("table_migrated", table=table, rows=count)
 
         # Reset PostgreSQL sequences to max(id) + 1
         if target_engine == "postgres":
-            print("Resetting PostgreSQL sequences...")
+            logger.info("resetting_sequences")
             for table in SERIAL_TABLES:
                 try:
                     row = await target.fetchone(f"SELECT MAX(id) as max_id FROM {table}")
@@ -184,14 +183,12 @@ async def migrate(source_engine: str, target_engine: str) -> None:
 
             await target.commit()
 
-        print(f"\nMigration complete: {total_rows} total rows migrated.")
+        logger.info("migration_complete", total_rows=total_rows)
         if target_engine == "sqlite":
             db_path = settings.db_path.replace(".db", "_migrated.db")
-            print(f"SQLite database written to: {db_path}")
-            print(f"To use it: mv {db_path} {settings.db_path}")
+            logger.info("sqlite_output", path=db_path, hint=f"mv {db_path} {settings.db_path}")
         else:
-            print("PostgreSQL database is ready.")
-            print("Update your config: TUNE_DB_ENGINE=postgres")
+            logger.info("postgres_ready", hint="Update your config: TUNE_DB_ENGINE=postgres")
 
     finally:
         await source.close()

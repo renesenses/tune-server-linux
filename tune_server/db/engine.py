@@ -135,7 +135,7 @@ class SQLiteDatabase:
             "ALTER TABLE tracks ADD COLUMN comment TEXT",
             "ALTER TABLE tracks ADD COLUMN musicbrainz_recording_id TEXT",
             "ALTER TABLE tracks ADD COLUMN acoustid TEXT",
-            "ALTER TABLE tracks ADD COLUMN bpm INTEGER",
+            "ALTER TABLE tracks ADD COLUMN bpm REAL",
             "ALTER TABLE tracks ADD COLUMN label TEXT",
             "ALTER TABLE tracks ADD COLUMN custom_tags TEXT",
             "ALTER TABLE albums ADD COLUMN musicbrainz_release_id TEXT",
