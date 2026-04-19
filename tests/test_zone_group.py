@@ -152,3 +152,132 @@ async def test_list_groups(group_manager, leader, follower1):
     await group_manager.create_group(leader, [follower1])
     groups = group_manager.list_groups()
     assert len(groups) == 1
+
+
+# ---------------------------------------------------------------------------
+# Group sync: play/pause/stop/skip propagation
+# ---------------------------------------------------------------------------
+
+
+async def test_play_propagates_to_all_zones(group, leader, follower1):
+    """play() should call play on leader and all followers."""
+    from tune_server.models import Track
+
+    tracks = [Track(title="Song", track_number=1)]
+    await group.play(tracks)
+    leader.player.play.assert_awaited_once()
+    follower1.player.play.assert_awaited_once()
+
+
+async def test_skip_previous_propagates(group, leader, follower1):
+    """skip_previous() should propagate to all zones."""
+    await group.skip_previous()
+    leader.player.skip_previous.assert_awaited_once()
+    follower1.player.skip_previous.assert_awaited_once()
+
+
+async def test_pause_continues_on_error(event_bus, leader, follower1, follower2):
+    """If one zone raises during pause, the others should still be paused."""
+    leader.player.pause = AsyncMock(side_effect=RuntimeError("oops"))
+
+    group = ZoneGroup("grp-err", leader, [follower1, follower2], event_bus)
+    await group.pause()
+
+    # leader raised, but followers should still have been paused
+    follower1.player.pause.assert_awaited_once()
+    follower2.player.pause.assert_awaited_once()
+
+
+async def test_resume_continues_on_error(event_bus, leader, follower1, follower2):
+    """If one zone raises during resume, the others should still be resumed."""
+    follower1.player.resume = AsyncMock(side_effect=RuntimeError("boom"))
+
+    group = ZoneGroup("grp-err2", leader, [follower1, follower2], event_bus)
+    await group.resume()
+
+    leader.player.resume.assert_awaited_once()
+    follower2.player.resume.assert_awaited_once()
+
+
+async def test_stop_continues_on_error(event_bus, leader, follower1, follower2):
+    """If one zone raises during stop, the others should still be stopped."""
+    follower2.player.stop = AsyncMock(side_effect=RuntimeError("fail"))
+
+    group = ZoneGroup("grp-err3", leader, [follower1, follower2], event_bus)
+    await group.stop()
+
+    leader.player.stop.assert_awaited_once()
+    follower1.player.stop.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Group follower management edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_add_multiple_followers(event_bus, leader, follower1, follower2):
+    """Adding multiple followers sequentially should work."""
+    group = ZoneGroup("grp-multi", leader, [], event_bus)
+    group.add_follower(follower1)
+    group.add_follower(follower2)
+    assert len(group.followers) == 2
+    assert follower1.group_id == "grp-multi"
+    assert follower2.group_id == "grp-multi"
+
+
+def test_remove_follower_not_in_group(group, follower2):
+    """Removing a follower that's not in the group should be a no-op."""
+    original_count = len(group.followers)
+    group.remove_follower(follower2)
+    assert len(group.followers) == original_count
+
+
+# ---------------------------------------------------------------------------
+# GroupManager: dissolve cleans up all zones
+# ---------------------------------------------------------------------------
+
+
+async def test_dissolve_group_emits_event(group_manager, event_bus, leader, follower1):
+    """Dissolving a group should emit ZONE_UNGROUPED event."""
+    events = []
+    event_bus.on(EventType.ZONE_UNGROUPED, lambda e: events.append(e))
+
+    group = await group_manager.create_group(leader, [follower1])
+    gid = group.group_id
+
+    await group_manager.dissolve_group(gid)
+    assert len(events) == 1
+    assert events[0].data["group_id"] == gid
+
+
+async def test_dissolve_nonexistent_group_noop(group_manager):
+    """Dissolving a non-existent group should silently do nothing."""
+    await group_manager.dissolve_group("does-not-exist")
+
+
+async def test_create_group_emits_event(group_manager, event_bus, leader, follower1):
+    """Creating a group should emit ZONE_GROUPED event."""
+    events = []
+    event_bus.on(EventType.ZONE_GROUPED, lambda e: events.append(e))
+
+    group = await group_manager.create_group(leader, [follower1])
+    assert len(events) == 1
+    assert events[0].data["group_id"] == group.group_id
+    assert leader.zone_id in events[0].data["zone_ids"]
+    assert follower1.zone_id in events[0].data["zone_ids"]
+
+
+async def test_create_group_syncs_playing_leader(group_manager, leader, follower1):
+    """When leader is playing, creating a group should sync followers to the same track."""
+    from tune_server.models import Track
+
+    track = Track(title="Playing Track", track_number=1)
+    leader.player.state = PlaybackState.PLAYING
+    leader.player.current_track = track
+    leader.position_ms = 5000
+
+    group = await group_manager.create_group(leader, [follower1])
+
+    # Follower should have had its queue set and track started
+    follower1.player.queue.set_tracks.assert_called_once_with([track])
+    follower1.player._start_track.assert_awaited_once()

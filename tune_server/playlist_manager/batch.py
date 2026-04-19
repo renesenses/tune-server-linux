@@ -151,11 +151,12 @@ async def merge_playlists(
 
         if svc_name == "local":
             rows = await db.fetchall(
-                """SELECT t.title, t.artist_name, t.id as track_id,
+                """SELECT t.title, ar.name as artist_name, t.id as track_id,
                           a.title as album_title, t.duration_ms
                    FROM playlist_tracks pt
                    JOIN tracks t ON t.id = pt.track_id
                    LEFT JOIN albums a ON a.id = t.album_id
+                   LEFT JOIN artists ar ON ar.id = t.artist_id
                    WHERE pt.playlist_id = ?
                    ORDER BY pt.position""",
                 (int(pid),),
