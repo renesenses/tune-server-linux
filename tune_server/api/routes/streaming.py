@@ -29,14 +29,18 @@ def _get_service(service_name: str) -> StreamingService:
     return service
 
 
+_ALL_SERVICES = ["tidal", "qobuz", "youtube", "spotify", "deezer", "amazon"]
+
+
 @router.get("/services", response_model=dict[str, StreamingServiceStatus])
 async def list_services():
     result = {}
-    for name, service in deps.streaming_services.items():
+    for name in _ALL_SERVICES:
+        service = deps.streaming_services.get(name)
         result[name] = StreamingServiceStatus(
-            enabled=True,
-            authenticated=service.is_authenticated,
-            iframe_only=getattr(service, "iframe_only", False),
+            enabled=service is not None,
+            authenticated=service.is_authenticated if service else False,
+            iframe_only=getattr(service, "iframe_only", False) if service else False,
         )
     return result
 
@@ -49,6 +53,68 @@ async def service_status(service_name: str):
         authenticated=service.is_authenticated if service else False,
         iframe_only=getattr(service, "iframe_only", False) if service else False,
     )
+
+
+@router.post("/{service_name}/enable")
+async def enable_service(service_name: str):
+    """Enable a streaming service and persist to .env."""
+    if service_name not in _ALL_SERVICES:
+        raise HTTPException(status_code=404, detail=f"Unknown service: {service_name}")
+    if service_name in deps.streaming_services:
+        return {"status": "already_enabled"}
+
+    from tune_server.config import persist_env_var, settings
+    env_key = f"TUNE_{service_name.upper()}_ENABLED"
+    persist_env_var(env_key, "true")
+
+    # Dynamically start the service
+    _SERVICE_FACTORIES = {
+        "tidal": lambda: __import__("tune_server.streaming.tidal", fromlist=["TidalService"]).TidalService(),
+        "qobuz": lambda: __import__("tune_server.streaming.qobuz", fromlist=["QobuzService"]).QobuzService(),
+        "youtube": lambda: __import__("tune_server.streaming.youtube", fromlist=["YouTubeService"]).YouTubeService(),
+        "spotify": lambda: __import__("tune_server.streaming.spotify", fromlist=["SpotifyService"]).SpotifyService(),
+        "deezer": lambda: __import__("tune_server.streaming.deezer", fromlist=["DeezerService"]).DeezerService(
+            arl=settings.deezer_arl, quality=settings.deezer_quality,
+        ),
+        "amazon": lambda: __import__("tune_server.streaming.amazon", fromlist=["AmazonMusicService"]).AmazonMusicService(),
+    }
+    factory = _SERVICE_FACTORIES.get(service_name)
+    if factory:
+        try:
+            service = factory()
+            deps.streaming_services[service_name] = service
+            # Try to restore auth from DB
+            if deps.db:
+                try:
+                    await service.restore_auth(deps.db)
+                except Exception:
+                    pass
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to start {service_name}: {e}")
+
+    return {"status": "enabled"}
+
+
+@router.post("/{service_name}/disable")
+async def disable_service(service_name: str):
+    """Disable a streaming service and persist to .env."""
+    if service_name not in _ALL_SERVICES:
+        raise HTTPException(status_code=404, detail=f"Unknown service: {service_name}")
+
+    from tune_server.config import persist_env_var
+    env_key = f"TUNE_{service_name.upper()}_ENABLED"
+    persist_env_var(env_key, "false")
+
+    # Remove the running service instance
+    if service_name in deps.streaming_services:
+        service = deps.streaming_services.pop(service_name)
+        if deps.db and hasattr(service, "disconnect"):
+            try:
+                await service.disconnect(deps.db)
+            except Exception:
+                pass
+
+    return {"status": "disabled"}
 
 
 @router.post("/{service_name}/auth", response_model=StreamingAuthResponse)
