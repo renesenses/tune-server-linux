@@ -39,12 +39,14 @@ class AudioPipeline:
         self,
         target_capabilities: AudioCapabilities,
         icy_callback: IcyMetadataCallback | None = None,
+        channel_filter: str | None = None,
     ) -> None:
         self._capabilities = target_capabilities
         self._decisions: list[str] = []
         self._source_hash: str | None = None
         self._output_hash: str | None = None
         self._icy_callback = icy_callback
+        self._channel_filter = channel_filter
         self._decoder: FFmpegDecoder | None = None
         self._output_buffer = AsyncRingBuffer(max_chunks=512)
         self._pipeline_task: asyncio.Task | None = None
@@ -98,6 +100,10 @@ class AudioPipeline:
         if seek_ms > 0:
             self._passthrough = False
             self._decisions.append(f"passthrough=False (seeking to {seek_ms}ms)")
+
+        if self._channel_filter:
+            self._passthrough = False
+            self._decisions.append(f"passthrough=False (channel_filter={self._channel_filter})")
 
         # Resample policy check
         from tune_server.config import settings as _settings
@@ -183,6 +189,7 @@ class AudioPipeline:
                 channels=channels,
                 output_format=out_format if use_flac else None,
                 icy_callback=self._icy_callback if _is_url else None,
+                channel_filter=self._channel_filter,
             )
             await self._decoder.start(seek_ms=seek_ms)
 

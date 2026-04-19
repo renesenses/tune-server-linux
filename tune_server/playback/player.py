@@ -46,6 +46,7 @@ class Player:
         self._skip_in_progress = False
         self._lock = asyncio.Lock()
         self._signal_path: "SignalPath | None" = None
+        self._channel_filter: str | None = None
 
     @property
     def state(self) -> PlaybackState:
@@ -86,6 +87,9 @@ class Player:
 
     def set_volume_change_callback(self, cb: Callable) -> None:
         self._volume_change_cb = cb
+
+    def set_channel_filter(self, channel_filter: str | None) -> None:
+        self._channel_filter = channel_filter
 
     async def _persist_queue(self) -> None:
         """Persist current queue state if callback is set."""
@@ -239,7 +243,7 @@ class Player:
             and hasattr(self._output, 'is_direct_url')):
             pipeline_seek_ms = 0
 
-        self._pipeline = AudioPipeline(capabilities, icy_callback=icy_cb)
+        self._pipeline = AudioPipeline(capabilities, icy_callback=icy_cb, channel_filter=self._channel_filter)
         try:
             stream_info = await asyncio.wait_for(
                 self._pipeline.start(

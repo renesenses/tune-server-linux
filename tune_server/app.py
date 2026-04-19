@@ -121,6 +121,7 @@ class TuneServer:
 
         # Group manager
         self._group_manager = GroupManager(self._event_bus)
+        self._zone_manager.set_group_manager(self._group_manager)
 
         # Sync engine
         self._sync_engine = SyncEngine(self._group_manager)

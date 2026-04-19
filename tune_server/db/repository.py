@@ -872,10 +872,12 @@ class ZoneRepo:
         rows = await self._db.fetchall("SELECT * FROM zones ORDER BY name")
         return [dict(r) for r in rows]
 
-    async def create(self, name: str, output_type: str, output_device_id: str = None) -> int:
+    async def create(self, name: str, output_type: str, output_device_id: str = None,
+                     stereo_pair_id: str = None, stereo_channel: str = None) -> int:
         result = await self._db.execute(
-            "INSERT INTO zones (name, output_type, output_device_id) VALUES (?, ?, ?) RETURNING id",
-            (name, output_type, output_device_id),
+            """INSERT INTO zones (name, output_type, output_device_id, stereo_pair_id, stereo_channel)
+               VALUES (?, ?, ?, ?, ?) RETURNING id""",
+            (name, output_type, output_device_id, stereo_pair_id, stereo_channel),
         )
         await self._db.commit()
         return result.lastrowid

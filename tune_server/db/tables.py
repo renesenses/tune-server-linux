@@ -210,6 +210,8 @@ zones = sa.Table(
     sa.Column("volume", sa.Float, server_default="0.5"),
     sa.Column("group_id", sa.Text),
     sa.Column("sync_delay_ms", sa.Integer, server_default="0"),
+    sa.Column("stereo_pair_id", sa.Text),
+    sa.Column("stereo_channel", sa.Text),
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("queue_json", sa.Text),
     sa.Column("muted", sa.Boolean, server_default=sa.text("FALSE")),
