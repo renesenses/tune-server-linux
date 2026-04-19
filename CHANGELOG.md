@@ -2,6 +2,38 @@
 
 All notable changes to Tune Server.
 
+## v0.6.7 — 2026-04-19
+
+### Stereo Pairing
+- L/R channel split across two DLNA devices via ffmpeg pan filter
+- API: create/dissolve/list stereo pairs
+- Stereo pairs auto-grouped with SyncEngine for tight synchronization
+
+### Zone Manager UI
+- Dedicated zone management page with grid layout
+- Visual zone groups (color-coded borders) and stereo pair L/R badges
+- Group/ungroup zones, create/dissolve stereo pairs from UI
+- Volume sliders, latency measurement, device assignment
+- Unbound devices section for quick zone creation
+
+### Onboarding Wizard
+- 4-step first-launch setup: Welcome → Music Library → Streaming → Done
+- Auto-detected on first launch (empty library + no services)
+- Library scan with progress, streaming service enable + auth inline
+
+### UX Improvements
+- Unified toast notification system (error/success/info, auto-dismiss)
+- Diagnostics page: server health, DB stats, zones, devices, copy to clipboard
+- Global API error handler (5xx + network errors → toast)
+
+### Robustness
+- AirPlay: exponential backoff on reconnect (2s/5s/10s/30s max)
+- Streaming connectors: shared HTTP retry with backoff (Qobuz, Deezer, Amazon, YouTube)
+- Configurable API timeout (TUNE_API_TIMEOUT, default 60s)
+
+### CI
+- Linux/macOS release archives now include install.sh, tune-server.service, README, CHANGELOG
+
 ## v0.6.6 — 2026-04-19
 
 ### Streaming Services
