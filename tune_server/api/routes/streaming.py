@@ -67,6 +67,29 @@ async def enable_service(service_name: str):
     env_key = f"TUNE_{service_name.upper()}_ENABLED"
     persist_env_var(env_key, "true")
 
+    # Persist service-specific config to .env
+    _SERVICE_ENV_DEFAULTS: dict[str, dict[str, str]] = {
+        "tidal": {
+            "TUNE_TIDAL_QUALITY": settings.tidal_quality or "HI_RES_LOSSLESS",
+        },
+        "qobuz": {
+            "TUNE_QOBUZ_APP_ID": settings.qobuz_app_id or "798273057",
+            "TUNE_QOBUZ_APP_SECRET": settings.qobuz_app_secret or "abb21364945c0583309667d13ca3d93a",
+        },
+        "spotify": {
+            "TUNE_SPOTIFY_REDIRECT_URI": settings.spotify_redirect_uri,
+        },
+        "deezer": {
+            "TUNE_DEEZER_QUALITY": settings.deezer_quality or "FLAC",
+        },
+        "amazon": {
+            "TUNE_AMAZON_MUSIC_REGION": settings.amazon_music_region or "us",
+            "TUNE_AMAZON_MUSIC_QUALITY": settings.amazon_music_quality or "HD",
+        },
+    }
+    for key, value in _SERVICE_ENV_DEFAULTS.get(service_name, {}).items():
+        persist_env_var(key, value)
+
     # Dynamically start the service
     _SERVICE_FACTORIES = {
         "tidal": lambda: __import__("tune_server.streaming.tidal", fromlist=["TidalService"]).TidalService(),
