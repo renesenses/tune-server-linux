@@ -2,6 +2,16 @@
 
 All notable changes to Tune Server.
 
+## v0.6.8 — 2026-04-19
+
+### Refactoring
+- Split metadata_manager.py (1900 lines) into sub-package: track_edits, batch, suggestions, covers
+- Remove 10 unused table definitions from ORM (users, sessions, stats, etc.)
+- Replace print() with structured logging in database migration
+- Fix bpm column type (INTEGER → REAL) in SQLite schema
+- Clean 11 stale web asset files from repository
+- Add coverage files to .gitignore
+
 ## v0.6.7 — 2026-04-19
 
 ### Stereo Pairing
