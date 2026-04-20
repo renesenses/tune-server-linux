@@ -645,6 +645,31 @@ Le choix SQLite par défaut est un avantage concret pour l'utilisateur : aucun s
 
 ---
 
+## RAAT vs DLNA — Pourquoi Tune choisit l'ouverture
+
+### RAAT (Roon Advanced Audio Transport)
+Protocole propriétaire de Roon Labs (~2015), conçu spécifiquement pour l'audio. Synchronisation multi-room native (< 1ms), gestion du clock par le endpoint. Techniquement excellent — mais fermé : certification payante pour les fabricants, ~300 appareils compatibles, fonctionne uniquement avec Roon (830$). Si Roon ferme, RAAT disparaît.
+
+### DLNA/UPnP
+Standard ouvert (Sony, Intel, Microsoft, 2003), basé sur HTTP. Des milliers d'appareils compatibles, interopérable avec toutes les applications. Pérenne — 20 ans d'existence. Mais pas conçu pour le multi-room, pas de gestion HTTPS native, et chaque fabricant interprète le standard différemment.
+
+### La valeur ajoutée de Tune
+
+Tune compense les faiblesses de DLNA par logiciel :
+
+| Faiblesse DLNA | Solution Tune |
+|---|---|
+| Pas de sync multi-room | Moteur de sync (polling 100ms, précision < 50ms, compensation latence par appareil) |
+| Pas de HTTPS | Proxy HTTPS→HTTP automatique |
+| Quirks fabricants | Détection auto + comportement adapté par appareil |
+| Métadonnées pauvres | Signal path enrichi + MusicBrainz/Discogs |
+| Pas de vérification signal | Checksum MD5 bout en bout |
+| Pas de gapless standard | SetNextAVTransportURI + fallback pipeline |
+
+**En résumé** : on obtient 90% des bénéfices de RAAT avec 100% de la liberté de DLNA. L'audiophile garde le contrôle de son installation — pas de verrouillage, pas d'abonnement, pas de certification propriétaire.
+
+---
+
 ## Proxy intelligent — L'exemple du Micromega M-One
 
 ### Le problème
