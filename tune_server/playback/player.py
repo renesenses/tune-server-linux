@@ -305,7 +305,7 @@ class Player:
 
     async def _preload_next(self) -> None:
         """Preload the next track in queue for gapless playback."""
-        if not self._gapless or not self._output.capabilities.supports_gapless:
+        if not self._output.capabilities.supports_gapless:
             return
         next_track = self._queue.peek_next()
         if not next_track:
@@ -319,7 +319,40 @@ class Player:
                 return
             if url:
                 next_track.file_path = url
-        if next_track.file_path:
+        if not next_track.file_path:
+            return
+
+        # For direct URL / native DSD passthrough: use DLNA SetNextAVTransportURI
+        source_format = AudioFormat(next_track.format) if next_track.format else AudioFormat.FLAC
+        _native_dsd = (
+            source_format == AudioFormat.DSD
+            and getattr(self._output, "supports_native_dsd", False)
+            and next_track.file_path
+            and not next_track.file_path.startswith("http")
+        )
+        if self._output.supports_direct_url(next_track) or _native_dsd:
+            try:
+                file_size = None
+                if _native_dsd and next_track.file_path:
+                    p = Path(next_track.file_path)
+                    file_size = p.stat().st_size if p.exists() else None
+                next_info = AudioStreamInfo(
+                    format=source_format,
+                    sample_rate=next_track.sample_rate or 44100,
+                    bit_depth=next_track.bit_depth or 16,
+                    channels=next_track.channels or 2,
+                    file_size=file_size,
+                )
+                if hasattr(self._output, 'set_next_track'):
+                    ok = await self._output.set_next_track(next_info, next_track)
+                    if ok:
+                        logger.info("gapless_next_set_direct", track=next_track.title)
+                        return
+            except Exception:
+                logger.exception("gapless_next_direct_error", track=next_track.title)
+
+        # For pipeline-based playback: pre-decode the next track
+        if self._gapless:
             await self._gapless.preload(next_track)
 
     async def _playback_loop(self) -> None:
