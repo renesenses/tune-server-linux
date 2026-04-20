@@ -501,7 +501,7 @@ class TrackRepo:
 
     async def list_by_album(self, album_id: int) -> list[Track]:
         rows = await self._db.fetchall(
-            f"{self._SELECT} WHERE t.album_id = ? ORDER BY t.disc_number, t.track_number",
+            f"{self._SELECT} WHERE t.album_id = ? ORDER BY t.disc_number, t.track_number, t.file_path",
             (album_id,),
         )
         return [_row_to_track(r) for r in rows]
