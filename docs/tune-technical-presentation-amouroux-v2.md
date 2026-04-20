@@ -624,6 +624,27 @@ Fichier/FFmpeg → Buffer (512 KB) → HTTP → Renderer DLNA
 
 ---
 
+## Base de données — Agnostique et zéro config
+
+### Deux moteurs supportés
+
+| | **SQLite** | **PostgreSQL** |
+|---|---|---|
+| **Usage** | Par défaut, fichier local | Serveur dédié, production |
+| **Installation** | Aucune — inclus dans Python | Serveur à installer |
+| **Config** | `TUNE_DB_PATH=tune.db` | `TUNE_DATABASE_URL=postgresql://...` |
+| **Cas d'usage** | Windows, Mac, RPi, iPad, Docker | NAS, serveur Linux multi-utilisateurs |
+
+Le choix est automatique : sans configuration, Tune utilise SQLite (un simple fichier). Les utilisateurs avancés peuvent passer sur PostgreSQL pour de meilleures performances en accès concurrent. Un outil de migration SQLite→PostgreSQL est inclus.
+
+### Pourquoi pas une base objet (MongoDB, CouchDB) ?
+
+Les métadonnées musicales sont intrinsèquement relationnelles : artiste → album → piste, playlists, zones, queue de lecture. Le modèle relationnel est naturel et performant pour ces données structurées. Une base document (MongoDB) ajouterait de la complexité de déploiement sans gain fonctionnel.
+
+Le choix SQLite par défaut est un avantage concret pour l'utilisateur : aucun serveur de base de données à installer, aucune configuration, un seul fichier à sauvegarder. C'est cohérent avec la philosophie de Tune — audiophile-grade sans complexité inutile.
+
+---
+
 ## Proxy intelligent — L'exemple du Micromega M-One
 
 ### Le problème
