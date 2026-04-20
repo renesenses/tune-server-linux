@@ -645,6 +645,22 @@ Le choix SQLite par défaut est un avantage concret pour l'utilisateur : aucun s
 
 ---
 
+## DLNA — Un standard mort-vivant devenu incontournable
+
+**2003** — La Digital Living Network Alliance est fondée par Sony et Intel, rejoints par Microsoft, Samsung, HP, Nokia, Panasonic (~250 membres). But : permettre à tous les appareils domestiques de partager du contenu multimédia sur un réseau local. Base technique : UPnP (Universal Plug and Play, Microsoft 1999) — SSDP pour la découverte, SOAP pour le contrôle, HTTP pour le transport, XML pour les métadonnées.
+
+**2004-2010** — Âge d'or. Tous les TV, lecteurs Blu-ray, consoles (PS3), NAS, amplis intègrent DLNA. La certification est un argument de vente majeur.
+
+**2014** — Le streaming cloud (Spotify, Netflix) rend le partage local moins pertinent. Chromecast et AirPlay grignotent le marché.
+
+**2017** — L'organisation DLNA se dissout officiellement. Mais le protocole survit — trop enraciné dans le hardware existant pour disparaître.
+
+**2020+** — Renaissance dans l'audio HiFi. Les DAC/streamers audiophiles (Linn, dCS, Hegel, EverSolo, Micromega) adoptent massivement DLNA/UPnP comme standard de transport audio. Linn crée OpenHome, une extension du protocole optimisée pour l'audio.
+
+**Aujourd'hui** — DLNA est mort comme organisation, vivant comme standard. Des milliers d'appareils le supportent. C'est le TCP/IP de l'audio réseau domestique — pas sexy mais universel et incontournable. Et c'est exactement ce sur quoi Tune s'appuie.
+
+---
+
 ## RAAT vs DLNA — Pourquoi Tune choisit l'ouverture
 
 ### RAAT (Roon Advanced Audio Transport)
