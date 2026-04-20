@@ -669,6 +669,31 @@ Cette approche s'applique à tous les renderers DLNA qui ont des limitations sim
 
 ---
 
+## Configuration requise
+
+| | **Minimum** | **Recommandé** |
+|---|---|---|
+| **RAM** | 512 MB | 1–2 GB |
+| **CPU** | 1 core | 2 cores |
+| **Stockage** | 100 MB (+ musique) | 200 MB (+ musique) |
+| **OS** | Linux, macOS, Windows | Ubuntu/Mint 22.04+, macOS 13+ |
+| **Python** | 3.11+ (install source) | — (binaire inclus) |
+| **Réseau** | Ethernet ou WiFi | Ethernet (multi-room) |
+
+**Ce qui consomme des ressources :**
+- **Passthrough** (FLAC, DSD natif) : quasi rien — le fichier est relayé tel quel
+- **Transcode** (DSD→PCM, resample) : 1 core FFmpeg par zone active
+- **Scan initial** d'une grande bibliothèque (50 000+ pistes) : RAM + I/O disque
+- **Multi-room** 3+ zones simultanées : CPU + bande passante réseau
+
+**En pratique :**
+- Raspberry Pi 4 (2 GB) : 1–2 zones passthrough, bibliothèque < 20 000 pistes
+- PC recyclé (Core i3, 4 GB) : toutes les fonctionnalités sans limitation
+- iPad (mode serveur embarqué) : fonctionne nativement, pas de PC nécessaire
+- NAS Synology (Docker) : installation headless en arrière-plan
+
+---
+
 ## Pour tester
 
 - **Téléchargement** : [mozaiklabs.fr/download](https://mozaiklabs.fr/download) — binaires Linux, macOS, Windows
