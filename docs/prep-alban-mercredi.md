@@ -109,6 +109,9 @@ C'est même un souhait et un travail à venir. On a déjà des contacts avec des
 | Formats mal annoncés | Heuristique DSD par nom de device |
 | Pas de gapless standard | SetNextAVTransportURI + fallback pipeline |
 
+### "Est-ce que Tune utilise RAAT ?"
+Non. RAAT est fermé, non documenté, non licenciable. Tune communique via DLNA/UPnP, AirPlay et sortie locale (DAC USB). Mais un appareil "Roon Ready" supporte aussi DLNA dans 95% des cas (Linn, dCS, Hegel, EverSolo) — donc Tune peut leur parler, juste pas via RAAT. La seule perte : la sync < 1ms. Notre moteur fait < 50ms — imperceptible à l'oreille.
+
 ### Phrase clé pour Alban
 > "RAAT est techniquement supérieur pour le multi-room — c'est indéniable. Mais c'est un protocole fermé qui crée une dépendance à Roon. DLNA est un standard ouvert, universel et pérenne. Ses faiblesses sont exactement ce que Tune corrige par logiciel. On obtient 90% des bénéfices de RAAT avec 100% de la liberté de DLNA."
 
