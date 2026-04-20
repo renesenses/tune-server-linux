@@ -59,6 +59,7 @@ Le marché du streaming audiophile est dominé par des solutions fermées (Roon,
 - **Stéréo pairing** — séparation des canaux gauche/droite sur deux enceintes DLNA distinctes via filtre FFmpeg
 - **Serveur UPnP/DLNA intégré** — Tune expose votre bibliothèque sur le réseau (port 8080), accessible depuis n'importe quelle app UPnP tierce
 - **DSD natif** — passthrough DSF/DFF vers les renderers compatibles, sans conversion
+- **iPad/iPhone comme serveur autonome** — grâce au framework Hummingbird (serveur HTTP Swift/SwiftNIO embarqué), l'iPad ou l'iPhone devient un vrai serveur musical : API REST, WebSocket temps réel, streaming audio vers les renderers DLNA — sans PC, sans NAS, sans infrastructure. C'est ce qui différencie Tune de jPlay : l'iPad ne se contente pas de contrôler un renderer, il fait tout localement (scan, streaming, multi-room, DLNA).
 - **Développé avec l'IA** — Claude (Anthropic) est co-développeur, accélérant la vitesse d'itération d'un facteur 10
 
 ### Face à la concurrence
