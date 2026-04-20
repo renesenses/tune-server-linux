@@ -624,6 +624,51 @@ Fichier/FFmpeg → Buffer (512 KB) → HTTP → Renderer DLNA
 
 ---
 
+## Proxy intelligent — L'exemple du Micromega M-One
+
+### Le problème
+
+Le Micromega M-One est un excellent ampli/DAC audiophile, mais son module réseau DLNA a des limitations significatives :
+
+- **Pas de HTTPS** — refuse les URL sécurisées. Or Tidal et Qobuz servent exclusivement en HTTPS.
+- **Pas de redirections HTTP** — les CDN envoient des 301/302 avant de servir le flux. Le M-One ne les suit pas.
+- **Stop obligatoire avant Play** — ignore un nouveau flux sans un `Stop` DLNA explicite préalable.
+- **Volume propriétaire** — n'utilise pas le contrôle de volume DLNA standard, mais un protocole HTTP sur le port 7000.
+
+**Conséquence** : sans serveur intermédiaire, le Micromega M-One ne peut tout simplement pas lire Tidal ou Qobuz en DLNA.
+
+### La solution de Tune : proxy HTTPS→HTTP automatique
+
+```
+Tidal/Qobuz CDN (HTTPS + redirections)
+        ↓
+   Tune Server (proxy transparent)
+   ├── Résout les redirections manuellement
+   ├── Relaye le flux HTTPS en HTTP simple
+   └── Sert sur http://tune-server:8080/stream/{id}
+        ↓
+   Micromega M-One (HTTP simple, aucune redirection)
+        ↓
+   Sortie analogique haute qualité
+```
+
+### Détection automatique
+
+Tune identifie automatiquement le Micromega par son nom DLNA et active le mode proxy sans aucune configuration utilisateur :
+
+- **Proxy HTTPS→HTTP** pour tous les flux streaming
+- **Résolution de redirections** : suit les hops manuellement, force HTTP à chaque étape
+- **Stop avant Play** : envoyé uniquement au Micromega (les autres renderers n'en ont pas besoin)
+- **Volume** : requêtes HTTP sur le port 7000 au lieu du DLNA standard
+
+### Pourquoi c'est important
+
+C'est un exemple concret de la valeur ajoutée de Tune : il agit comme une couche d'abstraction intelligente entre les services de streaming et le matériel HiFi. L'utilisateur branche son Micromega, lance Tidal — et ça fonctionne. Sans Tune, il faudrait un serveur tiers ou se limiter aux entrées physiques de l'ampli.
+
+Cette approche s'applique à tous les renderers DLNA qui ont des limitations similaires (pas de HTTPS, codecs limités, quirks UPnP). Tune détecte les capacités de chaque appareil et adapte le flux automatiquement.
+
+---
+
 ## Pour tester
 
 - **Téléchargement** : [mozaiklabs.fr/download](https://mozaiklabs.fr/download) — binaires Linux, macOS, Windows
