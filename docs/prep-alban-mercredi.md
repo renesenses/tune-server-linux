@@ -117,6 +117,25 @@ Non. RAAT est fermé, non documenté, non licenciable. Tune communique via DLNA/
 
 ---
 
+---
+
+## Annexe : Réinventer RAAT ?
+
+### "Pourquoi ne pas créer votre propre protocole audio ?"
+Techniquement faisable, mais pas la bonne stratégie. Un protocole a besoin que les fabricants l'implémentent — Roon a mis 5 ans et des millions pour ~300 appareils. Notre sync DLNA à < 50ms est imperceptible à l'oreille. Le vrai combat c'est les features utilisateur, pas le protocole de transport.
+
+### "Et si un fabricant vous contacte ?"
+Là c'est différent. On peut embarquer Tune directement sur son hardware Linux :
+- **Sortie directe** : Tune écrit sur le DAC via ALSA/I2S — zéro latence réseau
+- **Multi-room entre devices** : protocole sync optimisé (PTP/NTP) entre instances Tune
+- **Interopérabilité** : DLNA/AirPlay maintenus pour les apps tierces
+- C'est le modèle Sonos : protocole propriétaire entre enceintes Sonos, mais compatible AirPlay/DLNA pour le reste
+- Pas de licence, open source — pas de coût récurrent pour le fabricant
+
+On cible un fabricant à la fois, pas un standard universel.
+
+---
+
 ## Checklist démo
 
 - [ ] .18 allumée, v0.6.8, web client à jour
