@@ -61,6 +61,9 @@ class Artist(BaseModel):
     bio: Optional[str] = None
     image_path: Optional[str] = None
     source_id: Optional[str] = None
+    similar_artists: Optional[list[dict]] = None
+    concerts: Optional[list[dict]] = None
+    enrichment_status: Optional[str] = None  # "pending", "enriched", "failed"
 
 
 class Album(BaseModel):

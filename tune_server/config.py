@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     lastfm_api_key: str = ""  # Last.fm API key for metadata enrichment
     enrich_on_scan: bool = False  # Auto-enrich after library scan
 
+    # Artist metadata (mozaiklabs.fr enrichment API)
+    artist_metadata_url: str = "https://mozaiklabs.fr/api/v1/artists"
+    artist_metadata_enabled: bool = True
+
     # Artwork
     artwork_cache_dir: str = "artwork_cache"
 
