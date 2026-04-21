@@ -731,6 +731,37 @@ Cette approche s'applique à tous les renderers DLNA qui ont des limitations sim
 
 ---
 
+## Bande passante des flux audio
+
+### Débits par format
+
+| Format | Résolution | Canaux | Débit |
+|--------|-----------|--------|-------|
+| MP3 320 | 44.1 kHz / 16-bit | 2 | 0.3 Mbit/s |
+| FLAC CD | 44.1 kHz / 16-bit | 2 | ~0.9 Mbit/s |
+| FLAC Hi-Res (Tidal/Qobuz) | 96 kHz / 24-bit | 2 | ~2.5 Mbit/s |
+| FLAC Hi-Res | 192 kHz / 24-bit | 2 | ~4.5 Mbit/s |
+| WAV Hi-Res | 192 kHz / 24-bit | 2 | 9.2 Mbit/s |
+| DSD64 (DSF) | 2.8 MHz / 1-bit | 2 | 5.6 Mbit/s |
+| DSD128 (DSF) | 5.6 MHz / 1-bit | 2 | 11.2 Mbit/s |
+| DSD256 (DSF) | 11.2 MHz / 1-bit | 2 | 22.4 Mbit/s |
+| DSD512 (DSF) | 22.5 MHz / 1-bit | 2 | 44.8 Mbit/s |
+| DSD64 multicanal (5.1) | 2.8 MHz / 1-bit | 6 | 16.9 Mbit/s |
+| FLAC 5.1 | 96 kHz / 24-bit | 6 | ~7.5 Mbit/s |
+
+### Marge réseau
+
+| Réseau | Débit réel | Flux DSD64 simultanés |
+|--------|-----------|----------------------|
+| Ethernet 100 Mbit | 100 Mbit/s | 18 flux |
+| Ethernet Gigabit | 1 000 Mbit/s | 178 flux |
+| WiFi 5 (802.11ac) | ~400 Mbit/s | 71 flux |
+| WiFi 6 (802.11ax) | ~600 Mbit/s | 107 flux |
+
+Même le format le plus gourmand (DSD512 stéréo à 44.8 Mbit/s) passe confortablement sur du WiFi 5. Le FLAC Hi-Res (format le plus courant chez Tidal et Qobuz) ne consomme que 4.5 Mbit/s — négligeable sur n'importe quel réseau moderne. En Ethernet Gigabit, on pourrait streamer 22 flux DSD64 simultanés — largement de quoi couvrir un setup multi-room exigeant.
+
+---
+
 ## Configuration requise
 
 | | **Minimum** | **Recommandé** |
