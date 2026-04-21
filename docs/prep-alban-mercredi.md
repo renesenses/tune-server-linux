@@ -96,6 +96,9 @@ C'est même un souhait et un travail à venir. On a déjà des contacts avec des
 - Universel : des milliers d'appareils compatibles, interopérable
 - **Mais** : pas de sync multi-room native, pas de gestion HTTPS, quirks fabricants
 
+### UPnP — le moteur sous DLNA
+DLNA est le label/certification, UPnP est la technologie. Stack : SSDP (découverte des renderers), UPnP Device Description (capacités XML), SOAP/UPnP AV (contrôle : Play, Pause, Stop, SetAVTransportURI), HTTP (transport audio), GENA (événements). Tune implémente aussi un serveur UPnP MediaServer (port 8080) qui expose la bibliothèque — accessible depuis n'importe quelle app UPnP tierce.
+
 ### Ce que Tune apporte au-dessus de DLNA
 
 | Faiblesse DLNA | Solution Tune |
