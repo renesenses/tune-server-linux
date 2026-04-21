@@ -2,6 +2,25 @@
 
 All notable changes to Tune Server.
 
+## v0.6.9 — 2026-04-21
+
+### Artist Metadata Enrichment
+- AI-powered artist bios via mozaiklabs.fr API (MusicBrainz + Last.fm + Claude)
+- Enriched artist detail page: bio, anecdotes, similar artists, members, discography
+- Similar artists are clickable (navigate to artist if in library)
+- Artist cover art stored locally on mozaiklabs.fr
+- Bio status: frozen for deceased/disbanded artists, auto-refresh for active
+
+### Bug Fixes
+- Fix gapless playback for DSD passthrough and direct URL tracks (SetNextAVTransportURI)
+- Fix album track ordering for box sets (file_path tiebreaker)
+- Deduplicate 14 artist entries (case-insensitive merge)
+
+### All Platforms
+- Web client: enriched artist page with collapsible sections
+- iOS/macOS: ArtistDetailView with metadata loading
+- Flutter/Android: artist detail page with expandable sections, 8 languages
+
 ## v0.6.8 — 2026-04-19
 
 ### Refactoring
