@@ -240,6 +240,13 @@ class TuneServer:
         await self._enricher.start()
         deps.enricher = self._enricher
 
+        # Artist metadata enrichment client (mozaiklabs.fr)
+        if settings.artist_metadata_enabled:
+            from tune_server.metadata.artist_enrichment import ArtistEnrichmentClient
+            self._artist_enrichment = ArtistEnrichmentClient()
+            deps.artist_enrichment = self._artist_enrichment
+            logger.info("artist_enrichment_enabled", url=settings.artist_metadata_url)
+
         # Auto-enrich after library scan
         if settings.enrich_on_scan:
             async def _on_scan_complete(event: Event) -> None:
@@ -441,6 +448,9 @@ class TuneServer:
 
         if self._enricher:
             await self._safe_stop("enricher", self._enricher.stop())
+
+        if hasattr(self, "_artist_enrichment") and self._artist_enrichment:
+            await self._safe_stop("artist_enrichment", self._artist_enrichment.close())
 
         if self._watcher:
             await self._safe_stop("watcher", self._watcher.stop())

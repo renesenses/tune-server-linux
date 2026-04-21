@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from tune_server.library.enrichment import MetadataEnricher
     from tune_server.library.scanner import LibraryScanner
     from tune_server.library.watcher import FileSystemWatcher
+    from tune_server.metadata.artist_enrichment import ArtistEnrichmentClient
     from tune_server.network.mount_manager import MountManager
     from tune_server.streaming.base import StreamingService
     from tune_server.updater import UpdateChecker
@@ -33,6 +34,7 @@ class AppDeps:
         self.enricher: MetadataEnricher | None = None
         self.stream_url_resolver: object | None = None  # StreamUrlResolver callable
         self.update_checker: UpdateChecker | None = None
+        self.artist_enrichment: ArtistEnrichmentClient | None = None
 
         # Repos (set after DB init)
         self.track_repo: TrackRepo | None = None
