@@ -64,6 +64,12 @@ class ArtistEnrichmentClient:
             return cached
         data = await self._request(f"/{mbid}")
         if data and isinstance(data, dict):
+            # Fix relative image URLs from mozaiklabs.fr
+            inner = data.get("data", data)
+            img = inner.get("image_url", "")
+            if img and img.startswith("/storage/"):
+                base = self._base_url.rsplit("/api/", 1)[0]  # https://mozaiklabs.fr
+                inner["image_url"] = f"{base}{img}"
             self._cache_set(mbid, data)
             return data
         return None
