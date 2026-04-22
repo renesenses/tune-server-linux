@@ -74,7 +74,7 @@ async def enable_service(service_name: str):
         },
         "qobuz": {
             "TUNE_QOBUZ_APP_ID": settings.qobuz_app_id or "798273057",
-            "TUNE_QOBUZ_APP_SECRET": settings.qobuz_app_secret or "abb21364945c0583309667d13ca3d93a",
+            "TUNE_QOBUZ_APP_SECRET": settings.qobuz_app_secret or "05a4851e74ee47fda346f50cfdfc4f09",
         },
         "spotify": {
             "TUNE_SPOTIFY_REDIRECT_URI": settings.spotify_redirect_uri,
