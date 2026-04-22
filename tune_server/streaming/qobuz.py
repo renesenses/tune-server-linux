@@ -24,12 +24,15 @@ QOBUZ_API_BASE = "https://www.qobuz.com/api.json/0.2"
 class QobuzService(StreamingService):
     """Qobuz streaming service integration using aiohttp."""
 
+    _REMOTE_CONFIG_URL = "https://mozaiklabs.fr/storage/api/v1/streaming-config.json"
+
     def __init__(self) -> None:
         self._app_id = settings.qobuz_app_id or ""
         self._app_secret = settings.qobuz_app_secret or ""
         self._user_auth_token: str | None = None
         self._session: aiohttp.ClientSession | None = None
         self._url_cache = StreamUrlCache(ttl_seconds=240)
+        self._credentials_refreshed = False
 
     @property
     def name(self) -> str:
@@ -68,9 +71,33 @@ class QobuzService(StreamingService):
             resp.raise_for_status()
             return await resp.json()
 
+    async def _refresh_credentials(self) -> None:
+        """Fetch latest Qobuz app credentials from mozaiklabs.fr."""
+        if self._credentials_refreshed:
+            return
+        try:
+            session = await self._ensure_session()
+            async with session.get(self._REMOTE_CONFIG_URL, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    qobuz = data.get("qobuz", {})
+                    new_id = qobuz.get("app_id")
+                    new_secret = qobuz.get("app_secret")
+                    if new_id and new_secret:
+                        if new_id != self._app_id or new_secret != self._app_secret:
+                            logger.info("qobuz_credentials_updated", old_id=self._app_id[:4], new_id=new_id[:4])
+                        self._app_id = new_id
+                        self._app_secret = new_secret
+            self._credentials_refreshed = True
+        except Exception:
+            logger.debug("qobuz_remote_config_unavailable")
+
     async def authenticate(self, **kwargs) -> bool:
         username = kwargs.get("username", "")
         password = kwargs.get("password", "")
+
+        # Auto-refresh credentials from mozaiklabs.fr
+        await self._refresh_credentials()
 
         if not self._app_id or not self._app_secret:
             logger.warning("qobuz_credentials_missing")
@@ -284,6 +311,7 @@ class QobuzService(StreamingService):
             logger.exception("qobuz_save_auth_error")
 
     async def restore_auth(self, db: Database) -> bool:
+        await self._refresh_credentials()
         try:
             row = await db.fetchone(
                 "SELECT token_data FROM streaming_auth WHERE service = ?", ("qobuz",)

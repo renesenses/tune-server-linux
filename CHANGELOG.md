@@ -2,6 +2,34 @@
 
 All notable changes to Tune Server.
 
+## v0.7.0 — 2026-04-22
+
+### Qobuz Auto-Update Credentials
+- App secret auto-refreshed from mozaiklabs.fr at startup/auth
+- No more manual release needed when Qobuz changes their API secret
+
+### Artist Metadata (AI-powered)
+- Enriched artist pages: bio, anecdotes, similar artists, members, discography
+- Wikipedia images (replaces Last.fm placeholders)
+- Bio status: frozen for deceased/disbanded, auto-refresh for active
+- Available on all platforms (web, iOS, macOS, Android)
+
+### Bug Fixes
+- Fix macOS folder picker (NSOpenPanel instead of fileImporter)
+- Fix 500 error on Windows (missing Path import in sa_engine)
+- Fix 500 on library (missing albums.format column migration for SA engine)
+- Fix artist page wheel-of-death on macOS (10s timeout + MainActor)
+- Fix relative image URLs from mozaiklabs.fr
+- Fix gapless DSD passthrough (SetNextAVTransportURI)
+- Fix album track ordering for box sets (file_path tiebreaker)
+- Deduplicate 14 artist entries
+
+### Documentation
+- Mermaid.js diagrams on mozaiklabs.fr
+- Architecture docs linked from homepage + nav menu
+- Keyboard shortcuts page
+- Prep documentation for press
+
 ## v0.6.9 — 2026-04-21
 
 ### Artist Metadata Enrichment
