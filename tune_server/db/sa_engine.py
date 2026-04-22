@@ -8,6 +8,7 @@ Supports SQLite (aiosqlite), PostgreSQL (asyncpg), and any SA-supported async di
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 import sqlalchemy as sa
@@ -138,6 +139,9 @@ class SADatabase:
         async with self._engine.begin() as conn:
             await conn.run_sync(metadata.create_all)
 
+        # Migrate: add missing columns to existing tables
+        await self._run_column_migrations()
+
         # Migrate: drop FK on zones.output_device_id (SQLite requires table rebuild)
         if self.engine_name == "sqlite":
             await self._migrate_zones_drop_fk()
@@ -149,6 +153,32 @@ class SADatabase:
 
         logger.info("database_connected", engine=self.engine_name,
                      url=self._sa_url.split("@")[-1] if "@" in self._sa_url else self._sa_url)
+
+    async def _run_column_migrations(self) -> None:
+        """Add missing columns to existing tables (SA create_all only creates new tables)."""
+        migrations = [
+            "ALTER TABLE albums ADD COLUMN format TEXT",
+            "ALTER TABLE albums ADD COLUMN sample_rate INTEGER",
+            "ALTER TABLE albums ADD COLUMN bit_depth INTEGER",
+            "ALTER TABLE albums ADD COLUMN artist_name TEXT",
+            "ALTER TABLE albums ADD COLUMN musicbrainz_release_id TEXT",
+            "ALTER TABLE albums ADD COLUMN label TEXT",
+            "ALTER TABLE albums ADD COLUMN catalog_number TEXT",
+            "ALTER TABLE albums ADD COLUMN barcode TEXT",
+            "ALTER TABLE artists ADD COLUMN musicbrainz_id TEXT",
+            "ALTER TABLE artists ADD COLUMN discogs_id TEXT",
+            "ALTER TABLE artists ADD COLUMN bio TEXT",
+            "ALTER TABLE artists ADD COLUMN image_path TEXT",
+            "ALTER TABLE artists ADD COLUMN sort_name TEXT",
+            "ALTER TABLE zones ADD COLUMN stereo_pair_id TEXT",
+            "ALTER TABLE zones ADD COLUMN stereo_channel TEXT",
+        ]
+        async with self._engine.begin() as conn:
+            for sql in migrations:
+                try:
+                    await conn.execute(sa.text(sql))
+                except Exception:
+                    pass  # Column already exists
 
     async def _migrate_zones_drop_fk(self) -> None:
         """Remove FK constraint on zones.output_device_id for existing SQLite DBs."""
