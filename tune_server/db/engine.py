@@ -142,6 +142,12 @@ class SQLiteDatabase:
             "ALTER TABLE albums ADD COLUMN label TEXT",
             "ALTER TABLE albums ADD COLUMN catalog_number TEXT",
             "ALTER TABLE albums ADD COLUMN barcode TEXT",
+            # Artist metadata
+            "ALTER TABLE artists ADD COLUMN musicbrainz_id TEXT",
+            "ALTER TABLE artists ADD COLUMN discogs_id TEXT",
+            "ALTER TABLE artists ADD COLUMN bio TEXT",
+            "ALTER TABLE artists ADD COLUMN image_path TEXT",
+            "ALTER TABLE artists ADD COLUMN sort_name TEXT",
         ]
         for sql in migrations:
             try:

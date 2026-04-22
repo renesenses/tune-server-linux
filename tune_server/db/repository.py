@@ -14,11 +14,11 @@ def _row_to_artist(row) -> Artist:
     return Artist(
         id=row["id"],
         name=row["name"],
-        sort_name=row["sort_name"],
-        musicbrainz_id=row["musicbrainz_id"],
-        discogs_id=row["discogs_id"],
-        bio=row["bio"],
-        image_path=row["image_path"],
+        sort_name=row.get("sort_name"),
+        musicbrainz_id=row.get("musicbrainz_id"),
+        discogs_id=row.get("discogs_id"),
+        bio=row.get("bio"),
+        image_path=row.get("image_path"),
     )
 
 
