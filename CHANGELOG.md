@@ -2,6 +2,28 @@
 
 All notable changes to Tune Server.
 
+## v0.7.1 — 2026-04-23
+
+### Track Credits
+- Multiple artists per track with roles and instruments
+- Extract credits from PERFORMER (Vorbis/FLAC), TMCL/TIPL (ID3v2.4), COMPOSER/CONDUCTOR tags
+- API: GET /tracks/{id}/credits, GET /artists/{id}/credits
+- TrackCreditRepo with full CRUD
+
+### Setup Wizards
+- SMB/NAS wizard: scan network, credentials, mount, add to library (4 steps)
+- Local folder wizard: path input with platform hints, add & scan (3 steps)
+- Integrated in Settings with two buttons
+
+### Artist Images
+- Wikipedia disambiguation for musicians (Prince, Air, etc.)
+- Search API fallback for rare artist names
+- Don't skip frozen artists when image is missing
+
+### Qobuz
+- Auto-refresh app_secret via daily cron on mozaiklabs.fr
+- Updated to current production secret
+
 ## v0.7.0 — 2026-04-22
 
 ### Qobuz Auto-Update Credentials
