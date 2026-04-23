@@ -223,6 +223,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_album ON user_favorites(user_id, 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_fav_artist ON user_favorites(user_id, artist_id) WHERE artist_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_user_favorites_user ON user_favorites(user_id);
 
+-- Track credits (multiple artists per track with roles/instruments)
+CREATE TABLE IF NOT EXISTS track_credits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    artist_id INTEGER REFERENCES artists(id) ON DELETE SET NULL,
+    artist_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'performer',
+    instrument TEXT,
+    position INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_track_credits_track ON track_credits(track_id);
+CREATE INDEX IF NOT EXISTS idx_track_credits_artist ON track_credits(artist_id);
+
 -- Performance indexes (v0.6.1)
 CREATE INDEX IF NOT EXISTS idx_albums_created_at ON albums(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_albums_genre ON albums(genre);

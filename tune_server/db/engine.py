@@ -380,6 +380,26 @@ class SQLiteDatabase:
         """)
         await self.commit()
 
+        # Track credits (multiple artists per track with roles/instruments)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS track_credits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                artist_id INTEGER REFERENCES artists(id) ON DELETE SET NULL,
+                artist_name TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'performer',
+                instrument TEXT,
+                position INTEGER DEFAULT 0
+            )
+        """)
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_track_credits_track ON track_credits(track_id)"
+        )
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_track_credits_artist ON track_credits(artist_id)"
+        )
+        await self.commit()
+
     # ------------------------------------------------------------------
     # Backup (SQLite-specific, file-based)
     # ------------------------------------------------------------------

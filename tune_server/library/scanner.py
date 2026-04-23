@@ -7,12 +7,12 @@ from pathlib import Path
 import structlog
 
 from tune_server.db.engine import Database
-from tune_server.db.repository import AlbumRepo, ArtistRepo, TrackRepo
+from tune_server.db.repository import AlbumRepo, ArtistRepo, TrackCreditRepo, TrackRepo
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork
 from tune_server.library.metadata_reader import SUPPORTED_EXTENSIONS, read_metadata
 from tune_server.config import settings
-from tune_server.models import Track
+from tune_server.models import Track, TrackCredit
 
 logger = structlog.get_logger()
 
@@ -79,12 +79,14 @@ def _list_audio_files(dir_path: Path) -> list[Path]:
 
 
 class LibraryScanner:
-    def __init__(self, db: Database, event_bus: EventBus) -> None:
+    def __init__(self, db: Database, event_bus: EventBus,
+                 credit_repo: TrackCreditRepo | None = None) -> None:
         self._db = db
         self._event_bus = event_bus
         self._artist_repo = ArtistRepo(db)
         self._album_repo = AlbumRepo(db)
         self._track_repo = TrackRepo(db)
+        self._credit_repo = credit_repo
         self._scanning = False
         self._lock = asyncio.Lock()
 
@@ -315,6 +317,28 @@ class LibraryScanner:
 
             # Update album track count
             await self._album_repo.update_track_count(album.id)
+
+            # Save track credits
+            if self._credit_repo and metadata.credits:
+                try:
+                    credit_models: list[TrackCredit] = []
+                    for pos, cred in enumerate(metadata.credits):
+                        cred_name = cred.get("name", "").strip()
+                        if not cred_name:
+                            continue
+                        cred_artist = await self._artist_repo.get_or_create(cred_name)
+                        credit_models.append(TrackCredit(
+                            track_id=track_id,
+                            artist_id=cred_artist.id,
+                            artist_name=cred_name,
+                            role=cred.get("role", "performer"),
+                            instrument=cred.get("instrument"),
+                            position=pos,
+                        ))
+                    if credit_models:
+                        await self._credit_repo.add_many(credit_models)
+                except Exception:
+                    logger.warning("credit_save_error", track_id=track_id, path=file_path, exc_info=True)
 
         # --- Artwork: NO lock held (can be slow, especially MusicBrainz) ---
         async with self._lock:

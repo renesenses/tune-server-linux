@@ -36,6 +36,7 @@ class TrackMetadata:
     bit_depth: int
     channels: int
     has_cover: bool
+    credits: list[dict] | None = None
 
 
 def _get_first(tags: dict, keys: list[str], default: str = "") -> str:
@@ -74,6 +75,107 @@ def _detect_format(path: Path) -> str:
         ".dff": "dsd",
     }
     return format_map.get(ext, ext.lstrip("."))
+
+
+def _parse_credit_string(value: str) -> dict | None:
+    """Parse a credit string like 'John Doe (guitar)' into {name, instrument}.
+
+    Returns None if the string is empty or unparseable.
+    """
+    value = value.strip()
+    if not value:
+        return None
+    # Match "Name (instrument)" pattern
+    if value.endswith(")") and "(" in value:
+        idx = value.rfind("(")
+        name = value[:idx].strip()
+        instrument = value[idx + 1:-1].strip()
+        if name and instrument:
+            return {"name": name, "role": "performer", "instrument": instrument}
+    # No parenthesized instrument — just a name
+    if value:
+        return {"name": value, "role": "performer", "instrument": None}
+    return None
+
+
+def _extract_credits(audio, tags) -> list[dict]:
+    """Extract credits from audio tags. Returns list of {name, role, instrument}."""
+    credits: list[dict] = []
+
+    try:
+        if isinstance(audio, (FLAC, OggVorbis)):
+            # PERFORMER tag: "Name (instrument)"
+            performers = tags.get("performer") or tags.get("PERFORMER") or []
+            if isinstance(performers, str):
+                performers = [performers]
+            for perf in performers:
+                parsed = _parse_credit_string(str(perf))
+                if parsed:
+                    credits.append(parsed)
+
+            # COMPOSER tag -> role=composer
+            composers = tags.get("composer") or tags.get("COMPOSER") or []
+            if isinstance(composers, str):
+                composers = [composers]
+            for comp in composers:
+                name = str(comp).strip()
+                if name:
+                    credits.append({"name": name, "role": "composer", "instrument": None})
+
+            # CONDUCTOR tag -> role=conductor
+            conductors = tags.get("conductor") or tags.get("CONDUCTOR") or []
+            if isinstance(conductors, str):
+                conductors = [conductors]
+            for cond in conductors:
+                name = str(cond).strip()
+                if name:
+                    credits.append({"name": name, "role": "conductor", "instrument": None})
+
+            # LYRICIST tag -> role=lyricist
+            lyricists = tags.get("lyricist") or tags.get("LYRICIST") or []
+            if isinstance(lyricists, str):
+                lyricists = [lyricists]
+            for lyr in lyricists:
+                name = str(lyr).strip()
+                if name:
+                    credits.append({"name": name, "role": "lyricist", "instrument": None})
+
+        elif isinstance(audio, MP3):
+            # TMCL frame: musician credits list (ID3v2.4)
+            for key, frame in (tags or {}).items():
+                if key.startswith("TMCL"):
+                    # TMCL contains pairs: [[instrument, name], ...]
+                    people = getattr(frame, "people", None)
+                    if people:
+                        for instrument, name in people:
+                            name = str(name).strip()
+                            instrument = str(instrument).strip()
+                            if name:
+                                credits.append({
+                                    "name": name,
+                                    "role": "performer",
+                                    "instrument": instrument or None,
+                                })
+                elif key.startswith("TIPL"):
+                    # TIPL: involved people list (producer, mixer, etc.)
+                    people = getattr(frame, "people", None)
+                    if people:
+                        for role, name in people:
+                            name = str(name).strip()
+                            role_str = str(role).strip().lower()
+                            if name:
+                                credits.append({
+                                    "name": name,
+                                    "role": role_str or "other",
+                                    "instrument": None,
+                                })
+
+        # MP4: skip (no standard credit tags)
+
+    except Exception:
+        logger.debug("credit_extraction_error", exc_info=True)
+
+    return credits
 
 
 def read_metadata(file_path: str) -> Optional[TrackMetadata]:
@@ -171,6 +273,9 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
         duration_ms = int(info.length * 1000) if hasattr(info, "length") else 0
         channels = getattr(info, "channels", 2)
 
+        # Extract credits from tags
+        extracted_credits = _extract_credits(audio, tags)
+
         return TrackMetadata(
             title=str(title),
             artist=str(artist),
@@ -186,6 +291,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             bit_depth=bit_depth or 16,
             channels=channels or 2,
             has_cover=has_cover,
+            credits=extracted_credits if extracted_credits else None,
         )
 
     except Exception:

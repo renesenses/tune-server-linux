@@ -84,6 +84,16 @@ class Album(BaseModel):
     quality: Optional[str] = None  # "hi-res", "cd", "lossy"
 
 
+class TrackCredit(BaseModel):
+    id: Optional[int] = None
+    track_id: Optional[int] = None
+    artist_id: Optional[int] = None
+    artist_name: str = ""
+    role: str = "performer"
+    instrument: Optional[str] = None
+    position: int = 0
+
+
 class Track(BaseModel):
     id: Optional[int] = None
     title: str
@@ -103,6 +113,7 @@ class Track(BaseModel):
     source: Source = Source.LOCAL
     source_id: Optional[str] = None
     isrc: Optional[str] = None
+    credits: list[TrackCredit] | None = None
 
 
 class Playlist(BaseModel):

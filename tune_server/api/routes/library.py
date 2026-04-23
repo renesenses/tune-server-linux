@@ -27,6 +27,7 @@ from tune_server.models import (
     LibraryStatsResponse,
     SearchResult,
     Track,
+    TrackCredit,
     TrackUpdateRequest,
 )
 
@@ -46,6 +47,16 @@ async def get_track(track_id: int):
         raise HTTPException(status_code=404, detail="Track not found")
     return track
 
+
+
+@router.get("/tracks/{track_id}/credits", response_model=list[TrackCredit])
+async def get_track_credits(track_id: int):
+    track = await deps.track_repo.get(track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="Track not found")
+    if not deps.credit_repo:
+        return []
+    return await deps.credit_repo.list_by_track(track_id)
 
 
 @router.get("/tracks/{track_id}/audio")
@@ -163,6 +174,16 @@ async def get_artist_albums(artist_id: int):
 @router.get("/artists/{artist_id}/tracks", response_model=list[Track])
 async def get_artist_tracks(artist_id: int):
     return await deps.track_repo.list_by_artist(artist_id)
+
+
+@router.get("/artists/{artist_id}/credits", response_model=list[TrackCredit])
+async def get_artist_credits(artist_id: int):
+    artist = await deps.artist_repo.get(artist_id)
+    if not artist:
+        raise HTTPException(status_code=404, detail="Artist not found")
+    if not deps.credit_repo:
+        return []
+    return await deps.credit_repo.list_by_artist(artist_id)
 
 
 @router.get("/search", response_model=SearchResult)

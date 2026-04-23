@@ -17,6 +17,7 @@ from tune_server.db.repository import (
     PlayQueueRepo,
     RadioFavoriteRepo,
     RadioStationRepo,
+    TrackCreditRepo,
     TrackRepo,
     ZoneRepo,
 )
@@ -113,8 +114,11 @@ class TuneServer:
         playlist_repo = SAPlaylistRepo(self._db)
         radio_repo = SARadioStationRepo(self._db)
 
+        # Track credit repo
+        credit_repo = TrackCreditRepo(self._db)
+
         # Library scanner
-        self._scanner = LibraryScanner(self._db, self._event_bus)
+        self._scanner = LibraryScanner(self._db, self._event_bus, credit_repo=credit_repo)
 
         # Zone manager
         self._zone_manager = ZoneManager(self._db, self._event_bus)
@@ -207,6 +211,7 @@ class TuneServer:
         deps.queue_repo = queue_repo
         deps.zone_repo = zone_repo
         deps.radio_repo = radio_repo
+        deps.credit_repo = credit_repo
         from tune_server.db.sa_repository import SARadioFavoriteRepo
         deps.radio_fav_repo = SARadioFavoriteRepo(self._db)
 

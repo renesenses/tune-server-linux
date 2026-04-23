@@ -180,6 +180,19 @@ class SADatabase:
                 except Exception:
                     pass  # Column already exists
 
+        # Track credits table (idempotent via CREATE TABLE IF NOT EXISTS in SA metadata.create_all)
+        # Ensure indexes exist for older databases
+        index_sqls = [
+            "CREATE INDEX IF NOT EXISTS idx_track_credits_track ON track_credits(track_id)",
+            "CREATE INDEX IF NOT EXISTS idx_track_credits_artist ON track_credits(artist_id)",
+        ]
+        async with self._engine.begin() as conn:
+            for sql in index_sqls:
+                try:
+                    await conn.execute(sa.text(sql))
+                except Exception:
+                    pass
+
     async def _migrate_zones_drop_fk(self) -> None:
         """Remove FK constraint on zones.output_device_id for existing SQLite DBs."""
         async with self._engine.begin() as conn:

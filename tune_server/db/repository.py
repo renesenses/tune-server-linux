@@ -5,7 +5,7 @@ from typing import Optional
 import structlog
 
 from tune_server.db.engine import Database
-from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track
+from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track, TrackCredit
 
 logger = structlog.get_logger()
 
@@ -1126,6 +1126,75 @@ class RadioStationRepo:
     async def count(self) -> int:
         row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM radio_stations")
         return row["cnt"]
+
+
+def _row_to_track_credit(row) -> TrackCredit:
+    return TrackCredit(
+        id=row["id"],
+        track_id=row["track_id"],
+        artist_id=row["artist_id"],
+        artist_name=row["artist_name"],
+        role=row["role"],
+        instrument=row.get("instrument"),
+        position=row["position"],
+    )
+
+
+class TrackCreditRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def list_by_track(self, track_id: int) -> list[TrackCredit]:
+        rows = await self._db.fetchall(
+            "SELECT * FROM track_credits WHERE track_id = ? ORDER BY position",
+            (track_id,),
+        )
+        return [_row_to_track_credit(r) for r in rows]
+
+    async def list_by_artist(self, artist_id: int) -> list[TrackCredit]:
+        rows = await self._db.fetchall(
+            "SELECT * FROM track_credits WHERE artist_id = ? ORDER BY track_id, position",
+            (artist_id,),
+        )
+        return [_row_to_track_credit(r) for r in rows]
+
+    async def add(self, credit: TrackCredit) -> int:
+        result = await self._db.execute(
+            """INSERT INTO track_credits (track_id, artist_id, artist_name, role, instrument, position)
+               VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
+            (credit.track_id, credit.artist_id, credit.artist_name,
+             credit.role, credit.instrument, credit.position),
+        )
+        await self._db.commit()
+        return result.lastrowid
+
+    async def add_many(self, credits: list[TrackCredit]) -> None:
+        if not credits:
+            return
+        await self._db.executemany(
+            """INSERT INTO track_credits (track_id, artist_id, artist_name, role, instrument, position)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (c.track_id, c.artist_id, c.artist_name, c.role, c.instrument, c.position)
+                for c in credits
+            ],
+        )
+        await self._db.commit()
+
+    async def delete_by_track(self, track_id: int) -> None:
+        await self._db.execute(
+            "DELETE FROM track_credits WHERE track_id = ?", (track_id,)
+        )
+        await self._db.commit()
+
+    async def get_instruments_for_artist(self, artist_id: int) -> list[str]:
+        rows = await self._db.fetchall(
+            """SELECT DISTINCT instrument FROM track_credits
+               WHERE artist_id = ? AND instrument IS NOT NULL
+               ORDER BY instrument""",
+            (artist_id,),
+        )
+        return [r["instrument"] for r in rows]
 
 
 async def full_text_search(db: Database, query: str, limit: int = 50) -> SearchResult:

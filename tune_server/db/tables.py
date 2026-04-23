@@ -126,6 +126,33 @@ sa.Index("idx_tracks_format_sr", tracks.c.format, tracks.c.sample_rate)
 sa.Index("idx_tracks_audio_hash", tracks.c.audio_hash)
 
 # ---------------------------------------------------------------------------
+# track_credits
+# ---------------------------------------------------------------------------
+track_credits = sa.Table(
+    "track_credits",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column(
+        "track_id",
+        sa.Integer,
+        sa.ForeignKey("tracks.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column(
+        "artist_id",
+        sa.Integer,
+        sa.ForeignKey("artists.id", ondelete="SET NULL"),
+    ),
+    sa.Column("artist_name", sa.Text, nullable=False),
+    sa.Column("role", sa.Text, nullable=False, server_default="performer"),
+    sa.Column("instrument", sa.Text),
+    sa.Column("position", sa.Integer, server_default="0"),
+)
+
+sa.Index("idx_track_credits_track", track_credits.c.track_id)
+sa.Index("idx_track_credits_artist", track_credits.c.artist_id)
+
+# ---------------------------------------------------------------------------
 # playlists
 # ---------------------------------------------------------------------------
 playlists = sa.Table(
