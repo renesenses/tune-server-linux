@@ -98,6 +98,18 @@ def _parse_credit_string(value: str) -> dict | None:
     return None
 
 
+def _safe_tag_get(tags, *keys):
+    """Safely get a tag value, handling mutagen ValueError on invalid keys."""
+    for key in keys:
+        try:
+            val = tags.get(key)
+            if val:
+                return val
+        except (ValueError, KeyError):
+            pass
+    return []
+
+
 def _extract_credits(audio, tags) -> list[dict]:
     """Extract credits from audio tags. Returns list of {name, role, instrument}."""
     credits: list[dict] = []
@@ -105,7 +117,7 @@ def _extract_credits(audio, tags) -> list[dict]:
     try:
         if isinstance(audio, (FLAC, OggVorbis)):
             # PERFORMER tag: "Name (instrument)"
-            performers = tags.get("performer") or tags.get("PERFORMER") or []
+            performers = _safe_tag_get(tags, "performer", "PERFORMER")
             if isinstance(performers, str):
                 performers = [performers]
             for perf in performers:
@@ -114,7 +126,7 @@ def _extract_credits(audio, tags) -> list[dict]:
                     credits.append(parsed)
 
             # COMPOSER tag -> role=composer
-            composers = tags.get("composer") or tags.get("COMPOSER") or []
+            composers = _safe_tag_get(tags, "composer", "COMPOSER")
             if isinstance(composers, str):
                 composers = [composers]
             for comp in composers:
@@ -123,7 +135,7 @@ def _extract_credits(audio, tags) -> list[dict]:
                     credits.append({"name": name, "role": "composer", "instrument": None})
 
             # CONDUCTOR tag -> role=conductor
-            conductors = tags.get("conductor") or tags.get("CONDUCTOR") or []
+            conductors = _safe_tag_get(tags, "conductor", "CONDUCTOR")
             if isinstance(conductors, str):
                 conductors = [conductors]
             for cond in conductors:
@@ -132,7 +144,7 @@ def _extract_credits(audio, tags) -> list[dict]:
                     credits.append({"name": name, "role": "conductor", "instrument": None})
 
             # LYRICIST tag -> role=lyricist
-            lyricists = tags.get("lyricist") or tags.get("LYRICIST") or []
+            lyricists = _safe_tag_get(tags, "lyricist", "LYRICIST")
             if isinstance(lyricists, str):
                 lyricists = [lyricists]
             for lyr in lyricists:
