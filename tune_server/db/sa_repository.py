@@ -287,7 +287,12 @@ class SAAlbumRepo:
             sa.select(tracks.c.format)
             .where(tracks.c.album_id == albums.c.id)
             .where(tracks.c.format.isnot(None))
-            .order_by(tracks.c.sample_rate.desc().nullslast(), tracks.c.bit_depth.desc().nullslast())
+            .order_by(
+                sa.case((tracks.c.sample_rate.is_(None), 1), else_=0),
+                tracks.c.sample_rate.desc(),
+                sa.case((tracks.c.bit_depth.is_(None), 1), else_=0),
+                tracks.c.bit_depth.desc(),
+            )
             .limit(1)
             .correlate(albums)
             .scalar_subquery()
@@ -379,7 +384,7 @@ class SAAlbumRepo:
         stmt = (
             self._album_select()
             .where(albums.c.artist_id == artist_id)
-            .order_by(albums.c.year.desc().nullslast(), albums.c.title)
+            .order_by(sa.case((albums.c.year.is_(None), 1), else_=0), albums.c.year.desc(), albums.c.title)
         )
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_album(r) for r in rows]
