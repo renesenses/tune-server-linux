@@ -562,7 +562,7 @@ class Player:
         current = self._queue.current
         if (current and current.source_id and self._stream_url_resolver
                 and current.duration_ms and self.position_ms < current.duration_ms * 0.9
-                and not self._output.supports_direct_url(current)):
+                and self._output and not self._output.supports_direct_url(current)):
             try:
                 new_url = await asyncio.wait_for(
                     self._stream_url_resolver(current), timeout=10
@@ -658,19 +658,17 @@ class Player:
                 if next_track:
                     await self._persist_queue()
                     await self._stop_pipeline()
-            if next_track:
-                await self._event_bus.emit(Event(
-                    type=EventType.PLAYBACK_TRACK_CHANGED,
-                    data={
-                        "zone_id": self._zone_id,
-                        "track_id": next_track.id,
-                        "track_title": next_track.title,
-                    },
-                    source="player",
-                ))
-                await self._start_track(next_track)
-            else:
-                async with self._lock:
+                    await self._event_bus.emit(Event(
+                        type=EventType.PLAYBACK_TRACK_CHANGED,
+                        data={
+                            "zone_id": self._zone_id,
+                            "track_id": next_track.id,
+                            "track_title": next_track.title,
+                        },
+                        source="player",
+                    ))
+                    await self._start_track(next_track)
+                else:
                     await self._stop_pipeline()
                     self._state = PlaybackState.STOPPED
                     self._position_ms = 0
@@ -695,7 +693,7 @@ class Player:
                 track = self._queue.current
                 async with self._lock:
                     await self._stop_pipeline()
-                await self._start_track(track)
+                    await self._start_track(track)
                 return
 
             async with self._lock:
@@ -703,17 +701,16 @@ class Player:
                 if prev_track:
                     await self._persist_queue()
                     await self._stop_pipeline()
-            if prev_track:
-                await self._event_bus.emit(Event(
-                    type=EventType.PLAYBACK_TRACK_CHANGED,
-                    data={
-                        "zone_id": self._zone_id,
-                        "track_id": prev_track.id,
-                        "track_title": prev_track.title,
-                    },
-                    source="player",
-                ))
-                await self._start_track(prev_track)
+                    await self._event_bus.emit(Event(
+                        type=EventType.PLAYBACK_TRACK_CHANGED,
+                        data={
+                            "zone_id": self._zone_id,
+                            "track_id": prev_track.id,
+                            "track_title": prev_track.title,
+                        },
+                        source="player",
+                    ))
+                    await self._start_track(prev_track)
         finally:
             self._skip_in_progress = False
 
@@ -730,12 +727,16 @@ class Player:
             position_ms = track.duration_ms
 
         # Try native output seek first (DLNA Seek(REL_TIME) — no pipeline restart)
-        if self._output and self._state == PlaybackState.PLAYING:
-            if await self._output.seek(position_ms):
-                self._position_ms = position_ms
-                self._position_start_time = time.monotonic()
-                logger.info("native_seek", zone_id=self._zone_id, position_ms=position_ms)
-                return
+        output = self._output
+        if output and self._state == PlaybackState.PLAYING:
+            try:
+                if await output.seek(position_ms):
+                    self._position_ms = position_ms
+                    self._position_start_time = time.monotonic()
+                    logger.info("native_seek", zone_id=self._zone_id, position_ms=position_ms)
+                    return
+            except (AttributeError, RuntimeError):
+                logger.debug("seek_output_unavailable", zone_id=self._zone_id)
 
         # Fallback: full pipeline restart
         self._skip_in_progress = True

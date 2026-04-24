@@ -12,6 +12,11 @@ from mutagen.mp4 import MP4
 from mutagen.oggvorbis import OggVorbis
 from mutagen.wavpack import WavPack
 
+try:
+    from mutagen.dsf import DSF
+except ImportError:
+    DSF = None
+
 logger = structlog.get_logger()
 
 SUPPORTED_EXTENSIONS = {
@@ -259,6 +264,20 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             sample_rate = info.sample_rate
             bit_depth = 16
             has_cover = False
+
+        elif DSF and isinstance(audio, DSF):
+            # DSD files (DSF/DFF) — sample_rate is the DSD rate (2822400, 5644800, etc.)
+            title = _get_first(tags, ["TIT2"], path.stem) if tags else path.stem
+            artist = _get_first(tags, ["TPE1"], "Unknown Artist") if tags else "Unknown Artist"
+            album = _get_first(tags, ["TALB"], "Unknown Album") if tags else "Unknown Album"
+            album_artist = (_get_first(tags, ["TPE2"]) or None) if tags else None
+            track_num = _parse_int(_get_first(tags, ["TRCK"])) if tags else 0
+            disc_num = _parse_int(_get_first(tags, ["TPOS"]), 1) if tags else 1
+            year_str = (_get_first(tags, ["TDRC", "TYER"]) if tags else "")
+            genre = (_get_first(tags, ["TCON"]) or None) if tags else None
+            sample_rate = info.sample_rate  # 2822400 (DSD64), 5644800 (DSD128), etc.
+            bit_depth = 1  # DSD is 1-bit
+            has_cover = any(k.startswith("APIC") for k in tags.keys()) if tags else False
 
         else:
             # Generic fallback
