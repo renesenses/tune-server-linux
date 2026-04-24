@@ -2,6 +2,18 @@
 
 All notable changes to Tune Server.
 
+## v0.7.4 — 2026-04-24
+
+### Bug Fixes
+- Fixed DSF files showing 44 kHz instead of actual DSD sample rate (2.8/5.6 MHz)
+- Fixed intermittent 500 errors during playback (null output check, skip race conditions)
+- Fixed seek crash when output is swapped during seek operation
+- Fixed SQLite BUSY errors on Windows (added 5s busy_timeout pragma)
+
+### Search
+- Multi-term search in library (e.g. "Jazz 1959" finds jazz albums from 1959)
+- Search by genre, year, composer, instrument, label (in addition to title/artist)
+
 ## v0.7.3 — 2026-04-24
 
 ### Track Credits UI

@@ -429,22 +429,33 @@ class AlbumRepo:
         return [_row_to_album(r) for r in rows]
 
     async def search(self, query: str, limit: int = 50) -> list[Album]:
+        like_pat = f"%{query}%"
         if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
             rows = await self._db.fetchall(
-                """SELECT al.*, ar.name as artist_name FROM albums al
+                """SELECT DISTINCT al.*, ar.name as artist_name FROM albums al
                    LEFT JOIN artists ar ON al.artist_id = ar.id
                    WHERE al.fts_vector @@ plainto_tsquery('simple', ?)
-                   ORDER BY ts_rank(al.fts_vector, plainto_tsquery('simple', ?)) DESC
+                      OR ar.name ILIKE ?
+                      OR al.artist_name ILIKE ?
+                      OR al.genre ILIKE ?
+                      OR CAST(al.year AS TEXT) = ?
+                      OR al.label ILIKE ?
                    LIMIT ?""",
-                (query, query, limit),
+                (query, like_pat, like_pat, like_pat, query.strip(), like_pat, limit),
             )
         else:
             rows = await self._db.fetchall(
-                """SELECT al.*, ar.name as artist_name FROM albums al
+                """SELECT DISTINCT al.*, ar.name as artist_name FROM albums al
                    LEFT JOIN artists ar ON al.artist_id = ar.id
-                   JOIN albums_fts fts ON al.id = fts.rowid
-                   WHERE albums_fts MATCH ? LIMIT ?""",
-                (query + "*", limit),
+                   LEFT JOIN albums_fts fts ON al.id = fts.rowid AND albums_fts MATCH ?
+                   WHERE fts.rowid IS NOT NULL
+                      OR ar.name LIKE ?
+                      OR al.artist_name LIKE ?
+                      OR al.genre LIKE ?
+                      OR CAST(al.year AS TEXT) = ?
+                      OR al.label LIKE ?
+                   LIMIT ?""",
+                (query + "*", like_pat, like_pat, like_pat, query.strip(), like_pat, limit),
             )
         return [_row_to_album(r) for r in rows]
 
@@ -638,51 +649,41 @@ class TrackRepo:
         return {r["file_path"] for r in rows}
 
     async def search(self, query: str, limit: int = 50) -> list[Track]:
+        like_pat = f"%{query}%"
         if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
-            # Try FTS first, fallback to ILIKE for accent-sensitive queries
             rows = await self._db.fetchall(
-                """SELECT t.*, al.title as album_title, ar.name as artist_name
+                """SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name
                     FROM tracks t
                     LEFT JOIN albums al ON t.album_id = al.id
                     LEFT JOIN artists ar ON t.artist_id = ar.id
+                    LEFT JOIN track_credits tc ON tc.track_id = t.id
                     WHERE t.fts_vector @@ plainto_tsquery('simple', ?)
-                    ORDER BY ts_rank(t.fts_vector, plainto_tsquery('simple', ?)) DESC
+                       OR ar.name ILIKE ?
+                       OR t.genre ILIKE ?
+                       OR t.composer ILIKE ?
+                       OR CAST(al.year AS TEXT) = ?
+                       OR tc.artist_name ILIKE ?
+                       OR tc.instrument ILIKE ?
                     LIMIT ?""",
-                (query, query, limit),
+                (query, like_pat, like_pat, like_pat, query.strip(), like_pat, like_pat, limit),
             )
-            if not rows:
-                # Fallback: ILIKE search (handles accents better)
-                # Strip "the" from query for better artist matching
-                clean_query = query.strip()
-                if clean_query.lower().startswith("the "):
-                    clean_query = clean_query[4:]
-                words = [w for w in clean_query.split() if len(w) > 1]
-                if words:
-                    conditions = " AND ".join(
-                        f"(t.title ILIKE ? OR ar.name ILIKE ?)" for _ in words
-                    )
-                    params = []
-                    for w in words:
-                        params.extend([f"%{w}%", f"%{w}%"])
-                    params.append(limit)
-                    rows = await self._db.fetchall(
-                        f"""SELECT t.*, al.title as album_title, ar.name as artist_name
-                            FROM tracks t
-                            LEFT JOIN albums al ON t.album_id = al.id
-                            LEFT JOIN artists ar ON t.artist_id = ar.id
-                            WHERE {conditions}
-                            LIMIT ?""",
-                        tuple(params),
-                    )
         else:
             rows = await self._db.fetchall(
-                """SELECT t.*, al.title as album_title, ar.name as artist_name
+                """SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name
                     FROM tracks t
                     LEFT JOIN albums al ON t.album_id = al.id
                     LEFT JOIN artists ar ON t.artist_id = ar.id
-                    JOIN tracks_fts fts ON t.id = fts.rowid
-                    WHERE tracks_fts MATCH ? LIMIT ?""",
-                (query + "*", limit),
+                    LEFT JOIN track_credits tc ON tc.track_id = t.id
+                    LEFT JOIN tracks_fts fts ON t.id = fts.rowid AND tracks_fts MATCH ?
+                    WHERE fts.rowid IS NOT NULL
+                       OR ar.name LIKE ?
+                       OR t.genre LIKE ?
+                       OR t.composer LIKE ?
+                       OR CAST(al.year AS TEXT) = ?
+                       OR tc.artist_name LIKE ?
+                       OR tc.instrument LIKE ?
+                    LIMIT ?""",
+                (query + "*", like_pat, like_pat, like_pat, query.strip(), like_pat, like_pat, limit),
             )
         return [_row_to_track(r) for r in rows]
 
