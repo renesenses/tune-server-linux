@@ -4,12 +4,28 @@ import platform
 import re
 import socket
 import subprocess
+import sys
 
 import structlog
 
 logger = structlog.get_logger()
 
 _IS_WINDOWS = platform.system() == "Windows"
+
+
+def subprocess_hide_window() -> dict:
+    """Return kwargs to hide console windows on Windows (PyInstaller --noconsole).
+
+    Usage:
+        subprocess.run([...], **subprocess_hide_window())
+        asyncio.create_subprocess_exec([...], **subprocess_hide_window())
+    """
+    if _IS_WINDOWS and getattr(sys, "frozen", False):
+        info = subprocess.STARTUPINFO()
+        info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        info.wShowWindow = 0  # SW_HIDE
+        return {"startupinfo": info}
+    return {}
 
 
 def get_local_ip() -> str:
@@ -52,6 +68,7 @@ def _get_ip_via_ipconfig() -> str | None:
     try:
         output = subprocess.check_output(
             ["ipconfig"], timeout=5, text=True, errors="replace",
+            **subprocess_hide_window(),
         )
         # Match IPv4 addresses that look like private LAN
         for match in re.finditer(r"IPv4[^:]*:\s*([\d.]+)", output):

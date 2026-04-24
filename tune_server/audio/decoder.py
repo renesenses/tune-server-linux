@@ -8,6 +8,7 @@ import structlog
 
 from tune_server.audio.buffer import AsyncRingBuffer
 from tune_server.config import settings
+from tune_server.utils.network import subprocess_hide_window
 from tune_server.models import AudioFormat
 
 logger = structlog.get_logger()
@@ -136,6 +137,7 @@ class FFmpegDecoder:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **subprocess_hide_window(),
         )
         self._read_task = asyncio.create_task(self._read_output())
         # Parse stderr for ICY metadata on HTTP streams
@@ -257,6 +259,7 @@ class FFmpegProbe:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **subprocess_hide_window(),
             )
             stdout, stderr = await proc.communicate()
 

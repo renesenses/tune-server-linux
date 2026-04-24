@@ -4,6 +4,8 @@ import asyncio
 
 import structlog
 
+from tune_server.utils.network import subprocess_hide_window
+
 from tune_server.config import settings
 
 logger = structlog.get_logger()
@@ -84,6 +86,7 @@ class Resampler:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **subprocess_hide_window(),
         )
 
     async def process(self, pcm_data: bytes) -> bytes:

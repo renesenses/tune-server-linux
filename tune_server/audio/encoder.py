@@ -4,6 +4,8 @@ import asyncio
 
 import structlog
 
+from tune_server.utils.network import subprocess_hide_window
+
 from tune_server.audio.buffer import AsyncRingBuffer
 from tune_server.audio.formats import ffmpeg_codec_arg, ffmpeg_format_arg
 from tune_server.config import settings
@@ -67,6 +69,7 @@ class FFmpegEncoder:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **subprocess_hide_window(),
         )
         self._read_task = asyncio.create_task(self._read_output())
 

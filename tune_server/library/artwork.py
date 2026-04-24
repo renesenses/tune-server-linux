@@ -8,6 +8,8 @@ from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
+from tune_server.utils.network import subprocess_hide_window
+
 import structlog
 from mutagen import File as MutagenFile
 from mutagen.flac import FLAC
@@ -187,7 +189,7 @@ def fetch_cover_from_musicbrainz(
              "--data-urlencode", f"query={query}",
              "--data-urlencode", "fmt=json",
              "--data-urlencode", "limit=1"],
-            capture_output=True, timeout=20,
+            capture_output=True, timeout=20, **subprocess_hide_window(),
         )
         if result.returncode != 0:
             logger.debug("musicbrainz_search_failed", artist=artist_name, album=album_title)
@@ -208,7 +210,7 @@ def fetch_cover_from_musicbrainz(
             ["curl", "-4sfL", "--max-time", "20",
              "-H", f"User-Agent: {_MUSICBRAINZ_USER_AGENT}",
              "-o", str(output_path), cover_url],
-            capture_output=True, timeout=25,
+            capture_output=True, timeout=25, **subprocess_hide_window(),
         )
         if cover_result.returncode != 0 or not output_path.exists():
             logger.debug("musicbrainz_no_cover", artist=artist_name, album=album_title)
