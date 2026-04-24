@@ -57,7 +57,16 @@ def _ensure_data_dir() -> None:
         os.chdir(exe_dir)
 
 
+def _fix_noconsole_streams() -> None:
+    """Fix sys.stdout/stderr being None when running with PyInstaller --noconsole on Windows."""
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
+
+
 def main() -> None:
+    _fix_noconsole_streams()
     _ensure_data_dir()
 
     # Handle subcommands
