@@ -656,19 +656,37 @@ class SATrackRepo:
         prefix = directory.replace("\\", "/").rstrip("/") + "/"
         prefix_len = len(prefix) + 1  # SQL SUBSTR is 1-based
 
-        # Use raw SQL with ? placeholders (translated by SA wrapper)
-        rows = await self._db.fetchall(
-            """SELECT
-                SPLIT_PART(SUBSTR(file_path, ?), '/', 1) AS dir_name,
-                COUNT(*) AS track_count
-               FROM tracks
-               WHERE file_path LIKE ?
-               AND LENGTH(file_path) > ?
-               AND POSITION('/' IN SUBSTR(file_path, ?)) > 0
-               GROUP BY dir_name
-               ORDER BY dir_name""",
-            (prefix_len, prefix + "%", len(prefix), prefix_len),
-        )
+        if self._db.engine_name == "postgres":
+            rows = await self._db.fetchall(
+                """SELECT
+                    SPLIT_PART(SUBSTR(file_path, ?), '/', 1) AS dir_name,
+                    COUNT(*) AS track_count
+                   FROM tracks
+                   WHERE file_path LIKE ?
+                   AND LENGTH(file_path) > ?
+                   AND POSITION('/' IN SUBSTR(file_path, ?)) > 0
+                   GROUP BY dir_name
+                   ORDER BY dir_name""",
+                (prefix_len, prefix + "%", len(prefix), prefix_len),
+            )
+        else:
+            # SQLite: use INSTR instead of POSITION, substr + instr for SPLIT_PART
+            rows = await self._db.fetchall(
+                """SELECT
+                    CASE
+                        WHEN INSTR(SUBSTR(file_path, ?), '/') > 0
+                        THEN SUBSTR(SUBSTR(file_path, ?), 1, INSTR(SUBSTR(file_path, ?), '/') - 1)
+                        ELSE SUBSTR(file_path, ?)
+                    END AS dir_name,
+                    COUNT(*) AS track_count
+                   FROM tracks
+                   WHERE file_path LIKE ?
+                   AND LENGTH(file_path) > ?
+                   AND INSTR(SUBSTR(file_path, ?), '/') > 0
+                   GROUP BY dir_name
+                   ORDER BY dir_name""",
+                (prefix_len, prefix_len, prefix_len, prefix_len, prefix + "%", len(prefix), prefix_len),
+            )
         return [
             {"name": r["dir_name"], "path": prefix + r["dir_name"], "track_count": r["track_count"]}
             for r in rows
