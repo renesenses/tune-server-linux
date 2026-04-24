@@ -2,6 +2,11 @@
 
 All notable changes to Tune Server.
 
+## v0.7.6 — 2026-04-24
+
+### Fixes
+- Fixed browse directory crash on SQLite/Windows (SPLIT_PART is PostgreSQL-only)
+
 ## v0.7.5 — 2026-04-24
 
 ### Fixes
