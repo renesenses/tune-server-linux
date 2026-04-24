@@ -77,6 +77,21 @@ async def scan_devices():
     return await deps.discovery_manager.rescan()
 
 
+@router.delete("/all")
+async def clear_devices():
+    """Remove all discovered devices from the list."""
+    if not deps.discovery_manager:
+        return {"cleared": 0}
+    count = len(deps.discovery_manager.list_devices())
+    if deps.discovery_manager.ssdp:
+        deps.discovery_manager.ssdp._devices.clear()
+        deps.discovery_manager.ssdp._dmr_devices.clear()
+    if deps.discovery_manager.mdns:
+        deps.discovery_manager.mdns._devices.clear()
+        deps.discovery_manager.mdns._atv_configs.clear()
+    return {"cleared": count}
+
+
 @router.get("/{device_id}", response_model=DiscoveredDevice)
 async def get_device(device_id: str):
     if not deps.discovery_manager:

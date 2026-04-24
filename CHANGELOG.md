@@ -2,6 +2,12 @@
 
 All notable changes to Tune Server.
 
+## v0.7.5 — 2026-04-24
+
+### Fixes
+- Fixed Windows --noconsole crash (redirect None stdout/stderr to devnull)
+- Clear all devices button in Zone Manager (requested by Alban)
+
 ## v0.7.4 — 2026-04-24
 
 ### Bug Fixes
