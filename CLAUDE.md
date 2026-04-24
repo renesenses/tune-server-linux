@@ -20,34 +20,41 @@ Current version: defined in `pyproject.toml` (`[project] version`).
 tune_server/
 ├── api/              # FastAPI routes + WebSocket
 │   ├── routes/       # library, playback, zones, streaming, playlists, radios,
-│   │                 # search, devices, network, system
+│   │                 # search, devices, network, system, artist_metadata
 │   ├── websocket.py  # WS push with pattern-based filtering
-│   └── deps.py       # Dependency injection
+│   └── deps.py       # Dependency injection (AppDeps container)
 ├── audio/            # Pipeline: decoder -> resampler -> encoder -> buffer
 │   ├── pipeline.py   # FFmpeg-based transcode/passthrough pipeline
 │   ├── formats.py    # DLNA capabilities, DSD detection, MIME types
 │   └── buffer.py / decoder.py / encoder.py / resampler.py
-├── db/               # SQLite via aiosqlite
-│   ├── engine.py     # Database connection wrapper
-│   ├── repository.py # GRDB-style repos: ArtistRepo, AlbumRepo, TrackRepo, etc.
-│   └── schema.sql    # Full schema with FTS5 virtual tables + sync triggers
-├── discovery/        # SSDP (DLNA) + mDNS (AirPlay) device scanning
+├── db/               # SQLite (aiosqlite) + PostgreSQL (asyncpg/SQLAlchemy)
+│   ├── engine.py     # SQLite database wrapper
+│   ├── sa_engine.py  # SQLAlchemy async engine (PostgreSQL + SQLite)
+│   ├── repository.py # Repos: ArtistRepo, AlbumRepo, TrackRepo, TrackCreditRepo, etc.
+│   ├── sa_repository.py # SQLAlchemy-based repository (Windows/PostgreSQL)
+│   ├── tables.py     # SQLAlchemy table definitions
+│   └── schema_sqlite.sql # Full schema with FTS5 virtual tables + sync triggers
+├── discovery/        # SSDP (DLNA) + mDNS (AirPlay) + network shares + media servers
 ├── library/          # Scanner, watcher (watchfiles), metadata (mutagen),
 │                     # artwork (MusicBrainz), enrichment
+├── metadata/         # Artist enrichment (MusicBrainz + Last.fm + Wikipedia + Claude AI)
+├── metadata_manager/ # Track/album metadata: enricher, matcher, fingerprint,
+│                     # cover fetcher, auto-fix, credit enricher (MusicBrainz instruments)
 ├── outputs/          # Output targets
 │   ├── dlna.py       # DLNA/UPnP renderer output (async-upnp-client)
-│   ├── airplay.py    # AirPlay output (pyatv)
+│   ├── airplay.py    # AirPlay output (pyatv) with exponential backoff retry
 │   ├── local.py      # Local soundcard (sounddevice)
 │   └── http_streamer.py  # HTTP stream serving for DLNA
 ├── playback/         # Player state machine, queue, gapless pre-buffering
 ├── streaming/        # Service connectors: tidal, qobuz, youtube, spotify,
 │                     # deezer, amazon, radio_metadata
-├── zones/            # Multi-room: zone instances, groups, sync engine
+├── zones/            # Multi-room: zone instances, groups, sync engine, stereo pairing
 ├── upnp_server/      # UPnP MediaServer (SSDP advertiser + ContentDirectory)
 ├── remote/           # Proxy mode: discover + relay to another Tune Server
-├── network/          # SMB/NFS mount manager, DLNA media server browser
+├── network/          # SMB/NFS mount manager (macOS/Linux/Windows), media server browser
+├── utils/            # network.py (IP detection with Windows ipconfig fallback)
 ├── event_bus.py      # Async pub/sub (40+ event types)
-├── models.py         # Pydantic models (Track, Album, Artist, Zone, etc.)
+├── models.py         # Pydantic models (Track, Album, Artist, Zone, TrackCredit, etc.)
 ├── config.py         # Settings via pydantic-settings, env prefix TUNE_
 └── __main__.py       # Entry point: asyncio.run(run_server())
 ```
@@ -100,20 +107,24 @@ sudo ./install.sh [--systemd]
 
 ## Deployment Targets
 
-- **`.29`** — `192.168.1.29` — Primary Tune Server (home)
-- **`.50`** — `192.168.1.50` — Secondary Tune Server
+- **`.18`** — `192.168.1.18` — Primary Tune Server (Mac mini "roon")
+- **`.15`** — `192.168.1.15` — Secondary Tune Server (Linux, special-edition)
 
-Deploy by uploading the release archive and running install.sh, or manually updating the source and restarting the service.
+Deploy by git pull + systemctl restart, or uploading the release archive and running install.sh.
 
 ## Database
 
-SQLite via `aiosqlite`. Schema in `tune_server/db/schema.sql`.
+Dual engine: **SQLite** via `aiosqlite` (default, Windows) or **PostgreSQL** via `asyncpg`/SQLAlchemy (production .18).
 
-**Tables**: artists, albums, tracks, playlists, playlist_tracks, zones, play_queue, streaming_auth, radio_favorites
+Schema: `db/schema_sqlite.sql` (SQLite) / `db/tables.py` (SQLAlchemy). Engine selected via `TUNE_DB_ENGINE=postgres` + `TUNE_DB_URL`.
 
-**FTS5** virtual tables for full-text search: tracks_fts, albums_fts, artists_fts (with auto-sync triggers).
+**Tables**: artists, albums, tracks, playlists, playlist_tracks, zones, play_queue, streaming_auth, radio_stations, radio_favorites, network_mounts, device_credentials, user_profiles, user_favorites, track_credits, metadata_suggestions, metadata_fix_reports, duplicate_tracks, zone_groups, zone_group_members, zone_profiles, playlist_links, playlist_snapshots, transfer_history, sync_schedules
 
-**Repository pattern** (GRDB-style): `ArtistRepo`, `AlbumRepo`, `TrackRepo` in `db/repository.py`. All queries are parameterized async methods.
+**Track Credits**: `track_credits` table — multiple artists per track with role (performer/composer/conductor/lyricist) and instrument. Populated from audio tags (PERFORMER/TMCL/TIPL) during scan + enriched from MusicBrainz artist data.
+
+**FTS5** virtual tables for full-text search: tracks_fts, albums_fts, artists_fts (with auto-sync triggers). Search also queries artist name, genre, year, composer, instrument, label via LIKE fallback.
+
+**Repository pattern** (GRDB-style): `ArtistRepo`, `AlbumRepo`, `TrackRepo`, `TrackCreditRepo`, `PlaylistRepo`, `PlayQueueRepo`, `ZoneRepo`, `RadioStationRepo`, `RadioFavoriteRepo` in `db/repository.py`. All queries are parameterized async methods. SA variants in `db/sa_repository.py`.
 
 ## Technical Notes
 
@@ -126,21 +137,34 @@ SQLite via `aiosqlite`. Schema in `tune_server/db/schema.sql`.
 The scanner (`library/scanner.py`) splits albums by quality tier. If files for the same album title have different sample rates (e.g., 44.1kHz vs 96kHz), separate album entries are created with a suffix like "Album Name (96kHz/24bit)". See `_same_quality_tier()` and `_quality_suffix()`.
 
 ### Audio Pipeline
-FFmpeg-based: decoder -> optional resampler -> encoder -> ring buffer. Supports bit-perfect passthrough, native DSD (DSF/DFF) to capable renderers, PCM fallback at 176.4kHz/24-bit.
+FFmpeg-based: decoder -> optional resampler -> encoder -> ring buffer. Supports bit-perfect passthrough, native DSD (DSF/DFF) to capable renderers, PCM fallback at 176.4kHz/24-bit. Channel filter for stereo pairing (pan=mono|c0=FL/FR).
 
 ### Event Bus
 Async pub/sub in `event_bus.py`. 40+ event types covering library, playback, playlists, zones, discovery, streaming. WebSocket clients can subscribe with pattern-based filtering.
+
+### Windows Support
+- PyInstaller build with `--noconsole` (stdout/stderr redirected to devnull)
+- `get_local_ip()` falls back to `ipconfig` parsing for multi-NIC setups
+- SMB discovery via `net view` (Linux uses `smbclient`, macOS uses `smbutil`)
+- SQLite `PRAGMA busy_timeout=5000` to avoid SQLITE_BUSY under concurrent access
+- AirPlay requires Apple Bonjour (included with iTunes) for mDNS discovery
+
+### Track Credits
+Multiple artists per track with roles and instruments. Extracted from audio tags during scan (PERFORMER, TMCL, TIPL, COMPOSER, CONDUCTOR). Enriched from MusicBrainz artist data via `POST /library/albums/{id}/credits/enrich` or `POST /library/enrich-credits` (all).
 
 ## Related Repos
 
 | Repo | Description |
 |------|-------------|
 | `tune-special-edition` | **Private**. Do NOT cross-reference publicly. |
-| `tune-server-ipados` | Native Swift/SwiftUI server + client for iPadOS/iOS |
+| `tune-server-ipados` | Native Swift/SwiftUI server + client for iPadOS/iOS (schemes: Tune_iOS, Tune_macOS) |
 | `tune-web-client` | Svelte 5 SPA (embedded in `web/` at build time) |
 | `tune-server-flutter` | Flutter cross-platform client (iOS/Android) |
-| `site-mozaiklabs` | mozaiklabs.fr website — hosts downloads and release pages |
+| `site-mozaiklabs` | mozaiklabs.fr website — Laravel/Docker, deploy via `docker cp` (NOT build in container) |
 
 ## Web Client
 
 The `web/` directory contains the built Svelte SPA (static assets). The server serves it automatically when `TUNE_WEB_DIR` is set or auto-detected. The source lives in `tune-web-client`.
+
+### Search
+Library search supports multi-term queries matching across: title, artist name, genre, year, composer, instrument, label. FTS5 for title + LIKE fallback for other fields.
