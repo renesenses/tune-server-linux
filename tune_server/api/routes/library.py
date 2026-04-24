@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 from tune_server.api.deps import deps
@@ -184,6 +184,41 @@ async def get_artist_credits(artist_id: int):
     if not deps.credit_repo:
         return []
     return await deps.credit_repo.list_by_artist(artist_id)
+
+
+@router.post("/tracks/{track_id}/credits/enrich")
+async def enrich_track_credits_endpoint(track_id: int):
+    """Enrich a track's credits with instruments from MusicBrainz."""
+    if not deps.credit_repo or not deps.track_repo:
+        raise HTTPException(status_code=503, detail="Credits not available")
+    from tune_server.metadata_manager.credit_enricher import enrich_track_credits
+    result = await enrich_track_credits(track_id, deps.track_repo, deps.credit_repo, deps.album_repo)
+    return result
+
+
+@router.post("/albums/{album_id}/credits/enrich")
+async def enrich_album_credits_endpoint(album_id: int):
+    """Enrich credits for an album — looks up each credited artist on MusicBrainz for their instrument."""
+    if not deps.credit_repo or not deps.track_repo:
+        raise HTTPException(status_code=503, detail="Credits not available")
+    from tune_server.metadata_manager.credit_enricher import enrich_credits_instruments
+    result = await enrich_credits_instruments(deps.credit_repo, album_id=album_id, track_repo=deps.track_repo)
+    return result
+
+
+@router.post("/enrich-credits")
+async def enrich_all_credits_endpoint():
+    """Enrich ALL credits without instruments from MusicBrainz (background task)."""
+    if not deps.credit_repo:
+        raise HTTPException(status_code=503, detail="Credits not available")
+    from tune_server.metadata_manager.credit_enricher import enrich_credits_instruments
+
+    async def _run():
+        result = await enrich_credits_instruments(deps.credit_repo)
+        logger.info("enrich_all_credits_done", **result)
+
+    asyncio.create_task(_run())
+    return {"status": "started"}
 
 
 @router.get("/search", response_model=SearchResult)

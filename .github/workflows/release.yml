@@ -54,7 +54,7 @@ jobs:
       - name: Build binary with PyInstaller (Windows)
         if: matrix.platform == 'windows'
         run: |
-          pyinstaller --name tune-server --onedir --add-data "web;web" --collect-all tune_server --noconfirm tune_server/__main__.py
+          pyinstaller --name tune-server --onedir --noconsole --add-data "web;web" --collect-all tune_server --noconfirm tune_server/__main__.py
 
       - name: Bundle FFmpeg for Windows
         if: matrix.platform == 'windows'

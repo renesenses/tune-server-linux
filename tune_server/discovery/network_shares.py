@@ -12,6 +12,7 @@ from tune_server.models import NetworkShare, ShareProtocol
 logger = structlog.get_logger()
 
 _IS_MACOS = platform.system() == "Darwin"
+_IS_WINDOWS = platform.system() == "Windows"
 
 SMB_SERVICE = "_smb._tcp.local."
 NFS_SERVICE = "_nfs._tcp.local."
@@ -177,9 +178,11 @@ class NetworkShareDiscovery:
 
     @staticmethod
     async def _list_smb_shares(host: str) -> list[str]:
-        """List SMB shares on a host using smbutil (macOS) or smbclient (Linux)."""
+        """List SMB shares on a host using platform-specific tools."""
         if _IS_MACOS:
             return await NetworkShareDiscovery._list_smb_shares_smbutil(host)
+        if _IS_WINDOWS:
+            return await NetworkShareDiscovery._list_smb_shares_netview(host)
         return await NetworkShareDiscovery._list_smb_shares_smbclient(host)
 
     @staticmethod
@@ -256,6 +259,40 @@ class NetworkShareDiscovery:
 
         except (FileNotFoundError, asyncio.TimeoutError) as e:
             logger.debug("smb_smbclient_list_failed", host=host, error=str(e))
+            return []
+
+    @staticmethod
+    async def _list_smb_shares_netview(host: str) -> list[str]:
+        """List SMB shares on Windows using 'net view'."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "net", "view", f"\\\\{host}",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            output = stdout.decode(errors="replace")
+
+            shares = []
+            in_share_section = False
+            for line in output.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("---"):
+                    in_share_section = True
+                    continue
+                if in_share_section:
+                    if not stripped or stripped.startswith("The command"):
+                        break
+                    parts = stripped.split()
+                    if len(parts) >= 2:
+                        name = parts[0]
+                        stype = parts[1]
+                        if stype == "Disk" and not name.endswith("$"):
+                            shares.append(name)
+            return shares
+
+        except (FileNotFoundError, asyncio.TimeoutError) as e:
+            logger.debug("smb_netview_list_failed", host=host, error=str(e))
             return []
 
     @staticmethod

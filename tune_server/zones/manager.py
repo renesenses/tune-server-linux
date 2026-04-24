@@ -146,9 +146,14 @@ class ZoneManager:
                     )
 
         # Create output FIRST — only persist to DB if it succeeds
-        output = await self._create_output(output_type, output_device_id)
+        try:
+            output = await self._create_output(output_type, output_device_id)
+        except RuntimeError:
+            raise  # Propagate specific error messages from factories
+        except Exception as exc:
+            raise RuntimeError(f"Could not create {output_type.value} output: {exc}") from exc
         if not output:
-            raise RuntimeError(f"Could not create output for type {output_type}")
+            raise RuntimeError(f"Could not create output for type {output_type.value}")
 
         # Persist to DB
         zone_id = await self._zone_repo.create(name, output_type.value, output_device_id)

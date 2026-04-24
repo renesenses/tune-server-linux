@@ -2,6 +2,23 @@
 
 All notable changes to Tune Server.
 
+## v0.7.3 — 2026-04-24
+
+### Track Credits UI
+- Credits button on each track in album detail view (expandable)
+- Credits grouped by role (Composer, Performer, Conductor...) with clickable artist names
+- Credits section on artist detail page (instruments, track count)
+- MusicBrainz instrument enrichment: lookup each artist for their primary instrument
+- API: POST /tracks/{id}/credits/enrich, POST /albums/{id}/credits/enrich, POST /enrich-credits
+
+### Windows Fixes
+- Fixed IP detection for DLNA streaming (ipconfig fallback for multi-NIC setups)
+- AirPlay zone creation: clear error messages (Bonjour required, device not found)
+- SMB/NAS discovery via `net view` command on Windows
+- Zone manager: specific error messages propagated to client instead of generic 503
+- mDNS: explicit warning when Bonjour is not installed
+- PyInstaller: hidden console window (`--noconsole`)
+
 ## v0.7.1 — 2026-04-23
 
 ### Track Credits

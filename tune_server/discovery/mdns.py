@@ -187,9 +187,13 @@ class MdnsDiscovery:
                 await asyncio.sleep(30)
 
         except ImportError:
-            logger.warning("pyatv_not_installed")
+            logger.warning("pyatv_not_installed", hint="AirPlay discovery disabled — install pyatv")
         except asyncio.CancelledError:
             raise
+        except OSError as e:
+            # Windows: mDNS often fails with WinError if Bonjour is not installed
+            logger.warning("mdns_os_error", error=str(e),
+                           hint="On Windows, install Apple Bonjour (included with iTunes) for AirPlay discovery")
 
     async def rescan(self) -> list[DiscoveredDevice]:
         """Run a single mDNS scan immediately and return discovered devices."""

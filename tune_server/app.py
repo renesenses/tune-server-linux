@@ -322,11 +322,22 @@ class TuneServer:
             )
 
         async def create_airplay_output(device_id: str | None):
-            if not device_id or not self._discovery_manager or not self._discovery_manager.mdns:
-                return None
+            if not device_id:
+                raise RuntimeError("AirPlay: no device_id specified")
+            if not self._discovery_manager or not self._discovery_manager.mdns:
+                raise RuntimeError(
+                    "AirPlay: mDNS discovery is not running. "
+                    "On Windows, install Apple Bonjour (included with iTunes) "
+                    "and check that your firewall allows mDNS (UDP 5353)."
+                )
             config = self._discovery_manager.mdns.get_atv_config(device_id)
             if not config:
-                return None
+                known = list(self._discovery_manager.mdns.devices.keys())
+                raise RuntimeError(
+                    f"AirPlay: device '{device_id}' not found via mDNS. "
+                    f"Discovered devices: {known or 'none'}. "
+                    "Check that the device is on and on the same network."
+                )
             try:
                 import pyatv
 
@@ -348,9 +359,13 @@ class TuneServer:
                 device = self._discovery_manager.get_device(device_id)
                 name = device.name if device else "AirPlay"
                 return AirPlayOutput(atv, device_name=name)
-            except Exception:
+            except ImportError:
+                raise RuntimeError("AirPlay: pyatv library is not installed")
+            except RuntimeError:
+                raise
+            except Exception as exc:
                 logger.exception("airplay_connect_error", device_id=device_id)
-                return None
+                raise RuntimeError(f"AirPlay: connection failed — {exc}") from exc
 
         async def create_local_output(device_id: str | None):
             return LocalOutput(device_name=device_id)

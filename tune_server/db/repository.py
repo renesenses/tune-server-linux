@@ -1187,6 +1187,13 @@ class TrackCreditRepo:
         )
         await self._db.commit()
 
+    async def update_instrument(self, credit_id: int, instrument: str) -> None:
+        await self._db.execute(
+            "UPDATE track_credits SET instrument = ? WHERE id = ?",
+            (instrument, credit_id),
+        )
+        await self._db.commit()
+
     async def get_instruments_for_artist(self, artist_id: int) -> list[str]:
         rows = await self._db.fetchall(
             """SELECT DISTINCT instrument FROM track_credits
