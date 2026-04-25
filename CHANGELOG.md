@@ -2,6 +2,41 @@
 
 All notable changes to Tune Server.
 
+## v0.7.9 — 2026-04-25
+
+### Now Playing
+- Lyrics display (reads from file tags, cached in DB)
+- EQ presets (Flat, Bass Boost, Treble, Vocal, Rock, Jazz, Classical) + custom bands
+- Share "Now Playing" to clipboard
+- Credits + Lyrics + EQ + Share buttons
+
+### Smart Playlists
+- Dynamic playlists with visual rule builder (10 fields, 6 operators, AND/OR)
+- Create, edit, delete, play all
+- Sort by title/artist/album/year/random
+
+### Playback
+- "Play Next" button on every track (inserts after current)
+- Transfer playback between zones (queue + position + seek)
+- Last.fm scrobbling (auto-scrobble on track change)
+
+### Library
+- Artist timeline (chronological discography)
+- Album bio (MusicBrainz release annotations)
+- Similar albums (by genre/artist)
+
+### Party Mode
+- Collaborative playlist: /party/add, /party/queue, /party/status
+- Anyone on the network can search and add tracks
+
+### Outputs
+- Chromecast (Google Cast) output support
+- Bluetooth already supported via Local output
+
+### Dashboard
+- Top artists and top tracks on home page with covers
+- Playback history API (recent, top-tracks, top-artists)
+
 ## v0.7.8 — 2026-04-25
 
 ### Dashboard
