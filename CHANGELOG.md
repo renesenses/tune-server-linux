@@ -2,6 +2,37 @@
 
 All notable changes to Tune Server.
 
+## v0.7.10 — 2026-04-25
+
+### DJ Mode
+- Real dual-deck PCM mixer (AudioMixer + DualDeckPlayer)
+- Crossfade: linear + equal-power curves, 1-30s duration
+- Auto-crossfade (triggers N seconds before track end)
+- Waveform visualization per deck
+- Play/pause per deck, crossfader slider, gain bars
+
+### Party Mode
+- Collaborative playlist — search and add tracks
+- Server-side upvote with automatic queue reordering
+- QR code for sharing party link
+
+### Now Playing
+- Karaoke auto-scroll to current synced line
+- Synced lyrics returned separately from lrclib.net
+
+### Library
+- Album bios (MusicBrainz → Claude AI via mozaiklabs.fr → DB cache)
+- Radio favorites → streaming playlist (Tidal/Qobuz/Spotify)
+- Sidebar zones: state icons + current track display
+
+### Zones
+- Auto-detect same-brand zones for zero-calibration group sync
+- Calibration fixes for stopped zones
+
+### Fixes
+- Lyrics endpoint: Track model raw SQL fix
+- Party route: list_zones() instead of private _zones
+
 ## v0.7.9 — 2026-04-25
 
 ### Now Playing
