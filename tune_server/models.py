@@ -678,6 +678,11 @@ class ZoneGroupResponse(BaseModel):
     group_id: str
     leader_id: int
     zone_ids: list[int]
+    # True when all zones in the group share the same manufacturer —
+    # no manual calibration needed, sync_delay_ms stays at 0 for all.
+    auto_synced: bool = False
+    # Common manufacturer name (e.g. "Sonos, Inc."), empty when mixed brands.
+    group_manufacturer: str = ""
 
 
 class FederatedSearchResult(BaseModel):

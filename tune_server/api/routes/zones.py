@@ -127,6 +127,29 @@ async def list_stereo_pairs():
     return deps.zone_manager.get_stereo_pairs()
 
 
+def _resolve_zone_manufacturer(output_device_id: str | None) -> str:
+    """Return the manufacturer string for a zone's output device, or empty string."""
+    if not output_device_id or not deps.discovery_manager:
+        return ""
+    device = deps.discovery_manager.get_device(output_device_id)
+    if device:
+        return device.capabilities.get("manufacturer", "")
+    return ""
+
+
+def _brand_info(zone_instances: list) -> tuple[bool, str]:
+    """Compute (auto_synced, group_manufacturer) for a list of ZoneInstance.
+
+    auto_synced is True when all zones share the same non-empty manufacturer,
+    meaning their DLNA buffering latency is identical and no calibration is needed.
+    """
+    manufacturers = [_resolve_zone_manufacturer(z.output_device_id) for z in zone_instances]
+    non_empty = [m for m in manufacturers if m]
+    if non_empty and len(set(non_empty)) == 1 and len(non_empty) == len(zone_instances):
+        return True, non_empty[0]
+    return False, ""
+
+
 @router.post("/group", response_model=ZoneGroupResponse)
 async def group_zones(request: ZoneGroupRequest):
     """Group zones for synchronized multi-room playback."""
@@ -148,10 +171,13 @@ async def group_zones(request: ZoneGroupRequest):
         raise HTTPException(status_code=400, detail="No valid follower zones")
 
     group = await deps.group_manager.create_group(leader, followers)
+    auto_synced, group_manufacturer = _brand_info(group.all_zones)
     return ZoneGroupResponse(
         group_id=group.group_id,
         leader_id=leader.zone_id,
         zone_ids=group.zone_ids,
+        auto_synced=auto_synced,
+        group_manufacturer=group_manufacturer,
     )
 
 
@@ -169,11 +195,14 @@ async def list_groups():
     if not deps.group_manager:
         raise HTTPException(status_code=503, detail="Zone grouping not available")
     groups = deps.group_manager.list_groups()
-    return [
-        ZoneGroupResponse(
+    result = []
+    for g in groups:
+        auto_synced, group_manufacturer = _brand_info(g.all_zones)
+        result.append(ZoneGroupResponse(
             group_id=g.group_id,
             leader_id=g.leader.zone_id,
             zone_ids=g.zone_ids,
-        )
-        for g in groups
-    ]
+            auto_synced=auto_synced,
+            group_manufacturer=group_manufacturer,
+        ))
+    return result

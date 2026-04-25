@@ -172,6 +172,7 @@ class SsdpDiscovery:
                                 available=True,
                                 capabilities={
                                     "dlna": True,
+                                    "manufacturer": device.manufacturer or "",
                                     "model": device.model_name or "",
                                     "sink_protocols": sink_protocols,
                                     "device_name": device.friendly_name or "",
@@ -330,6 +331,7 @@ class SsdpDiscovery:
                     available=True,
                     capabilities={
                         "dlna": True,
+                        "manufacturer": device.manufacturer or "",
                         "model": device.model_name or "",
                         "sink_protocols": sink_protocols,
                         "device_name": device.friendly_name or "",
