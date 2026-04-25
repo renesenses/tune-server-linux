@@ -2,6 +2,26 @@
 
 All notable changes to Tune Server.
 
+## v0.7.11 — 2026-04-25
+
+### DJ Beatmatch
+- BPM extraction from audio tags (TBPM/BPM/tmpo)
+- BPM detection via FFmpeg + numpy autocorrelation
+- Tempo sync between decks (atempo filter, 0.5-2.0x range)
+- POST /dj/analyze/{track_id}, POST /dj/sync-tempo/{zone_id}
+- BPM display per deck in web UI
+
+### DJ Waveform
+- Real waveform generation (800-point RMS envelope via FFmpeg + numpy)
+- GET /dj/waveform/{track_id} with DB cache
+- Canvas visualization with progress overlay (replaces pseudo-random)
+- waveform_data + waveform_generated_at columns on tracks
+
+### Party Mode
+- Persistent votes (party_votes table, survives server restart)
+- PartyVoteRepo for SQLite + PostgreSQL
+- Bubble-sort reordering preserved in DB
+
 ## v0.7.10 — 2026-04-25
 
 ### DJ Mode
