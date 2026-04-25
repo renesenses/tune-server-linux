@@ -314,11 +314,32 @@ async def get_track_lyrics(track_id: int):
         except Exception:
             pass
 
-    # 3. Try online: lrclib.net (free, no API key)
+    # 3. Try mozaiklabs.fr shared cache
+    import aiohttp
+    title = track.title
+    artist = track.artist_name or ""
     try:
-        import aiohttp
-        title = track.title
-        artist = track.artist_name or ""
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://mozaiklabs.fr/api/v1/lyrics",
+                params={"title": title, "artist": artist},
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("lyrics"):
+                        # Cache locally
+                        await deps.db.execute(
+                            "UPDATE tracks SET lyrics = ? WHERE id = ?",
+                            (data["lyrics"], track_id),
+                        )
+                        await deps.db.commit()
+                        return {"lyrics": data["lyrics"], "source": "mozaiklabs"}
+    except Exception:
+        pass
+
+    # 4. Try lrclib.net (free, no API key)
+    try:
         params = {"track_name": title, "artist_name": artist}
         if track.album_title:
             params["album_name"] = track.album_title
@@ -334,12 +355,24 @@ async def get_track_lyrics(track_id: int):
                     data = await resp.json()
                     lyrics_text = data.get("plainLyrics") or data.get("syncedLyrics")
                     if lyrics_text and lyrics_text.strip():
-                        # Cache in DB
+                        # Cache locally
                         await deps.db.execute(
                             "UPDATE tracks SET lyrics = ? WHERE id = ?",
                             (lyrics_text.strip(), track_id),
                         )
                         await deps.db.commit()
+                        # Store on mozaiklabs.fr for other installations
+                        try:
+                            async with aiohttp.ClientSession() as s2:
+                                await s2.post(
+                                    "https://mozaiklabs.fr/api/v1/lyrics",
+                                    json={"title": title, "artist": artist,
+                                          "album": track.album_title, "lyrics": lyrics_text.strip(),
+                                          "source": "lrclib"},
+                                    timeout=aiohttp.ClientTimeout(total=5),
+                                )
+                        except Exception:
+                            pass
                         return {"lyrics": lyrics_text.strip(), "source": "lrclib"}
     except Exception:
         pass
