@@ -389,13 +389,19 @@ class TuneServer:
             track = zone.player._queue.current if zone else None
             if track:
                 try:
+                    # Resolve cover: track cover_path, fallback to album cover
+                    cover = track.cover_path
+                    if not cover and track.album_id and deps.album_repo:
+                        album = await deps.album_repo.get(track.album_id)
+                        if album:
+                            cover = album.cover_path
                     await history_repo.record(
                         track_id=track.id,
                         zone_id=zone_id,
                         track_title=track.title,
                         artist_name=track.artist_name,
                         album_title=track.album_title,
-                        cover_path=track.cover_path,
+                        cover_path=cover,
                         duration_ms=track.duration_ms,
                         listened_ms=zone.player.position_ms if zone else None,
                         source=track.source.value if track.source else None,

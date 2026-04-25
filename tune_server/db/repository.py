@@ -1240,11 +1240,16 @@ class PlaybackHistoryRepo:
 
     async def top_tracks(self, limit: int = 20) -> list[dict]:
         rows = await self._db.fetchall(
-            """SELECT track_title, artist_name, album_title, cover_path,
-                      COUNT(*) as play_count, MAX(played_at) as last_played
-               FROM playback_history
-               WHERE track_id IS NOT NULL
-               GROUP BY track_id ORDER BY play_count DESC LIMIT ?""",
+            """SELECT ph.track_title, ph.artist_name, ph.album_title,
+                      COALESCE(ph.cover_path, al.cover_path) as cover_path,
+                      COUNT(*) as play_count, MAX(ph.played_at) as last_played
+               FROM playback_history ph
+               LEFT JOIN tracks t ON t.id = ph.track_id
+               LEFT JOIN albums al ON al.id = t.album_id
+               WHERE ph.track_id IS NOT NULL
+               GROUP BY ph.track_title, ph.artist_name, ph.album_title,
+                        COALESCE(ph.cover_path, al.cover_path)
+               ORDER BY play_count DESC LIMIT ?""",
             (limit,),
         )
         return [dict(r) for r in rows]
@@ -1258,6 +1263,137 @@ class PlaybackHistoryRepo:
             (limit,),
         )
         return [dict(r) for r in rows]
+
+
+class SmartPlaylistRepo:
+    """Smart playlists with dynamic rule-based track resolution."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def list(self) -> list[dict]:
+        rows = await self._db.fetchall(
+            "SELECT * FROM smart_playlists ORDER BY name"
+        )
+        return [dict(r) for r in rows]
+
+    async def get(self, sp_id: int) -> dict | None:
+        row = await self._db.fetchone(
+            "SELECT * FROM smart_playlists WHERE id = ?", (sp_id,)
+        )
+        return dict(row) if row else None
+
+    async def create(self, name: str, rules: str, match_mode: str = "all",
+                     sort_by: str = "title", sort_order: str = "asc",
+                     max_tracks: int = 200, description: str | None = None) -> int:
+        result = await self._db.execute(
+            """INSERT INTO smart_playlists (name, description, rules, match_mode,
+               sort_by, sort_order, max_tracks, auto_refresh, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id""",
+            (name, description, rules, match_mode, sort_by, sort_order, max_tracks),
+        )
+        await self._db.commit()
+        return result.lastrowid
+
+    async def update(self, sp_id: int, **kwargs) -> None:
+        fields = []
+        values = []
+        for key in ("name", "description", "rules", "match_mode",
+                     "sort_by", "sort_order", "max_tracks"):
+            if key in kwargs:
+                fields.append(f"{key} = ?")
+                values.append(kwargs[key])
+        if not fields:
+            return
+        fields.append("updated_at = CURRENT_TIMESTAMP")
+        values.append(sp_id)
+        await self._db.execute(
+            f"UPDATE smart_playlists SET {', '.join(fields)} WHERE id = ?",
+            tuple(values),
+        )
+        await self._db.commit()
+
+    async def delete(self, sp_id: int) -> None:
+        await self._db.execute("DELETE FROM smart_playlists WHERE id = ?", (sp_id,))
+        await self._db.commit()
+
+    async def resolve_tracks(self, sp_id: int) -> list:
+        """Resolve a smart playlist's rules into matching tracks."""
+        import json
+        sp = await self.get(sp_id)
+        if not sp:
+            return []
+
+        rules = json.loads(sp["rules"]) if sp["rules"] else []
+        match_mode = sp.get("match_mode", "all")  # "all" = AND, "any" = OR
+        sort_by = sp.get("sort_by", "title")
+        sort_order = sp.get("sort_order", "asc")
+        max_tracks = sp.get("max_tracks", 200)
+
+        conditions = []
+        params = []
+
+        for rule in rules:
+            field = rule.get("field", "")
+            op = rule.get("operator", "contains")
+            value = rule.get("value", "")
+
+            col_map = {
+                "title": "t.title", "artist": "ar.name", "album": "al.title",
+                "genre": "t.genre", "year": "al.year", "format": "t.format",
+                "sample_rate": "t.sample_rate", "bit_depth": "t.bit_depth",
+                "source": "t.source", "composer": "t.composer",
+            }
+            col = col_map.get(field)
+            if not col:
+                continue
+
+            if op == "contains":
+                conditions.append(f"{col} LIKE ?")
+                params.append(f"%{value}%")
+            elif op == "equals":
+                conditions.append(f"{col} = ?")
+                params.append(value)
+            elif op == "not_equals":
+                conditions.append(f"{col} != ?")
+                params.append(value)
+            elif op == "greater_than":
+                conditions.append(f"{col} > ?")
+                params.append(value)
+            elif op == "less_than":
+                conditions.append(f"{col} < ?")
+                params.append(value)
+            elif op == "starts_with":
+                conditions.append(f"{col} LIKE ?")
+                params.append(f"{value}%")
+
+        where = ""
+        if conditions:
+            joiner = " AND " if match_mode == "all" else " OR "
+            where = "WHERE " + joiner.join(conditions)
+
+        sort_col_map = {
+            "title": "t.title", "artist": "ar.name", "album": "al.title",
+            "year": "al.year", "duration": "t.duration_ms",
+            "track_number": "t.track_number", "random": "RANDOM()",
+        }
+        order_col = sort_col_map.get(sort_by, "t.title")
+        order_dir = "DESC" if sort_order == "desc" else "ASC"
+        order = f"ORDER BY {order_col} {order_dir}"
+
+        params.append(max_tracks)
+
+        rows = await self._db.fetchall(
+            f"""SELECT t.*, al.title as album_title, ar.name as artist_name,
+                       al.cover_path as cover_path
+                FROM tracks t
+                LEFT JOIN albums al ON t.album_id = al.id
+                LEFT JOIN artists ar ON t.artist_id = ar.id
+                {where} {order} LIMIT ?""",
+            tuple(params),
+        )
+        return [_row_to_track(r) for r in rows]
 
 
 async def full_text_search(db: Database, query: str, limit: int = 50) -> SearchResult:

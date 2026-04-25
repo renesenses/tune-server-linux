@@ -259,6 +259,72 @@ async def top_artists(limit: int = Query(20, le=100)):
     return await deps.history_repo.top_artists(limit)
 
 
+# --- Smart Playlists ---
+
+@router.get("/smart-playlists")
+async def list_smart_playlists():
+    from tune_server.db.repository import SmartPlaylistRepo
+    repo = SmartPlaylistRepo(deps.db)
+    return await repo.list()
+
+
+@router.post("/smart-playlists")
+async def create_smart_playlist(body: dict):
+    from tune_server.db.repository import SmartPlaylistRepo
+    repo = SmartPlaylistRepo(deps.db)
+    import json
+    sp_id = await repo.create(
+        name=body["name"],
+        rules=json.dumps(body.get("rules", [])),
+        match_mode=body.get("match_mode", "all"),
+        sort_by=body.get("sort_by", "title"),
+        sort_order=body.get("sort_order", "asc"),
+        max_tracks=body.get("max_tracks", 200),
+        description=body.get("description"),
+    )
+    return {"id": sp_id}
+
+
+@router.get("/smart-playlists/{sp_id}")
+async def get_smart_playlist(sp_id: int):
+    from tune_server.db.repository import SmartPlaylistRepo
+    repo = SmartPlaylistRepo(deps.db)
+    sp = await repo.get(sp_id)
+    if not sp:
+        raise HTTPException(status_code=404, detail="Smart playlist not found")
+    return sp
+
+
+@router.put("/smart-playlists/{sp_id}")
+async def update_smart_playlist(sp_id: int, body: dict):
+    from tune_server.db.repository import SmartPlaylistRepo
+    repo = SmartPlaylistRepo(deps.db)
+    import json
+    updates = {}
+    for key in ("name", "description", "match_mode", "sort_by", "sort_order", "max_tracks"):
+        if key in body:
+            updates[key] = body[key]
+    if "rules" in body:
+        updates["rules"] = json.dumps(body["rules"])
+    await repo.update(sp_id, **updates)
+    return await repo.get(sp_id)
+
+
+@router.delete("/smart-playlists/{sp_id}")
+async def delete_smart_playlist(sp_id: int):
+    from tune_server.db.repository import SmartPlaylistRepo
+    repo = SmartPlaylistRepo(deps.db)
+    await repo.delete(sp_id)
+    return {"deleted": sp_id}
+
+
+@router.get("/smart-playlists/{sp_id}/tracks")
+async def get_smart_playlist_tracks(sp_id: int):
+    from tune_server.db.repository import SmartPlaylistRepo
+    repo = SmartPlaylistRepo(deps.db)
+    return await repo.resolve_tracks(sp_id)
+
+
 @router.put("/tracks/{track_id}", response_model=Track)
 async def update_track(track_id: int, req: TrackUpdateRequest):
     track = await deps.track_repo.get(track_id)
