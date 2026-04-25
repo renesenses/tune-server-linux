@@ -2,6 +2,20 @@
 
 All notable changes to Tune Server.
 
+## v0.7.7 — 2026-04-25
+
+### Performance
+- Denormalized album quality (format/sample_rate/bit_depth stored on albums table)
+- Eliminated correlated subquery on album list (was 988M index scans)
+- Album quality refreshed automatically on each scan
+
+### Playback History
+- New playback_history table — records each played track automatically
+- PlaybackHistoryRepo: list_recent, top_tracks, top_artists
+
+### Fixes
+- Clear devices endpoint: POST /clear (was DELETE /all — route conflict)
+
 ## v0.7.6 — 2026-04-24
 
 ### Fixes
