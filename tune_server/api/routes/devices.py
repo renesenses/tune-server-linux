@@ -77,7 +77,7 @@ async def scan_devices():
     return await deps.discovery_manager.rescan()
 
 
-@router.delete("/all")
+@router.post("/clear")
 async def clear_devices():
     """Remove all discovered devices from the list."""
     if not deps.discovery_manager:
