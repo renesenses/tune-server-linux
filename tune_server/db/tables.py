@@ -113,6 +113,8 @@ tracks = sa.Table(
     sa.Column("bpm", sa.Float),
     sa.Column("label", sa.Text),
     sa.Column("custom_tags", sa.Text),
+    sa.Column("waveform_data", sa.Text),
+    sa.Column("waveform_generated_at", sa.DateTime),
     sa.Column("album_title", sa.Text),
     sa.Column("artist_name", sa.Text),
     sa.Column("cover_path", sa.Text),
@@ -589,6 +591,24 @@ zone_group_members = sa.Table(
     sa.Column("volume_offset", sa.Float, server_default="0.0"),
     sa.Column("muted", sa.Boolean, server_default=sa.text("FALSE")),
 )
+
+# ---------------------------------------------------------------------------
+# party_votes
+# ---------------------------------------------------------------------------
+party_votes = sa.Table(
+    "party_votes",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("zone_id", sa.Integer, nullable=False),
+    sa.Column("track_title", sa.Text, nullable=False),
+    sa.Column("track_artist", sa.Text),
+    sa.Column("queue_position", sa.Integer, nullable=False),
+    sa.Column("vote_count", sa.Integer, server_default="1"),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+sa.Index("idx_party_votes_zone", party_votes.c.zone_id)
 
 # ---------------------------------------------------------------------------
 # zone_profiles

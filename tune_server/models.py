@@ -114,6 +114,9 @@ class Track(BaseModel):
     source: Source = Source.LOCAL
     source_id: Optional[str] = None
     isrc: Optional[str] = None
+    bpm: Optional[float] = None
+    waveform_data: Optional[str] = None
+    waveform_generated_at: Optional[str] = None
     credits: list[TrackCredit] | None = None
 
 

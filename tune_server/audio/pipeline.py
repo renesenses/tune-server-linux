@@ -85,6 +85,7 @@ class AudioPipeline:
         bit_depth: int,
         channels: int,
         seek_ms: int = 0,
+        extra_filters: str | None = None,
     ) -> AudioStreamInfo:
         # Check if we can do passthrough
         self._passthrough = can_passthrough(
@@ -104,6 +105,10 @@ class AudioPipeline:
         if self._channel_filter:
             self._passthrough = False
             self._decisions.append(f"passthrough=False (channel_filter={self._channel_filter})")
+
+        if extra_filters:
+            self._passthrough = False
+            self._decisions.append(f"passthrough=False (extra_filters={extra_filters})")
 
         # Resample policy check
         from tune_server.config import settings as _settings
@@ -190,6 +195,7 @@ class AudioPipeline:
                 output_format=out_format if use_flac else None,
                 icy_callback=self._icy_callback if _is_url else None,
                 channel_filter=self._channel_filter,
+                extra_filters=extra_filters,
             )
             await self._decoder.start(seek_ms=seek_ms)
 

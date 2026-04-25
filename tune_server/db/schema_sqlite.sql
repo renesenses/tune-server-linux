@@ -278,3 +278,15 @@ CREATE TABLE IF NOT EXISTS duplicate_tracks (
     detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     resolved INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS party_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zone_id INTEGER NOT NULL,
+    track_title TEXT NOT NULL,
+    track_artist TEXT,
+    queue_position INTEGER NOT NULL,
+    vote_count INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_party_votes_zone ON party_votes(zone_id);

@@ -62,13 +62,14 @@ def _row_to_album(row) -> Album:
 
 
 def _row_to_track(row) -> Track:
+    keys = row.keys()
     return Track(
         id=row["id"],
         title=row["title"],
         album_id=row["album_id"],
-        album_title=row["album_title"] if "album_title" in row.keys() else None,
+        album_title=row["album_title"] if "album_title" in keys else None,
         artist_id=row["artist_id"],
-        artist_name=row["artist_name"] if "artist_name" in row.keys() else None,
+        artist_name=row["artist_name"] if "artist_name" in keys else None,
         disc_number=row["disc_number"],
         track_number=row["track_number"],
         duration_ms=row["duration_ms"],
@@ -77,10 +78,13 @@ def _row_to_track(row) -> Track:
         sample_rate=row["sample_rate"],
         bit_depth=row["bit_depth"],
         channels=row["channels"],
-        cover_path=row["cover_path"] if "cover_path" in row.keys() else None,
+        cover_path=row["cover_path"] if "cover_path" in keys else None,
         source=row["source"],
         source_id=row["source_id"],
-        isrc=row["isrc"] if "isrc" in row.keys() else None,
+        isrc=row["isrc"] if "isrc" in keys else None,
+        bpm=row["bpm"] if "bpm" in keys else None,
+        waveform_data=row["waveform_data"] if "waveform_data" in keys else None,
+        waveform_generated_at=str(row["waveform_generated_at"]) if "waveform_generated_at" in keys and row["waveform_generated_at"] else None,
     )
 
 
@@ -782,6 +786,20 @@ class TrackRepo:
         )
         return [_row_to_track(r) for r in rows]
 
+    async def update_waveform(self, track_id: int, waveform_data: str) -> None:
+        await self._db.execute(
+            "UPDATE tracks SET waveform_data = ?, waveform_generated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (waveform_data, track_id),
+        )
+        await self._db.commit()
+
+    async def update_bpm(self, track_id: int, bpm: float) -> None:
+        await self._db.execute(
+            "UPDATE tracks SET bpm = ? WHERE id = ?",
+            (bpm, track_id),
+        )
+        await self._db.commit()
+
     async def count_by_root(self, root_dir: str) -> int:
         """Count all tracks under a root directory."""
         prefix = root_dir.replace("\\", "/").rstrip("/") + "/"
@@ -1401,6 +1419,68 @@ class SmartPlaylistRepo:
             tuple(params),
         )
         return [_row_to_track(r) for r in rows]
+
+
+class PartyVoteRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def increment(self, zone_id: int, position: int, title: str, artist: str | None) -> int:
+        """Increment vote count. Create row if not exists. Return new count."""
+        row = await self._db.fetchone(
+            "SELECT id, vote_count FROM party_votes WHERE zone_id = ? AND queue_position = ?",
+            (zone_id, position))
+        if row:
+            new_count = row["vote_count"] + 1
+            await self._db.execute(
+                "UPDATE party_votes SET vote_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (new_count, row["id"]))
+            await self._db.commit()
+            return new_count
+        else:
+            await self._db.execute(
+                "INSERT INTO party_votes (zone_id, track_title, track_artist, queue_position, vote_count) VALUES (?, ?, ?, ?, 1)",
+                (zone_id, title, artist, position))
+            await self._db.commit()
+            return 1
+
+    async def get_votes(self, zone_id: int) -> dict[int, int]:
+        """Get all votes for a zone. Returns {position: count}."""
+        rows = await self._db.fetchall(
+            "SELECT queue_position, vote_count FROM party_votes WHERE zone_id = ?", (zone_id,))
+        return {r["queue_position"]: r["vote_count"] for r in rows}
+
+    async def clear(self, zone_id: int) -> int:
+        """Clear all votes for a zone."""
+        result = await self._db.execute(
+            "DELETE FROM party_votes WHERE zone_id = ?", (zone_id,))
+        await self._db.commit()
+        return result.rowcount if hasattr(result, 'rowcount') else 0
+
+    async def swap_positions(self, zone_id: int, pos_a: int, pos_b: int) -> None:
+        """Swap vote records for two queue positions."""
+        row_a = await self._db.fetchone(
+            "SELECT id, vote_count FROM party_votes WHERE zone_id = ? AND queue_position = ?",
+            (zone_id, pos_a))
+        row_b = await self._db.fetchone(
+            "SELECT id, vote_count FROM party_votes WHERE zone_id = ? AND queue_position = ?",
+            (zone_id, pos_b))
+        if row_a and row_b:
+            await self._db.execute(
+                "UPDATE party_votes SET queue_position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (pos_b, row_a["id"]))
+            await self._db.execute(
+                "UPDATE party_votes SET queue_position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (pos_a, row_b["id"]))
+        elif row_a:
+            await self._db.execute(
+                "UPDATE party_votes SET queue_position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (pos_b, row_a["id"]))
+        elif row_b:
+            await self._db.execute(
+                "UPDATE party_votes SET queue_position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (pos_a, row_b["id"]))
+        await self._db.commit()
 
 
 async def full_text_search(db: Database, query: str, limit: int = 50) -> SearchResult:

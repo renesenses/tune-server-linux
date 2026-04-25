@@ -41,6 +41,7 @@ class TrackMetadata:
     bit_depth: int
     channels: int
     has_cover: bool
+    bpm: Optional[float] = None
     credits: list[dict] | None = None
 
 
@@ -307,6 +308,25 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
         # Extract credits from tags
         extracted_credits = _extract_credits(audio, tags)
 
+        # Extract BPM from tags
+        bpm_value = None
+        try:
+            if isinstance(audio, MP3):
+                raw_bpm = _get_first(tags, ["TBPM"]) or None
+            elif isinstance(audio, (FLAC, OggVorbis)):
+                raw_bpm = _get_first(tags, ["BPM", "bpm"]) or None
+            elif isinstance(audio, MP4):
+                tmpo = tags.get("tmpo", [None])
+                raw_bpm = tmpo[0] if tmpo else None
+            else:
+                raw_bpm = _get_first(tags, ["BPM", "bpm", "TBPM"]) or None
+            if raw_bpm is not None:
+                bpm_value = float(str(raw_bpm).strip())
+                if bpm_value <= 0 or bpm_value > 999:
+                    bpm_value = None
+        except (ValueError, TypeError):
+            bpm_value = None
+
         return TrackMetadata(
             title=str(title),
             artist=str(artist),
@@ -322,6 +342,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             bit_depth=bit_depth or 16,
             channels=channels or 2,
             has_cover=has_cover,
+            bpm=bpm_value,
             credits=extracted_credits if extracted_credits else None,
         )
 

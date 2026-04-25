@@ -36,6 +36,7 @@ class FFmpegDecoder:
         output_format: Optional[AudioFormat] = None,
         icy_callback: Optional[IcyMetadataCallback] = None,
         channel_filter: Optional[str] = None,
+        extra_filters: Optional[str] = None,
     ) -> None:
         self._file_path = file_path
         self._sample_rate = sample_rate
@@ -44,6 +45,7 @@ class FFmpegDecoder:
         self._output_format = output_format
         self._icy_callback = icy_callback
         self._channel_filter = channel_filter
+        self._extra_filters = extra_filters
         self._process: asyncio.subprocess.Process | None = None
         self._buffer = AsyncRingBuffer(max_chunks=512)
         self._read_task: asyncio.Task | None = None
@@ -100,6 +102,9 @@ class FFmpegDecoder:
         # Channel filter for stereo pair (extract L or R to mono)
         if self._channel_filter:
             af_filters = f"{af_filters},{self._channel_filter}" if af_filters else self._channel_filter
+        # Extra filters (e.g. atempo for DJ tempo sync)
+        if self._extra_filters:
+            af_filters = f"{af_filters},{self._extra_filters}" if af_filters else self._extra_filters
         if af_filters:
             cmd.extend(["-af", af_filters])
 

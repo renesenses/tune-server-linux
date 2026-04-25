@@ -37,6 +37,8 @@ class DeckState:
         self.position_ms: int = 0
         self.position_start_time: float = 0.0
         self.playing: bool = False
+        self.bpm: float | None = None
+        self.tempo_ratio: float = 1.0
 
     @property
     def current_position_ms(self) -> int:
@@ -57,6 +59,8 @@ class DeckState:
             "position_ms": self.current_position_ms,
             "playing": self.playing,
             "track_id": self.track.id,
+            "bpm": self.bpm,
+            "tempo_ratio": self.tempo_ratio,
         }
 
 
@@ -214,6 +218,8 @@ class DualDeckPlayer:
         deck_state.position_ms = 0
         deck_state.position_start_time = 0.0
         deck_state.playing = False
+        deck_state.bpm = track.bpm if hasattr(track, "bpm") else None
+        deck_state.tempo_ratio = 1.0
 
         # Reset auto-crossfade trigger (new track loaded)
         self._auto_crossfade_triggered = False
@@ -436,6 +442,81 @@ class DualDeckPlayer:
             deck_state.position_start_time = 0.0
             logger.info("dj_deck_paused", deck=deck)
 
+    async def set_tempo_ratio(self, deck: str, ratio: float) -> None:
+        """Set tempo ratio for a deck and restart its pipeline with atempo filter.
+
+        ratio = source_bpm / target_bpm. A ratio of 1.0 means no change.
+        The atempo FFmpeg filter only accepts values between 0.5 and 100.0,
+        so we chain filters if needed.
+        """
+        deck_state = self._get_deck(deck)
+        deck_state.tempo_ratio = ratio
+
+        if not deck_state.track or not deck_state.pipeline:
+            logger.info("dj_tempo_ratio_stored", deck=deck, ratio=ratio)
+            return
+
+        # Restart the pipeline with the new tempo ratio applied via FFmpeg atempo
+        track = deck_state.track
+        was_playing = deck_state.playing
+        position_ms = deck_state.current_position_ms
+
+        # Stop current pipeline
+        await deck_state.pipeline.stop()
+        deck_state.pipeline = None
+
+        # Build atempo filter chain (atempo only supports 0.5-100.0 per instance)
+        atempo_filters = []
+        remaining = ratio
+        while remaining < 0.5:
+            atempo_filters.append("atempo=0.5")
+            remaining /= 0.5
+        while remaining > 100.0:
+            atempo_filters.append("atempo=100.0")
+            remaining /= 100.0
+        atempo_filters.append(f"atempo={remaining:.6f}")
+
+        # Re-create pipeline with tempo filter
+        mix_caps = AudioCapabilities(
+            formats={AudioFormat.WAV},
+            max_sample_rate=min(
+                track.sample_rate or _MIX_SAMPLE_RATE,
+                self._capabilities.max_sample_rate,
+            ),
+            max_bit_depth=min(
+                track.bit_depth or _MIX_BIT_DEPTH,
+                self._capabilities.max_bit_depth,
+            ),
+        )
+
+        source_format = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+
+        pipeline = AudioPipeline(mix_caps)
+        try:
+            stream_info = await asyncio.wait_for(
+                pipeline.start(
+                    file_path=track.file_path,
+                    source_format=source_format,
+                    sample_rate=track.sample_rate or _MIX_SAMPLE_RATE,
+                    bit_depth=track.bit_depth or _MIX_BIT_DEPTH,
+                    channels=track.channels or _MIX_CHANNELS,
+                    extra_filters=",".join(atempo_filters),
+                ),
+                timeout=settings.pipeline_start_timeout,
+            )
+        except Exception as exc:
+            logger.exception("dj_tempo_pipeline_error", deck=deck, ratio=ratio)
+            raise RuntimeError(f"Failed to restart pipeline with tempo {ratio}: {exc}")
+
+        deck_state.pipeline = pipeline
+        deck_state.stream_info = stream_info
+
+        if was_playing:
+            deck_state.playing = True
+            deck_state.position_start_time = time.monotonic()
+
+        logger.info("dj_tempo_ratio_applied", deck=deck, ratio=ratio, filters=atempo_filters)
+
     async def set_deck_gain(self, deck: str, gain: float) -> None:
         """Set the gain for a specific deck (0.0 to 1.0)."""
         gain = max(0.0, min(1.0, gain))
@@ -627,6 +708,8 @@ class DualDeckPlayer:
             "mixing": self._running,
             "deck_a": self._deck_a.to_dict(),
             "deck_b": self._deck_b.to_dict(),
+            "bpm_a": self._deck_a.bpm,
+            "bpm_b": self._deck_b.bpm,
             "auto_crossfade": self._auto_crossfade,
             "auto_crossfade_before_end": self._auto_crossfade_before_end,
         }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -271,6 +272,90 @@ async def dj_status(zone_id: int):
         "auto_crossfade": dj.get("auto_crossfade", False),
         "auto_crossfade_before_end": dj.get("auto_crossfade_before_end", 10),
     }
+
+
+@router.get("/waveform/{track_id}")
+async def get_waveform(track_id: int):
+    """Get waveform data for a track. Generates on-the-fly if not cached."""
+    track = await deps.track_repo.get(track_id)
+    if not track:
+        raise HTTPException(404, "Track not found")
+
+    # Check cache
+    if track.waveform_data:
+        return {"track_id": track_id, "waveform": json.loads(track.waveform_data), "bpm": track.bpm}
+
+    # Generate
+    if not track.file_path:
+        raise HTTPException(400, "Track has no file path")
+
+    from tune_server.audio.analyzer import generate_waveform, detect_bpm
+
+    waveform = await generate_waveform(track.file_path)
+    bpm = track.bpm
+    if not bpm:
+        bpm = await detect_bpm(track.file_path)
+
+    # Cache
+    if waveform:
+        await deps.track_repo.update_waveform(track_id, json.dumps(waveform))
+    if bpm:
+        await deps.track_repo.update_bpm(track_id, bpm)
+
+    return {"track_id": track_id, "waveform": waveform, "bpm": bpm}
+
+
+@router.post("/analyze/{track_id}")
+async def analyze_track(track_id: int):
+    """Analyze a track for BPM and waveform in background."""
+    track = await deps.track_repo.get(track_id)
+    if not track or not track.file_path:
+        raise HTTPException(404, "Track not found or no file")
+
+    async def _analyze():
+        try:
+            from tune_server.audio.analyzer import generate_waveform, detect_bpm
+
+            wf = await generate_waveform(track.file_path)
+            bpm = await detect_bpm(track.file_path)
+            if wf:
+                await deps.track_repo.update_waveform(track_id, json.dumps(wf))
+            if bpm:
+                await deps.track_repo.update_bpm(track_id, bpm)
+            logger.info("dj_analyze_complete", track_id=track_id, bpm=bpm)
+        except Exception:
+            logger.exception("dj_analyze_error", track_id=track_id)
+
+    asyncio.create_task(_analyze())
+    return {"status": "analyzing", "track_id": track_id}
+
+
+@router.post("/sync-tempo/{zone_id}")
+async def sync_tempo(zone_id: int):
+    """Sync tempo of inactive deck to match active deck's BPM."""
+    player = _get_dj_player(zone_id)
+
+    active = player.active_deck
+    source = player.deck_a if active == "a" else player.deck_b
+    target = player.deck_b if active == "a" else player.deck_a
+    target_deck_name = "b" if active == "a" else "a"
+
+    if not source.track or not target.track:
+        raise HTTPException(400, "Both decks must have tracks loaded")
+
+    source_bpm = source.bpm
+    target_bpm = target.bpm
+
+    if not source_bpm or not target_bpm:
+        raise HTTPException(400, "BPM not available for both tracks. Run /dj/analyze first.")
+
+    ratio = source_bpm / target_bpm
+    if ratio < 0.5 or ratio > 2.0:
+        raise HTTPException(400, f"BPM ratio {ratio:.2f} out of range (0.5-2.0)")
+
+    await player.set_tempo_ratio(target_deck_name, ratio)
+
+    return {"source_bpm": source_bpm, "target_bpm": target_bpm, "ratio": round(ratio, 3)}
 
 
 @router.post("/volume/{zone_id}/{deck}")

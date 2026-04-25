@@ -12,9 +12,6 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/party", tags=["party"])
 
-# Votes per zone: {zone_id: {queue_position: vote_count}}
-_party_votes: dict[int, dict[int, int]] = {}
-
 
 class PartyAddRequest(BaseModel):
     query: str  # Search query (title, artist, or album name)
@@ -119,7 +116,10 @@ async def party_queue(zone_id: int | None = None):
     tracks = zone.player.queue.tracks
     pos = zone.player.queue.position
     zid = zone.zone_id
-    zone_votes = _party_votes.get(zid, {})
+
+    # Fetch votes from persistent DB
+    repo = deps.party_vote_repo
+    zone_votes = await repo.get_votes(zid) if repo else {}
 
     # Build played + current items (preserve order)
     played_and_current = []
@@ -164,6 +164,10 @@ async def party_vote(request: PartyVoteRequest):
     if not zone:
         raise HTTPException(status_code=404, detail="No zone available")
 
+    repo = deps.party_vote_repo
+    if not repo:
+        raise HTTPException(status_code=503, detail="Server not ready")
+
     zid = zone.zone_id
     pos = request.position
     queue = zone.player.queue
@@ -174,10 +178,13 @@ async def party_vote(request: PartyVoteRequest):
     if pos <= current_pos:
         raise HTTPException(status_code=400, detail="Cannot vote for already-played or current track")
 
-    # Increment vote
-    zone_votes = _party_votes.setdefault(zid, {})
-    zone_votes[pos] = zone_votes.get(pos, 0) + 1
-    logger.info("party_vote", zone_id=zid, position=pos, votes=zone_votes[pos])
+    # Increment vote in DB
+    track = queue.tracks[pos]
+    new_count = await repo.increment(zid, pos, track.title, track.artist_name)
+    logger.info("party_vote", zone_id=zid, position=pos, votes=new_count)
+
+    # Re-fetch all votes for bubble-sort logic
+    zone_votes = await repo.get_votes(zid)
 
     # Bubble up: swap with the track before if it has fewer votes,
     # but never move into or before the current position.
@@ -189,7 +196,9 @@ async def party_vote(request: PartyVoteRequest):
         if cur_votes > prev_votes:
             # Swap in the actual queue
             queue.move_track(swap_pos, prev)
-            # Swap vote counts
+            # Swap vote positions in DB
+            await repo.swap_positions(zid, swap_pos, prev)
+            # Update local cache for next iteration
             zone_votes[prev], zone_votes[swap_pos] = zone_votes.get(swap_pos, 0), zone_votes.get(prev, 0)
             swap_pos = prev
         else:
@@ -213,8 +222,11 @@ async def party_reset_votes(zone_id: int | None = None):
     if not zone:
         raise HTTPException(status_code=404, detail="No zone available")
 
+    repo = deps.party_vote_repo
+    if not repo:
+        raise HTTPException(status_code=503, detail="Server not ready")
+
     zid = zone.zone_id
-    had_votes = zid in _party_votes and bool(_party_votes[zid])
-    _party_votes.pop(zid, None)
-    logger.info("party_votes_reset", zone_id=zid, had_votes=had_votes)
+    cleared = await repo.clear(zid)
+    logger.info("party_votes_reset", zone_id=zid, cleared=cleared)
     return {"reset": True, "zone_id": zid}

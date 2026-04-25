@@ -14,7 +14,7 @@ from tune_server.db.sa_engine import SADatabase
 from tune_server.db.tables import (
     artists, albums, tracks, playlists, playlist_tracks,
     zones, play_queue, streaming_auth, radio_favorites, radio_stations,
-    user_profiles, user_favorites,
+    user_profiles, user_favorites, party_votes,
 )
 from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track
 
@@ -106,6 +106,9 @@ def _row_to_track(row) -> Track:
         source=row["source"],
         source_id=row["source_id"],
         isrc=row.get("isrc") if "isrc" in keys else None,
+        bpm=row.get("bpm") if "bpm" in keys else None,
+        waveform_data=row.get("waveform_data") if "waveform_data" in keys else None,
+        waveform_generated_at=str(row["waveform_generated_at"]) if "waveform_generated_at" in keys and row.get("waveform_generated_at") else None,
     )
 
 
@@ -681,6 +684,19 @@ class SATrackRepo:
         )
         return {r["file_path"] for r in rows}
 
+    async def update_waveform(self, track_id: int, waveform_data: str) -> None:
+        await self._db.sa_execute(
+            tracks.update().where(tracks.c.id == track_id).values(
+                waveform_data=waveform_data,
+                waveform_generated_at=sa.func.now(),
+            )
+        )
+
+    async def update_bpm(self, track_id: int, bpm: float) -> None:
+        await self._db.sa_execute(
+            tracks.update().where(tracks.c.id == track_id).values(bpm=bpm)
+        )
+
     async def delete_by_paths(self, paths: set[str]) -> int:
         if not paths:
             return 0
@@ -1102,6 +1118,92 @@ class SARadioFavoriteRepo:
             station = str(r["station_name"]).replace('"', '""')
             lines.append(f'"{artist}","{title}","{station}","{r["saved_at"]}"')
         return "\n".join(lines)
+
+
+# ===================================================================
+# PartyVoteRepo — SA Core
+# ===================================================================
+
+class SAPartyVoteRepo:
+    def __init__(self, db: SADatabase) -> None:
+        self._db = db
+
+    async def increment(self, zone_id: int, position: int, title: str, artist: str | None) -> int:
+        """Increment vote count. Create row if not exists. Return new count."""
+        row = await self._db.sa_fetchone(
+            sa.select(party_votes.c.id, party_votes.c.vote_count).where(
+                sa.and_(
+                    party_votes.c.zone_id == zone_id,
+                    party_votes.c.queue_position == position,
+                )
+            )
+        )
+        if row:
+            new_count = row["vote_count"] + 1
+            await self._db.sa_execute(
+                party_votes.update()
+                .where(party_votes.c.id == row["id"])
+                .values(vote_count=new_count, updated_at=sa.func.now())
+            )
+            return new_count
+        else:
+            await self._db.sa_execute(
+                party_votes.insert().values(
+                    zone_id=zone_id,
+                    track_title=title,
+                    track_artist=artist,
+                    queue_position=position,
+                    vote_count=1,
+                )
+            )
+            return 1
+
+    async def get_votes(self, zone_id: int) -> dict[int, int]:
+        """Get all votes for a zone. Returns {position: count}."""
+        rows = await self._db.sa_fetchall(
+            sa.select(party_votes.c.queue_position, party_votes.c.vote_count)
+            .where(party_votes.c.zone_id == zone_id)
+        )
+        return {r["queue_position"]: r["vote_count"] for r in rows}
+
+    async def clear(self, zone_id: int) -> int:
+        """Clear all votes for a zone."""
+        result = await self._db.sa_execute(
+            party_votes.delete().where(party_votes.c.zone_id == zone_id)
+        )
+        return result.rowcount if hasattr(result, 'rowcount') else 0
+
+    async def swap_positions(self, zone_id: int, pos_a: int, pos_b: int) -> None:
+        """Swap vote records for two queue positions."""
+        row_a = await self._db.sa_fetchone(
+            sa.select(party_votes.c.id, party_votes.c.vote_count).where(
+                sa.and_(party_votes.c.zone_id == zone_id, party_votes.c.queue_position == pos_a)
+            )
+        )
+        row_b = await self._db.sa_fetchone(
+            sa.select(party_votes.c.id, party_votes.c.vote_count).where(
+                sa.and_(party_votes.c.zone_id == zone_id, party_votes.c.queue_position == pos_b)
+            )
+        )
+        if row_a and row_b:
+            await self._db.sa_execute(
+                party_votes.update().where(party_votes.c.id == row_a["id"])
+                .values(queue_position=pos_b, updated_at=sa.func.now())
+            )
+            await self._db.sa_execute(
+                party_votes.update().where(party_votes.c.id == row_b["id"])
+                .values(queue_position=pos_a, updated_at=sa.func.now())
+            )
+        elif row_a:
+            await self._db.sa_execute(
+                party_votes.update().where(party_votes.c.id == row_a["id"])
+                .values(queue_position=pos_b, updated_at=sa.func.now())
+            )
+        elif row_b:
+            await self._db.sa_execute(
+                party_votes.update().where(party_votes.c.id == row_b["id"])
+                .values(queue_position=pos_a, updated_at=sa.func.now())
+            )
 
 
 # ===================================================================

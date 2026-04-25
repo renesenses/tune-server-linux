@@ -154,6 +154,9 @@ class SQLiteDatabase:
             "ALTER TABLE albums ADD COLUMN bit_depth INTEGER",
             "ALTER TABLE albums ADD COLUMN artist_name TEXT",
             "ALTER TABLE albums ADD COLUMN bio TEXT",
+            # Waveform analysis columns
+            "ALTER TABLE tracks ADD COLUMN waveform_data TEXT",
+            "ALTER TABLE tracks ADD COLUMN waveform_generated_at TIMESTAMP",
         ]
         for sql in migrations:
             try:
@@ -398,6 +401,24 @@ class SQLiteDatabase:
         )
         await self.connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_track_credits_artist ON track_credits(artist_id)"
+        )
+        await self.commit()
+
+        # Party votes (persistent collaborative votes)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS party_votes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                zone_id INTEGER NOT NULL,
+                track_title TEXT NOT NULL,
+                track_artist TEXT,
+                queue_position INTEGER NOT NULL,
+                vote_count INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_party_votes_zone ON party_votes(zone_id)"
         )
         await self.commit()
 
