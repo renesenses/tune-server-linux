@@ -353,7 +353,8 @@ async def get_track_lyrics(track_id: int):
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    lyrics_text = data.get("plainLyrics") or data.get("syncedLyrics")
+                    synced = data.get("syncedLyrics") or ""
+                    lyrics_text = data.get("plainLyrics") or synced
                     if lyrics_text and lyrics_text.strip():
                         # Cache locally
                         await deps.db.execute(
@@ -373,7 +374,7 @@ async def get_track_lyrics(track_id: int):
                                 )
                         except Exception:
                             pass
-                        return {"lyrics": lyrics_text.strip(), "source": "lrclib"}
+                        return {"lyrics": lyrics_text.strip(), "synced": synced.strip() if synced else None, "source": "lrclib"}
     except Exception:
         pass
 
