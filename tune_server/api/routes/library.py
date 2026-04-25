@@ -310,6 +310,36 @@ async def get_track_lyrics(track_id: int):
         except Exception:
             pass
 
+    # 3. Try online: lrclib.net (free, no API key)
+    try:
+        import aiohttp
+        title = track.title
+        artist = track.artist_name or ""
+        params = {"track_name": title, "artist_name": artist}
+        if track.album_title:
+            params["album_name"] = track.album_title
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://lrclib.net/api/get",
+                params=params,
+                headers={"User-Agent": "TuneServer/0.8.0"},
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    lyrics_text = data.get("plainLyrics") or data.get("syncedLyrics")
+                    if lyrics_text and lyrics_text.strip():
+                        # Cache in DB
+                        await deps.db.execute(
+                            "UPDATE tracks SET lyrics = ? WHERE id = ?",
+                            (lyrics_text.strip(), track_id),
+                        )
+                        await deps.db.commit()
+                        return {"lyrics": lyrics_text.strip(), "source": "lrclib"}
+    except Exception:
+        pass
+
     return {"lyrics": None, "source": None}
 
 
