@@ -85,3 +85,105 @@ async def export_csv():
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=radio_favorites.csv"},
     )
+
+
+@router.post("/create-playlist")
+async def create_playlist_from_favorites(body: dict):
+    """Convert radio favorites into a streaming playlist (Tidal/Qobuz/Spotify).
+
+    body: { "service": "tidal", "playlist_name": "Mes favoris radio", "limit": 200 }
+    """
+    import re
+
+    service_name = body.get("service", "tidal")
+    playlist_name = body.get("playlist_name", "Mes favoris radio")
+    limit = body.get("limit", 200)
+
+    service = deps.streaming_services.get(service_name)
+    if not service:
+        raise HTTPException(400, f"Service '{service_name}' not available")
+    if not service.is_authenticated:
+        raise HTTPException(401, f"Service '{service_name}' not authenticated")
+    if not service.supports_playlist_write:
+        raise HTTPException(400, f"Service '{service_name}' does not support playlist creation")
+
+    # Fetch favorites
+    favorites = await deps.radio_fav_repo.list(limit=limit)
+    if not favorites:
+        raise HTTPException(404, "No radio favorites found")
+
+    def _normalize(s: str) -> str:
+        s = s.lower().strip()
+        s = re.sub(r'\(.*?\)', '', s)
+        s = re.sub(r'\[.*?\]', '', s)
+        s = re.sub(r'\s*-\s*(feat|ft|featuring|remix|remaster|deluxe|bonus).*', '', s, flags=re.IGNORECASE)
+        if s.startswith("the "):
+            s = s[4:]
+        return s.strip()
+
+    # Search and match each favorite
+    matched_ids = []
+    results = {"matched": 0, "approximate": 0, "not_found": 0, "total": len(favorites), "tracks": []}
+
+    for fav in favorites:
+        title = fav.title if hasattr(fav, 'title') else fav.get('title', '')
+        artist = fav.artist if hasattr(fav, 'artist') else fav.get('artist', '')
+        if not title:
+            continue
+
+        query = f"{artist} {title}".strip()
+        try:
+            search_results = await service.search(query, limit=3)
+            best_match = None
+            match_quality = None
+
+            for track in search_results.tracks:
+                t1 = _normalize(title)
+                t2 = _normalize(track.title)
+                a1 = _normalize(artist)
+                a2 = _normalize(track.artist_name or "")
+
+                if t1 == t2 and a1 == a2:
+                    best_match = track
+                    match_quality = "exact"
+                    break
+                elif t1 == t2 or (a1 == a2 and (t1 in t2 or t2 in t1)):
+                    if not best_match:
+                        best_match = track
+                        match_quality = "approximate"
+
+            if best_match and best_match.source_id:
+                matched_ids.append(best_match.source_id)
+                if match_quality == "exact":
+                    results["matched"] += 1
+                else:
+                    results["approximate"] += 1
+                results["tracks"].append({
+                    "title": title, "artist": artist,
+                    "matched_title": best_match.title,
+                    "matched_artist": best_match.artist_name,
+                    "quality": match_quality,
+                })
+            else:
+                results["not_found"] += 1
+                results["tracks"].append({
+                    "title": title, "artist": artist,
+                    "quality": "not_found",
+                })
+        except Exception:
+            results["not_found"] += 1
+
+    # Create playlist and add tracks
+    if matched_ids:
+        try:
+            playlist_id = await service.create_playlist(playlist_name, f"Created from {len(matched_ids)} radio favorites")
+            if playlist_id:
+                added = await service.add_tracks_to_playlist(playlist_id, matched_ids)
+                results["playlist_id"] = playlist_id
+                results["playlist_name"] = playlist_name
+                results["service"] = service_name
+                results["tracks_added"] = added
+        except Exception as e:
+            results["error"] = str(e)
+
+    return results
