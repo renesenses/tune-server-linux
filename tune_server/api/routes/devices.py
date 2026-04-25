@@ -102,6 +102,27 @@ async def get_device(device_id: str):
     return device
 
 
+@router.delete("/{device_id}")
+async def delete_device(device_id: str):
+    """Remove a single discovered device from the list."""
+    if not deps.discovery_manager:
+        raise HTTPException(status_code=503, detail="Discovery not available")
+    removed = False
+    if deps.discovery_manager.ssdp:
+        if device_id in deps.discovery_manager.ssdp._devices:
+            del deps.discovery_manager.ssdp._devices[device_id]
+            deps.discovery_manager.ssdp._dmr_devices.pop(device_id, None)
+            removed = True
+    if deps.discovery_manager.mdns:
+        if device_id in deps.discovery_manager.mdns._devices:
+            del deps.discovery_manager.mdns._devices[device_id]
+            deps.discovery_manager.mdns._atv_configs.pop(device_id, None)
+            removed = True
+    if not removed:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return {"deleted": device_id}
+
+
 @router.post("/{device_id}/pair", response_model=PairResponse)
 async def begin_pairing(device_id: str):
     """Begin AirPlay pairing — the Apple TV will display a PIN code."""
