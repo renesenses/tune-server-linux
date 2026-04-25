@@ -313,6 +313,52 @@ async def get_track_lyrics(track_id: int):
     return {"lyrics": None, "source": None}
 
 
+@router.get("/albums/{album_id}/bio")
+async def get_album_bio(album_id: int):
+    """Get album bio/liner notes from MusicBrainz annotations."""
+    album = await deps.album_repo.get(album_id)
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    import aiohttp
+    artist_name = album.artist_name or ""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://musicbrainz.org/ws/2/release",
+                params={"query": f'release:"{album.title}" AND artist:"{artist_name}"', "limit": 1, "fmt": "json"},
+                headers={"User-Agent": "TuneServer/0.8.0"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return {"bio": None, "source": None}
+                data = await resp.json()
+
+            releases = data.get("releases", [])
+            if not releases:
+                return {"bio": None, "source": None}
+
+            release_id = releases[0]["id"]
+            # Fetch release with annotation
+            async with session.get(
+                f"https://musicbrainz.org/ws/2/release/{release_id}",
+                params={"inc": "annotation", "fmt": "json"},
+                headers={"User-Agent": "TuneServer/0.8.0"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp2:
+                if resp2.status != 200:
+                    return {"bio": None, "source": None}
+                detail = await resp2.json()
+
+            annotation = detail.get("annotation", "")
+            if annotation:
+                return {"bio": annotation, "source": "musicbrainz", "release_id": release_id}
+
+            return {"bio": None, "source": None, "release_id": release_id}
+    except Exception:
+        return {"bio": None, "source": None}
+
+
 @router.get("/artists/{artist_id}/timeline")
 async def get_artist_timeline(artist_id: int):
     """Chronological discography timeline for an artist."""
