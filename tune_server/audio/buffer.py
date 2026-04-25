@@ -38,6 +38,12 @@ class AsyncRingBuffer:
         self._buffer.append(chunk)
         self._not_empty.set()
 
+    def peek(self) -> bytes | None:
+        """Return the next chunk without consuming it."""
+        if self._buffer:
+            return self._buffer[0]
+        return None
+
     async def get(self) -> bytes | None:
         while self.is_empty and not self._closed:
             self._not_empty.clear()

@@ -74,6 +74,7 @@ def _row_to_album(row) -> Album:
         bit_depth=bd,
         format=fmt,
         quality=_quality_from_audio(sr, bd, fmt) if sr or bd or fmt else None,
+        bio=row.get("bio") if "bio" in keys else None,
     )
 
 
@@ -423,6 +424,11 @@ class SAAlbumRepo:
         )
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_album(r) for r in rows]
+
+    async def update_bio(self, album_id: int, bio: str) -> None:
+        await self._db.sa_execute(
+            albums.update().where(albums.c.id == album_id).values(bio=bio)
+        )
 
     async def list_genres(self) -> list[dict]:
         stmt = (

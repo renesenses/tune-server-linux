@@ -383,13 +383,26 @@ async def get_track_lyrics(track_id: int):
 
 @router.get("/albums/{album_id}/bio")
 async def get_album_bio(album_id: int):
-    """Get album bio/liner notes from MusicBrainz annotations."""
+    """Get album bio/liner notes. Checks DB cache first, then MusicBrainz, then mozaiklabs."""
     album = await deps.album_repo.get(album_id)
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
 
+    # 1. Check DB cache
+    try:
+        row = await deps.db.fetchone("SELECT bio FROM albums WHERE id = ?", (album_id,))
+        if row and row["bio"]:
+            return {"bio": row["bio"], "source": "database"}
+    except Exception:
+        pass
+
     import aiohttp
     artist_name = album.artist_name or ""
+    bio_text = None
+    bio_source = None
+    release_id = None
+
+    # 2. Try MusicBrainz annotation (existing logic)
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -398,33 +411,52 @@ async def get_album_bio(album_id: int):
                 headers={"User-Agent": "TuneServer/0.8.0"},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
-                if resp.status != 200:
-                    return {"bio": None, "source": None}
-                data = await resp.json()
-
-            releases = data.get("releases", [])
-            if not releases:
-                return {"bio": None, "source": None}
-
-            release_id = releases[0]["id"]
-            # Fetch release with annotation
-            async with session.get(
-                f"https://musicbrainz.org/ws/2/release/{release_id}",
-                params={"inc": "annotation", "fmt": "json"},
-                headers={"User-Agent": "TuneServer/0.8.0"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp2:
-                if resp2.status != 200:
-                    return {"bio": None, "source": None}
-                detail = await resp2.json()
-
-            annotation = detail.get("annotation", "")
-            if annotation:
-                return {"bio": annotation, "source": "musicbrainz", "release_id": release_id}
-
-            return {"bio": None, "source": None, "release_id": release_id}
+                if resp.status == 200:
+                    data = await resp.json()
+                    releases = data.get("releases", [])
+                    if releases:
+                        release_id = releases[0]["id"]
+                        async with session.get(
+                            f"https://musicbrainz.org/ws/2/release/{release_id}",
+                            params={"inc": "annotation", "fmt": "json"},
+                            headers={"User-Agent": "TuneServer/0.8.0"},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp2:
+                            if resp2.status == 200:
+                                detail = await resp2.json()
+                                annotation = detail.get("annotation", "")
+                                if annotation:
+                                    bio_text = annotation
+                                    bio_source = "musicbrainz"
     except Exception:
-        return {"bio": None, "source": None}
+        logger.debug("album_bio_musicbrainz_error", album_id=album_id)
+
+    # 3. Fallback: mozaiklabs.fr
+    if not bio_text:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://mozaiklabs.fr/api/v1/albums/bio",
+                    params={"title": album.title, "artist": artist_name},
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get("bio"):
+                            bio_text = data["bio"]
+                            bio_source = "mozaiklabs"
+        except Exception:
+            logger.debug("album_bio_mozaiklabs_error", album_id=album_id)
+
+    # 4. Save to DB if found
+    if bio_text:
+        try:
+            await deps.album_repo.update_bio(album_id, bio_text)
+        except Exception:
+            logger.debug("album_bio_save_error", album_id=album_id)
+        return {"bio": bio_text, "source": bio_source, "release_id": release_id}
+
+    return {"bio": None, "source": None, "release_id": release_id}
 
 
 @router.get("/artists/{artist_id}/timeline")

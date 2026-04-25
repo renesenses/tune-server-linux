@@ -82,6 +82,7 @@ class Album(BaseModel):
     bit_depth: Optional[int] = None
     format: Optional[str] = None
     quality: Optional[str] = None  # "hi-res", "cd", "lossy"
+    bio: Optional[str] = None
 
 
 class TrackCredit(BaseModel):

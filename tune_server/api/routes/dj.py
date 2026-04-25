@@ -1,4 +1,4 @@
-"""DJ Mode — dual-deck playback with crossfade transitions."""
+"""DJ Mode — dual-deck playback with PCM mixing and crossfade transitions."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from tune_server.api.deps import deps
 from tune_server.event_bus import Event, EventType
+from tune_server.playback.dj_player import DualDeckPlayer
 
 import structlog
 
@@ -29,6 +30,14 @@ class DJCrossfadeRequest(BaseModel):
     curve: str = "linear"  # linear, equal_power
 
 
+class DJCrossfaderRequest(BaseModel):
+    position: float = 0.0  # -1.0 (full A) to 1.0 (full B)
+
+
+class DJGainRequest(BaseModel):
+    gain: float = 1.0  # 0.0 to 1.0
+
+
 # In-memory DJ state per zone
 _dj_state: dict[int, dict] = {}
 
@@ -37,47 +46,86 @@ def _get_dj(zone_id: int) -> dict:
     if zone_id not in _dj_state:
         _dj_state[zone_id] = {
             "enabled": False,
-            "deck_a": None,  # Track
-            "deck_b": None,  # Track
-            "active_deck": "a",
-            "crossfading": False,
-            "crossfade_duration": 5.0,
+            "player": None,  # DualDeckPlayer
             "auto_crossfade": False,
             "auto_crossfade_before_end": 10,  # seconds before end
         }
     return _dj_state[zone_id]
 
 
+def _get_dj_player(zone_id: int) -> DualDeckPlayer:
+    """Get the DualDeckPlayer for a zone, raising 400 if DJ mode not enabled."""
+    dj = _get_dj(zone_id)
+    if not dj["enabled"] or not dj["player"]:
+        raise HTTPException(400, "DJ mode not enabled")
+    return dj["player"]
+
+
 @router.post("/enable/{zone_id}")
 async def enable_dj(zone_id: int):
-    """Enable DJ mode on a zone."""
+    """Enable DJ mode on a zone — creates a DualDeckPlayer with PCM mixing."""
     zone = deps.zone_manager.get_zone(zone_id)
     if not zone:
         raise HTTPException(404, "Zone not found")
 
     dj = _get_dj(zone_id)
+
+    # If already enabled, return current state
+    if dj["enabled"] and dj["player"]:
+        player: DualDeckPlayer = dj["player"]
+        return {"enabled": True, "zone_id": zone_id, **player.status()}
+
+    # Stop normal playback before entering DJ mode
+    await zone.player.stop()
+
+    # Create the DualDeckPlayer using the zone's output and stream resolver
+    output = zone.player._output
+    event_bus = deps.event_bus
+    stream_url_resolver = zone.player._stream_url_resolver
+    capabilities = output.capabilities if output else None
+
+    player = DualDeckPlayer(
+        zone_id=zone_id,
+        output=output,
+        event_bus=event_bus,
+        stream_url_resolver=stream_url_resolver,
+        capabilities=capabilities,
+    )
+
     dj["enabled"] = True
+    dj["player"] = player
 
-    # Load current track as deck A
+    # Load current track as deck A if something was playing
     track = zone.current_track
+    deck_a_info = None
     if track:
-        dj["deck_a"] = {
-            "title": track.title,
-            "artist": track.artist_name,
-            "album": track.album_title,
-            "cover": track.cover_path,
-            "duration_ms": track.duration_ms,
-        }
-        dj["active_deck"] = "a"
+        try:
+            deck_a_info = await player.load_deck("a", track)
+            await player.play_deck("a")
+        except Exception as exc:
+            logger.warning("dj_enable_load_current_failed", error=str(exc))
 
-    return {"enabled": True, "zone_id": zone_id, "deck_a": dj["deck_a"]}
+    logger.info("dj_mode_enabled", zone_id=zone_id)
+
+    return {"enabled": True, "zone_id": zone_id, "deck_a": deck_a_info}
 
 
 @router.post("/disable/{zone_id}")
 async def disable_dj(zone_id: int):
-    """Disable DJ mode."""
+    """Disable DJ mode — stops the DualDeckPlayer and restores normal playback."""
+    dj = _get_dj(zone_id)
+
+    if dj.get("player"):
+        player: DualDeckPlayer = dj["player"]
+        await player.stop()
+
+    dj["enabled"] = False
+    dj["player"] = None
+
     if zone_id in _dj_state:
         del _dj_state[zone_id]
+
+    logger.info("dj_mode_disabled", zone_id=zone_id)
     return {"enabled": False}
 
 
@@ -91,9 +139,7 @@ async def load_deck(zone_id: int, deck: str, request: DJLoadRequest):
     if not zone:
         raise HTTPException(404, "Zone not found")
 
-    dj = _get_dj(zone_id)
-    if not dj["enabled"]:
-        raise HTTPException(400, "DJ mode not enabled")
+    player = _get_dj_player(zone_id)
 
     # Resolve track
     track = None
@@ -106,72 +152,74 @@ async def load_deck(zone_id: int, deck: str, request: DJLoadRequest):
     if not track:
         raise HTTPException(404, "Track not found")
 
-    deck_info = {
-        "title": track.title,
-        "artist": track.artist_name,
-        "album": track.album_title,
-        "cover": track.cover_path,
-        "duration_ms": track.duration_ms,
-        "track_id": track.id,
-    }
-
-    dj[f"deck_{deck}"] = deck_info
-
-    # If this is the inactive deck, preload it
-    if dj["active_deck"] != deck:
-        # Queue the track for crossfade
-        zone.player.queue.add_tracks([track])
+    try:
+        deck_info = await player.load_deck(deck, track)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
 
     return {"deck": deck, "loaded": deck_info}
+
+
+@router.post("/play/{zone_id}/{deck}")
+async def play_deck(zone_id: int, deck: str):
+    """Start playback on a loaded deck."""
+    if deck not in ("a", "b"):
+        raise HTTPException(400, "Deck must be 'a' or 'b'")
+
+    player = _get_dj_player(zone_id)
+
+    try:
+        await player.play_deck(deck)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+
+    return {"deck": deck, "playing": True}
+
+
+@router.post("/pause/{zone_id}/{deck}")
+async def pause_deck(zone_id: int, deck: str):
+    """Pause playback on a deck."""
+    if deck not in ("a", "b"):
+        raise HTTPException(400, "Deck must be 'a' or 'b'")
+
+    player = _get_dj_player(zone_id)
+    await player.pause_deck(deck)
+
+    return {"deck": deck, "playing": False}
 
 
 @router.post("/crossfade/{zone_id}")
 async def start_crossfade(zone_id: int, request: DJCrossfadeRequest = DJCrossfadeRequest()):
     """Start crossfade from active deck to the other deck."""
-    zone = deps.zone_manager.get_zone(zone_id)
-    if not zone:
-        raise HTTPException(404, "Zone not found")
+    player = _get_dj_player(zone_id)
 
-    dj = _get_dj(zone_id)
-    if not dj["enabled"]:
-        raise HTTPException(400, "DJ mode not enabled")
-
-    target_deck = "b" if dj["active_deck"] == "a" else "a"
-    target_track = dj.get(f"deck_{target_deck}")
-
-    if not target_track:
-        raise HTTPException(400, f"Deck {target_deck} has no track loaded")
-
-    dj["crossfading"] = True
-    dj["crossfade_duration"] = request.duration_seconds
-
-    # Apply crossfade via FFmpeg filter
-    # Set a volume fade-out on current, then skip to next track
-    duration_ms = int(request.duration_seconds * 1000)
-
-    # Use the EQ/filter mechanism to apply fade-out
-    fade_filter = f"afade=t=out:st=0:d={request.duration_seconds}"
-    zone.player.set_channel_filter(fade_filter)
-
-    # Schedule the transition
-    async def _do_crossfade():
-        await asyncio.sleep(request.duration_seconds * 0.8)
-        # Skip to next track (which should be the deck B track)
-        await zone.player.skip_next()
-        # Remove fade filter
-        zone.player.set_channel_filter(None)
-        dj["active_deck"] = target_deck
-        dj["crossfading"] = False
-        logger.info("dj_crossfade_complete", zone_id=zone_id,
-                     from_deck=dj["active_deck"], to_deck=target_deck)
-
-    asyncio.create_task(_do_crossfade())
+    try:
+        await player.start_crossfade(
+            duration_seconds=request.duration_seconds,
+            curve=request.curve,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
 
     return {
         "crossfading": True,
-        "from_deck": dj["active_deck"],
-        "to_deck": target_deck,
+        "from_deck": "a" if player.active_deck == "a" else "b",
+        "to_deck": "b" if player.active_deck == "a" else "a",
         "duration": request.duration_seconds,
+        "curve": request.curve,
+    }
+
+
+@router.post("/crossfader/{zone_id}")
+async def set_crossfader(zone_id: int, request: DJCrossfaderRequest):
+    """Set crossfader position (-1.0 = full A, 0.0 = center, 1.0 = full B)."""
+    player = _get_dj_player(zone_id)
+    await player.set_crossfader(request.position)
+
+    return {
+        "position": request.position,
+        "gain_a": round(player.gain_a, 3),
+        "gain_b": round(player.gain_b, 3),
     }
 
 
@@ -182,8 +230,10 @@ async def toggle_auto_crossfade(zone_id: int, body: dict = {}):
     dj["auto_crossfade"] = body.get("enabled", not dj["auto_crossfade"])
     if "before_end" in body:
         dj["auto_crossfade_before_end"] = body["before_end"]
-    return {"auto_crossfade": dj["auto_crossfade"],
-            "before_end": dj["auto_crossfade_before_end"]}
+    return {
+        "auto_crossfade": dj["auto_crossfade"],
+        "before_end": dj["auto_crossfade_before_end"],
+    }
 
 
 @router.get("/status/{zone_id}")
@@ -191,32 +241,37 @@ async def dj_status(zone_id: int):
     """Get DJ mode status for a zone."""
     dj = _get_dj(zone_id)
 
-    zone = deps.zone_manager.get_zone(zone_id) if deps.zone_manager else None
-    position_ms = zone.player.position_ms if zone else 0
+    if dj["enabled"] and dj["player"]:
+        player: DualDeckPlayer = dj["player"]
+        return {
+            "enabled": True,
+            **player.status(),
+            "auto_crossfade": dj["auto_crossfade"],
+            "auto_crossfade_before_end": dj["auto_crossfade_before_end"],
+        }
 
     return {
-        "enabled": dj["enabled"],
-        "active_deck": dj["active_deck"],
-        "deck_a": dj.get("deck_a"),
-        "deck_b": dj.get("deck_b"),
-        "crossfading": dj["crossfading"],
-        "crossfade_duration": dj["crossfade_duration"],
-        "auto_crossfade": dj["auto_crossfade"],
-        "position_ms": position_ms,
+        "enabled": False,
+        "active_deck": "a",
+        "deck_a": None,
+        "deck_b": None,
+        "crossfading": False,
+        "gain_a": 1.0,
+        "gain_b": 0.0,
+        "mixing": False,
+        "auto_crossfade": dj.get("auto_crossfade", False),
+        "auto_crossfade_before_end": dj.get("auto_crossfade_before_end", 10),
     }
 
 
 @router.post("/volume/{zone_id}/{deck}")
 async def set_deck_volume(zone_id: int, deck: str, body: dict):
-    """Set volume for a specific deck (0.0-1.0)."""
+    """Set gain for a specific deck (0.0-1.0)."""
     if deck not in ("a", "b"):
         raise HTTPException(400, "Deck must be 'a' or 'b'")
 
-    zone = deps.zone_manager.get_zone(zone_id)
-    if not zone:
-        raise HTTPException(404, "Zone not found")
+    player = _get_dj_player(zone_id)
+    gain = max(0.0, min(1.0, float(body.get("volume", 1.0))))
+    await player.set_deck_gain(deck, gain)
 
-    volume = body.get("volume", 1.0)
-    # For now, deck volume maps to zone volume (single-output)
-    await zone.player.set_volume(volume)
-    return {"deck": deck, "volume": volume}
+    return {"deck": deck, "gain": gain}

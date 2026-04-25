@@ -60,6 +60,7 @@ albums = sa.Table(
     sa.Column("sample_rate", sa.Integer),
     sa.Column("bit_depth", sa.Integer),
     sa.Column("artist_name", sa.Text),
+    sa.Column("bio", sa.Text),
 )
 
 sa.Index("idx_albums_title", albums.c.title)

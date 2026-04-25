@@ -57,6 +57,7 @@ def _row_to_album(row) -> Album:
         bit_depth=bd,
         format=fmt,
         quality=_quality_from_audio(sr, bd, fmt) if sr or bd or fmt else None,
+        bio=row["bio"] if "bio" in keys else None,
     )
 
 
@@ -409,6 +410,12 @@ class AlbumRepo:
             )
         await self._db.commit()
         return merged
+
+    async def update_bio(self, album_id: int, bio: str) -> None:
+        await self._db.execute(
+            "UPDATE albums SET bio = ? WHERE id = ?", (bio, album_id)
+        )
+        await self._db.commit()
 
     async def count_without_cover(self) -> int:
         row = await self._db.fetchone(
