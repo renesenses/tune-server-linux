@@ -313,6 +313,50 @@ async def get_track_lyrics(track_id: int):
     return {"lyrics": None, "source": None}
 
 
+@router.get("/artists/{artist_id}/timeline")
+async def get_artist_timeline(artist_id: int):
+    """Chronological discography timeline for an artist."""
+    albums = await deps.album_repo.list_by_artist(artist_id)
+    timeline = []
+    for a in sorted(albums, key=lambda x: x.year or 9999):
+        track_count = a.track_count or 0
+        timeline.append({
+            "album_id": a.id,
+            "title": a.title,
+            "year": a.year,
+            "genre": a.genre,
+            "cover_path": a.cover_path,
+            "track_count": track_count,
+            "format": a.format,
+            "quality": a.quality,
+        })
+    return timeline
+
+
+@router.get("/albums/{album_id}/similar")
+async def get_similar_albums(album_id: int, limit: int = Query(10, le=30)):
+    """Find similar albums in the library based on genre and artist."""
+    album = await deps.album_repo.get(album_id)
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    similar = []
+    # Find albums with same genre
+    if album.genre:
+        genre_albums = await deps.album_repo.list_by_genre(album.genre)
+        for a in genre_albums:
+            if a.id != album_id and a not in similar:
+                similar.append(a)
+    # Find other albums by same artist
+    if album.artist_id:
+        artist_albums = await deps.album_repo.list_by_artist(album.artist_id)
+        for a in artist_albums:
+            if a.id != album_id and a not in similar:
+                similar.append(a)
+
+    return similar[:limit]
+
+
 @router.get("/smart-playlists")
 async def list_smart_playlists():
     from tune_server.db.repository import SmartPlaylistRepo

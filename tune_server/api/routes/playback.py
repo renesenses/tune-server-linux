@@ -291,6 +291,72 @@ async def set_volume(zone_id: int, request: VolumeRequest):
     return zone.to_model()
 
 
+@router.post("/eq")
+async def set_equalizer(zone_id: int, body: dict):
+    """Set EQ preset on a zone. Uses FFmpeg superequalizer filter.
+
+    body: { "preset": "flat|bass_boost|treble_boost|vocal|rock|jazz|classical" }
+    or: { "bands": { "60": 3, "250": -1, "1000": 0, "4000": 2, "16000": 1 } }
+    """
+    zone = _get_zone(zone_id)
+
+    presets = {
+        "flat": None,
+        "bass_boost": "superequalizer=1b=6:2b=4:3b=2",
+        "treble_boost": "superequalizer=15b=4:16b=5:17b=6:18b=5",
+        "vocal": "superequalizer=6b=3:7b=4:8b=3:9b=2",
+        "rock": "superequalizer=1b=4:2b=3:6b=-2:15b=3:16b=4",
+        "jazz": "superequalizer=2b=2:3b=1:7b=3:8b=2:15b=2",
+        "classical": "superequalizer=1b=-2:7b=2:8b=3:15b=2:16b=3",
+    }
+
+    preset = body.get("preset")
+    if preset and preset in presets:
+        zone.player.set_channel_filter(presets[preset])
+        return {"preset": preset, "filter": presets[preset]}
+
+    bands = body.get("bands")
+    if bands:
+        # Build custom superequalizer from frequency bands
+        band_map = {"60": 1, "170": 3, "310": 5, "600": 7, "1000": 9,
+                    "3000": 11, "6000": 13, "12000": 15, "14000": 16, "16000": 17}
+        parts = []
+        for freq, gain in bands.items():
+            band_num = band_map.get(str(freq))
+            if band_num is not None:
+                parts.append(f"{band_num}b={gain}")
+        if parts:
+            eq_filter = "superequalizer=" + ":".join(parts)
+            zone.player.set_channel_filter(eq_filter)
+            return {"preset": "custom", "filter": eq_filter}
+
+    zone.player.set_channel_filter(None)
+    return {"preset": "flat", "filter": None}
+
+
+@router.get("/share")
+async def share_now_playing(zone_id: int):
+    """Generate a shareable 'Now Playing' card."""
+    zone = _get_zone(zone_id)
+    track = zone.current_track
+    if not track:
+        raise HTTPException(status_code=404, detail="Nothing playing")
+
+    cover_url = None
+    if track.cover_path:
+        cover_url = f"/api/v1/library/artwork/{track.cover_path.split('/')[-1]}"
+
+    return {
+        "title": track.title,
+        "artist": track.artist_name,
+        "album": track.album_title,
+        "cover_url": cover_url,
+        "format": track.format.value if track.format else None,
+        "source": track.source.value if track.source else "local",
+        "text": f"🎵 {track.title} — {track.artist_name or 'Unknown'}\n💿 {track.album_title or ''}\n🎧 Tune Server",
+    }
+
+
 @router.post("/shuffle", response_model=ShuffleResponse)
 async def toggle_shuffle(zone_id: int, enabled: bool = True):
     zone = _get_zone(zone_id)
@@ -406,6 +472,39 @@ async def jump_in_queue(zone_id: int, request: QueueJumpRequest):
         raise HTTPException(status_code=400, detail="Invalid queue position")
     await zone.player.play()
     return zone.to_model()
+
+
+@router.post("/transfer/{target_zone_id}")
+async def transfer_playback(zone_id: int, target_zone_id: int):
+    """Transfer current playback (track + queue + position) from one zone to another."""
+    source = _get_zone(zone_id)
+    target = deps.zone_manager.get_zone(target_zone_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target zone not found")
+
+    # Copy queue
+    source_queue = source.player.queue
+    tracks = source_queue.tracks
+    position = source_queue.position
+    seek_ms = source.player.position_ms
+
+    # Stop source
+    await source.player.stop()
+
+    # Load into target
+    if tracks:
+        target.player.queue.clear()
+        target.player.queue.add_tracks(tracks)
+        target.player.queue.jump_to(position)
+        await target.player.play(seek_ms=seek_ms)
+
+    await deps.event_bus.emit(Event(
+        type=EventType.PLAYBACK_QUEUE_CHANGED,
+        data={"zone_id": target_zone_id, "transferred_from": zone_id},
+        source="playback",
+    ))
+
+    return target.to_model()
 
 
 @router.post("/queue/clear", response_model=QueueLengthResponse)
