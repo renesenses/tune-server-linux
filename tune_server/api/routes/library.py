@@ -268,9 +268,13 @@ async def get_track_lyrics(track_id: int):
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")
 
-    # 1. Check DB
-    if track.lyrics:
-        return {"lyrics": track.lyrics, "source": "database"}
+    # 1. Check DB (lyrics column may not be in Track model)
+    try:
+        row = await deps.db.fetchone("SELECT lyrics FROM tracks WHERE id = ?", (track_id,))
+        if row and row["lyrics"]:
+            return {"lyrics": row["lyrics"], "source": "database"}
+    except Exception:
+        pass
 
     # 2. Try file tags
     if track.file_path and not track.file_path.startswith("http"):
