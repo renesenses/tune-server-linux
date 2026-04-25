@@ -120,6 +120,9 @@ class Settings(BaseSettings):
     # Enrichment
     discogs_token: str = ""  # Personal Discogs API token for artist images
     lastfm_api_key: str = ""  # Last.fm API key for metadata enrichment
+    lastfm_api_secret: str = ""  # Last.fm API shared secret for scrobbling
+    lastfm_session_key: str = ""  # Last.fm session key (persisted after auth)
+    lastfm_scrobble_enabled: bool = False  # Enable Last.fm scrobbling
     enrich_on_scan: bool = False  # Auto-enrich after library scan
 
     # Artist metadata (mozaiklabs.fr enrichment API)

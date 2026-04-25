@@ -261,6 +261,58 @@ async def top_artists(limit: int = Query(20, le=100)):
 
 # --- Smart Playlists ---
 
+@router.get("/tracks/{track_id}/lyrics")
+async def get_track_lyrics(track_id: int):
+    """Get lyrics for a track. Tries DB first, then file tags, then online."""
+    track = await deps.track_repo.get(track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="Track not found")
+
+    # 1. Check DB
+    if track.lyrics:
+        return {"lyrics": track.lyrics, "source": "database"}
+
+    # 2. Try file tags
+    if track.file_path and not track.file_path.startswith("http"):
+        try:
+            from mutagen import File as MutagenFile
+            from pathlib import Path
+            if Path(track.file_path).exists():
+                audio = MutagenFile(track.file_path)
+                if audio and audio.tags:
+                    lyrics_text = None
+                    # FLAC/Vorbis
+                    for key in ("lyrics", "LYRICS", "UNSYNCEDLYRICS"):
+                        val = audio.tags.get(key)
+                        if val:
+                            lyrics_text = str(val[0]) if isinstance(val, list) else str(val)
+                            break
+                    # ID3 (MP3)
+                    if not lyrics_text:
+                        for key in audio.tags:
+                            if key.startswith("USLT"):
+                                lyrics_text = str(audio.tags[key])
+                                break
+                    # MP4
+                    if not lyrics_text:
+                        val = audio.tags.get("\xa9lyr")
+                        if val:
+                            lyrics_text = str(val[0]) if isinstance(val, list) else str(val)
+
+                    if lyrics_text and lyrics_text.strip():
+                        # Save to DB for next time
+                        await deps.db.execute(
+                            "UPDATE tracks SET lyrics = ? WHERE id = ?",
+                            (lyrics_text.strip(), track_id),
+                        )
+                        await deps.db.commit()
+                        return {"lyrics": lyrics_text.strip(), "source": "tags"}
+        except Exception:
+            pass
+
+    return {"lyrics": None, "source": None}
+
+
 @router.get("/smart-playlists")
 async def list_smart_playlists():
     from tune_server.db.repository import SmartPlaylistRepo
