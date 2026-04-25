@@ -212,6 +212,10 @@ class TuneServer:
         deps.zone_repo = zone_repo
         deps.radio_repo = radio_repo
         deps.credit_repo = credit_repo
+        from tune_server.db.repository import PlaybackHistoryRepo
+        history_repo = PlaybackHistoryRepo(self._db)
+        deps.history_repo = history_repo
+        self._setup_playback_history(history_repo)
         from tune_server.db.sa_repository import SARadioFavoriteRepo
         deps.radio_fav_repo = SARadioFavoriteRepo(self._db)
 
@@ -373,6 +377,33 @@ class TuneServer:
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
         self._zone_manager.register_output_factory(OutputType.AIRPLAY, create_airplay_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
+
+    def _setup_playback_history(self, history_repo) -> None:
+        """Record each played track in playback_history via EventBus."""
+        async def _on_track_changed(event: Event):
+            data = event.data or {}
+            track_id = data.get("track_id")
+            zone_id = data.get("zone_id")
+            # Fetch full track info from the zone's current track
+            zone = self._zone_manager.get_zone(zone_id) if zone_id else None
+            track = zone.player._queue.current if zone else None
+            if track:
+                try:
+                    await history_repo.record(
+                        track_id=track.id,
+                        zone_id=zone_id,
+                        track_title=track.title,
+                        artist_name=track.artist_name,
+                        album_title=track.album_title,
+                        cover_path=track.cover_path,
+                        duration_ms=track.duration_ms,
+                        listened_ms=zone.player.position_ms if zone else None,
+                        source=track.source.value if track.source else None,
+                    )
+                except Exception:
+                    logger.debug("playback_history_record_error", exc_info=True)
+
+        self._event_bus.on(EventType.PLAYBACK_TRACK_CHANGED, _on_track_changed)
 
     def _setup_streaming_services(self) -> None:
         if settings.tidal_enabled:

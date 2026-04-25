@@ -400,6 +400,28 @@ class SQLiteDatabase:
         )
         await self.commit()
 
+        # Playback history
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS playback_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                track_id INTEGER REFERENCES tracks(id) ON DELETE SET NULL,
+                zone_id INTEGER,
+                track_title TEXT,
+                artist_name TEXT,
+                album_title TEXT,
+                cover_path TEXT,
+                duration_ms INTEGER,
+                listened_ms INTEGER,
+                source TEXT,
+                played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_playback_history_played ON playback_history(played_at DESC)"
+        )
+        await self.commit()
+
     # ------------------------------------------------------------------
     # Backup (SQLite-specific, file-based)
     # ------------------------------------------------------------------

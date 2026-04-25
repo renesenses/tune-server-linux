@@ -187,18 +187,10 @@ class ArtistRepo:
 
 class AlbumRepo:
     _SELECT = """SELECT al.*, ar.name as artist_name,
-               tq.max_sample_rate, tq.max_bit_depth, tq.dominant_format
+               al.sample_rate as max_sample_rate, al.bit_depth as max_bit_depth,
+               al.format as dominant_format
                FROM albums al
-               LEFT JOIN artists ar ON al.artist_id = ar.id
-               LEFT JOIN (
-                   SELECT album_id,
-                          MAX(sample_rate) as max_sample_rate,
-                          MAX(bit_depth) as max_bit_depth,
-                          (SELECT format FROM tracks t2 WHERE t2.album_id = t.album_id
-                           GROUP BY format ORDER BY COUNT(*) DESC LIMIT 1) as dominant_format
-                   FROM tracks t WHERE album_id IS NOT NULL
-                   GROUP BY album_id
-               ) tq ON tq.album_id = al.id"""
+               LEFT JOIN artists ar ON al.artist_id = ar.id"""
 
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -337,6 +329,22 @@ class AlbumRepo:
              album.source, album.source_id, album.id),
         )
         await self._db.commit()
+
+    async def refresh_quality(self, album_id: int) -> None:
+        """Recompute and store format/sample_rate/bit_depth from tracks."""
+        row = await self._db.fetchone(
+            """SELECT MAX(sample_rate) as sr, MAX(bit_depth) as bd,
+                      (SELECT format FROM tracks WHERE album_id = ? AND format IS NOT NULL
+                       GROUP BY format ORDER BY COUNT(*) DESC LIMIT 1) as fmt
+               FROM tracks WHERE album_id = ?""",
+            (album_id, album_id),
+        )
+        if row:
+            await self._db.execute(
+                "UPDATE albums SET sample_rate=?, bit_depth=?, format=? WHERE id=?",
+                (row["sr"], row["bd"], row["fmt"], album_id),
+            )
+            await self._db.commit()
 
     async def get_dominant_sample_rate(self, album_id: int) -> int | None:
         """Return the most common sample_rate among an album's tracks, or None if empty."""
@@ -1203,6 +1211,53 @@ class TrackCreditRepo:
             (artist_id,),
         )
         return [r["instrument"] for r in rows]
+
+
+class PlaybackHistoryRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def record(self, track_id: int | None, zone_id: int | None,
+                     track_title: str, artist_name: str | None, album_title: str | None,
+                     cover_path: str | None, duration_ms: int | None,
+                     listened_ms: int | None, source: str | None) -> None:
+        await self._db.execute(
+            """INSERT INTO playback_history
+               (track_id, zone_id, track_title, artist_name, album_title,
+                cover_path, duration_ms, listened_ms, source, played_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (track_id, zone_id, track_title, artist_name, album_title,
+             cover_path, duration_ms, listened_ms, source),
+        )
+        await self._db.commit()
+
+    async def list_recent(self, limit: int = 50) -> list[dict]:
+        rows = await self._db.fetchall(
+            "SELECT * FROM playback_history ORDER BY played_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in rows]
+
+    async def top_tracks(self, limit: int = 20) -> list[dict]:
+        rows = await self._db.fetchall(
+            """SELECT track_title, artist_name, album_title, cover_path,
+                      COUNT(*) as play_count, MAX(played_at) as last_played
+               FROM playback_history
+               WHERE track_id IS NOT NULL
+               GROUP BY track_id ORDER BY play_count DESC LIMIT ?""",
+            (limit,),
+        )
+        return [dict(r) for r in rows]
+
+    async def top_artists(self, limit: int = 20) -> list[dict]:
+        rows = await self._db.fetchall(
+            """SELECT artist_name, COUNT(*) as play_count, MAX(played_at) as last_played
+               FROM playback_history
+               WHERE artist_name IS NOT NULL AND artist_name != ''
+               GROUP BY artist_name ORDER BY play_count DESC LIMIT ?""",
+            (limit,),
+        )
+        return [dict(r) for r in rows]
 
 
 async def full_text_search(db: Database, query: str, limit: int = 50) -> SearchResult:

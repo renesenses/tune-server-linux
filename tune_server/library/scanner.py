@@ -315,8 +315,9 @@ class LibraryScanner:
             await self._track_repo.update_mtime(file_path, mtime)
             await self._track_repo.update_audio_hash(file_path, audio_hash)
 
-            # Update album track count
+            # Update album track count + quality stats
             await self._album_repo.update_track_count(album.id)
+            await self._album_repo.refresh_quality(album.id)
 
             # Save track credits
             if self._credit_repo and metadata.credits:

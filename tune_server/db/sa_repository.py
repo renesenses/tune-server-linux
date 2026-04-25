@@ -270,44 +270,16 @@ class SAAlbumRepo:
         self._db = db
 
     def _album_select(self):
-        """Base SELECT with artist name and track quality stats."""
-        # Track quality subquery — simple aggregation, no correlated subquery
-        tq = (
-            sa.select(
-                tracks.c.album_id,
-                sa.func.max(tracks.c.sample_rate).label("max_sample_rate"),
-                sa.func.max(tracks.c.bit_depth).label("max_bit_depth"),
-            )
-            .where(tracks.c.album_id.isnot(None))
-            .group_by(tracks.c.album_id)
-            .subquery("tq")
-        )
-        # Dominant format as correlated scalar subquery on main albums table
-        dominant_fmt = (
-            sa.select(tracks.c.format)
-            .where(tracks.c.album_id == albums.c.id)
-            .where(tracks.c.format.isnot(None))
-            .order_by(
-                sa.case((tracks.c.sample_rate.is_(None), 1), else_=0),
-                tracks.c.sample_rate.desc(),
-                sa.case((tracks.c.bit_depth.is_(None), 1), else_=0),
-                tracks.c.bit_depth.desc(),
-            )
-            .limit(1)
-            .correlate(albums)
-            .scalar_subquery()
-            .label("dominant_format")
-        )
+        """Base SELECT with artist name and denormalized quality columns."""
         return (
             sa.select(
                 albums,
                 sa.func.coalesce(artists.c.name, albums.c.artist_name).label("artist_name_resolved"),
-                tq.c.max_sample_rate,
-                tq.c.max_bit_depth,
-                dominant_fmt,
+                albums.c.sample_rate.label("max_sample_rate"),
+                albums.c.bit_depth.label("max_bit_depth"),
+                albums.c.format.label("dominant_format"),
             )
             .outerjoin(artists, albums.c.artist_id == artists.c.id)
-            .outerjoin(tq, tq.c.album_id == albums.c.id)
         )
 
     async def get(self, album_id: int) -> Optional[Album]:
