@@ -411,6 +411,31 @@ class TuneServer:
 
         self._event_bus.on(EventType.PLAYBACK_TRACK_CHANGED, _on_track_changed)
 
+        # Last.fm scrobbling
+        if settings.lastfm_scrobble_enabled and settings.lastfm_api_key and settings.lastfm_api_secret:
+            from tune_server.metadata.lastfm_scrobbler import LastfmScrobbler
+            scrobbler = LastfmScrobbler(
+                api_key=settings.lastfm_api_key,
+                api_secret=settings.lastfm_api_secret,
+                session_key=settings.lastfm_session_key or None,
+            )
+
+            async def _on_scrobble(event: Event):
+                data = event.data or {}
+                zone_id = data.get("zone_id")
+                zone = self._zone_manager.get_zone(zone_id) if zone_id else None
+                track = zone.player._queue.current if zone else None
+                if track and track.artist_name and scrobbler.is_authenticated:
+                    await scrobbler.scrobble(
+                        artist=track.artist_name,
+                        track=track.title,
+                        album=track.album_title,
+                        duration=track.duration_ms,
+                    )
+
+            self._event_bus.on(EventType.PLAYBACK_TRACK_CHANGED, _on_scrobble)
+            logger.info("lastfm_scrobbling_enabled")
+
     def _setup_streaming_services(self) -> None:
         if settings.tidal_enabled:
             from tune_server.streaming.tidal import TidalService
