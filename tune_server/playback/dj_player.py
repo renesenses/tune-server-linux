@@ -101,6 +101,11 @@ class DualDeckPlayer:
         self._crossfade_task: asyncio.Task | None = None
         self._crossfading = False
 
+        # Auto-crossfade
+        self._auto_crossfade = False
+        self._auto_crossfade_before_end = 10  # seconds
+        self._auto_crossfade_triggered = False  # prevent double-trigger
+
         # Output stream info (set when mixing starts)
         self._output_started = False
         self._mix_stream_info: AudioStreamInfo | None = None
@@ -131,6 +136,12 @@ class DualDeckPlayer:
 
     def _get_deck(self, deck: str) -> DeckState:
         return self._deck_a if deck == "a" else self._deck_b
+
+    def set_auto_crossfade(self, enabled: bool, before_end: int = 10) -> None:
+        """Configure auto-crossfade (triggers crossfade N seconds before track end)."""
+        self._auto_crossfade = enabled
+        self._auto_crossfade_before_end = before_end
+        self._auto_crossfade_triggered = False
 
     async def load_deck(self, deck: str, track: Track) -> dict:
         """Load a track onto deck A or B. Resolves streaming URLs if needed.
@@ -203,6 +214,9 @@ class DualDeckPlayer:
         deck_state.position_ms = 0
         deck_state.position_start_time = 0.0
         deck_state.playing = False
+
+        # Reset auto-crossfade trigger (new track loaded)
+        self._auto_crossfade_triggered = False
 
         logger.info(
             "dj_deck_loaded",
@@ -343,6 +357,46 @@ class DualDeckPlayer:
                     except (IOError, ConnectionError, OSError):
                         logger.warning("dj_output_write_failed", zone_id=self._zone_id)
                         break
+
+                # --- Auto-crossfade detection ---
+                if (
+                    self._auto_crossfade
+                    and not self._crossfading
+                    and not self._auto_crossfade_triggered
+                ):
+                    active = self._deck_a if self._active_deck == "a" else self._deck_b
+                    if (
+                        active.playing
+                        and active.track
+                        and active.track.duration_ms
+                        and active.track.duration_ms > 0
+                    ):
+                        remaining_ms = active.track.duration_ms - active.current_position_ms
+                        threshold_ms = self._auto_crossfade_before_end * 1000
+                        if remaining_ms <= threshold_ms:
+                            self._auto_crossfade_triggered = True
+                            other_deck = "b" if self._active_deck == "a" else "a"
+                            other = self._get_deck(other_deck)
+                            if other.track and other.pipeline:
+                                logger.info(
+                                    "dj_auto_crossfade_triggered",
+                                    active_deck=self._active_deck,
+                                    target_deck=other_deck,
+                                    remaining_ms=remaining_ms,
+                                    before_end=self._auto_crossfade_before_end,
+                                )
+                                try:
+                                    await self.start_crossfade(
+                                        duration_seconds=min(self._auto_crossfade_before_end, 5.0),
+                                    )
+                                except RuntimeError as exc:
+                                    logger.warning("dj_auto_crossfade_failed", error=str(exc))
+                            else:
+                                logger.debug(
+                                    "dj_auto_crossfade_no_target",
+                                    active_deck=self._active_deck,
+                                    target_deck=other_deck,
+                                )
 
         except asyncio.CancelledError:
             logger.debug("dj_mixing_loop_cancelled", zone_id=self._zone_id)
@@ -492,6 +546,9 @@ class DualDeckPlayer:
                 self._gain_a = 0.0
                 self._gain_b = 1.0
 
+            # Reset auto-crossfade trigger so it can fire again for the new active track
+            self._auto_crossfade_triggered = False
+
             logger.info(
                 "dj_crossfade_complete",
                 active_deck=self._active_deck,
@@ -570,4 +627,6 @@ class DualDeckPlayer:
             "mixing": self._running,
             "deck_a": self._deck_a.to_dict(),
             "deck_b": self._deck_b.to_dict(),
+            "auto_crossfade": self._auto_crossfade,
+            "auto_crossfade_before_end": self._auto_crossfade_before_end,
         }

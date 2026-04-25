@@ -95,6 +95,10 @@ async def enable_dj(zone_id: int):
     dj["enabled"] = True
     dj["player"] = player
 
+    # Apply previously configured auto-crossfade settings
+    if dj["auto_crossfade"]:
+        player.set_auto_crossfade(dj["auto_crossfade"], dj["auto_crossfade_before_end"])
+
     # Load current track as deck A if something was playing
     track = zone.current_track
     deck_a_info = None
@@ -230,6 +234,11 @@ async def toggle_auto_crossfade(zone_id: int, body: dict = {}):
     dj["auto_crossfade"] = body.get("enabled", not dj["auto_crossfade"])
     if "before_end" in body:
         dj["auto_crossfade_before_end"] = body["before_end"]
+
+    # Propagate to the live player if DJ mode is active
+    if dj.get("player"):
+        dj["player"].set_auto_crossfade(dj["auto_crossfade"], dj["auto_crossfade_before_end"])
+
     return {
         "auto_crossfade": dj["auto_crossfade"],
         "before_end": dj["auto_crossfade_before_end"],
