@@ -235,6 +235,30 @@ async def library_stats():
     )
 
 
+@router.get("/history")
+async def playback_history(limit: int = Query(50, le=200)):
+    """Recently played tracks."""
+    if not deps.history_repo:
+        return []
+    return await deps.history_repo.list_recent(limit)
+
+
+@router.get("/history/top-tracks")
+async def top_tracks(limit: int = Query(20, le=100)):
+    """Most played tracks."""
+    if not deps.history_repo:
+        return []
+    return await deps.history_repo.top_tracks(limit)
+
+
+@router.get("/history/top-artists")
+async def top_artists(limit: int = Query(20, le=100)):
+    """Most played artists."""
+    if not deps.history_repo:
+        return []
+    return await deps.history_repo.top_artists(limit)
+
+
 @router.put("/tracks/{track_id}", response_model=Track)
 async def update_track(track_id: int, req: TrackUpdateRequest):
     track = await deps.track_repo.get(track_id)
