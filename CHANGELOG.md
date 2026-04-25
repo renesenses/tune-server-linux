@@ -2,6 +2,28 @@
 
 All notable changes to Tune Server.
 
+## v0.7.8 — 2026-04-25
+
+### Dashboard
+- "Mes écoutes" on home page: recently played, top artists, top tracks with covers
+- Playback history recorded automatically (played_at, duration, source)
+
+### Now Playing
+- Credits button showing musicians and instruments for current track
+
+### Smart Playlists
+- Dynamic playlists with rule builder (10 fields, 6 operators, AND/OR)
+- Visual UI: create, edit, delete, play all
+- Sort by title/artist/album/year/random
+
+### Performance
+- Album quality denormalized (eliminates 988M index scans per session)
+- Album format/sample_rate/bit_depth refreshed on scan
+
+### Devices
+- Delete individual device button in Settings
+- Clear all devices button
+
 ## v0.7.7 — 2026-04-25
 
 ### Performance
