@@ -99,10 +99,10 @@ def _resolve_zone(zone_id: int | None = None):
         return None
     if zone_id:
         return deps.zone_manager.get_zone(zone_id)
-    for z in deps.zone_manager.zones.values():
+    for z in deps.zone_manager.list_zones():
         if z.player.state.value == "playing":
             return z
-    zones = list(deps.zone_manager.zones.values())
+    zones = list(deps.zone_manager.list_zones())
     return zones[0] if zones else None
 
 
