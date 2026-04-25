@@ -40,20 +40,20 @@ class LatencyMeasurer:
         if output_type == "local":
             return 10  # PortAudio kernel buffer latency
 
-        # Measure network round-trip via position query
+        # Measure network round-trip via position query.
+        # get_position_ms() calls the renderer's UPnP endpoint regardless of
+        # playback state, so the RTT can be measured on stopped zones too.
         latencies = []
         for _ in range(samples):
             try:
                 start = time.monotonic()
-                pos = await asyncio.wait_for(
+                await asyncio.wait_for(
                     output.get_position_ms(),
                     timeout=2.0,
                 )
                 elapsed_ms = (time.monotonic() - start) * 1000
-
-                if pos >= 0:
-                    # One-way latency ≈ round-trip / 2
-                    latencies.append(elapsed_ms / 2)
+                # One-way latency ≈ round-trip / 2
+                latencies.append(elapsed_ms / 2)
             except Exception:
                 pass
             await asyncio.sleep(0.1)

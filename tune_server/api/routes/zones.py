@@ -127,24 +127,32 @@ async def list_stereo_pairs():
     return deps.zone_manager.get_stereo_pairs()
 
 
-def _resolve_zone_manufacturer(output_device_id: str | None) -> str:
-    """Return the manufacturer string for a zone's output device, or empty string."""
+def _resolve_zone_brand_key(output_device_id: str | None) -> str:
+    """Return a brand identifier for a zone's output device.
+
+    Priority order:
+    1. capabilities["manufacturer"] — populated by ssdp.py since v0.8.x
+    2. capabilities["model"]       — always present for DLNA devices; model
+       names are manufacturer-unique in practice (e.g. "Era 100" is Sonos-only)
+    3. Empty string                — unknown / local / AirPlay without info
+    """
     if not output_device_id or not deps.discovery_manager:
         return ""
     device = deps.discovery_manager.get_device(output_device_id)
-    if device:
-        return device.capabilities.get("manufacturer", "")
-    return ""
+    if not device:
+        return ""
+    caps = device.capabilities
+    return caps.get("manufacturer") or caps.get("model") or ""
 
 
 def _brand_info(zone_instances: list) -> tuple[bool, str]:
     """Compute (auto_synced, group_manufacturer) for a list of ZoneInstance.
 
-    auto_synced is True when all zones share the same non-empty manufacturer,
-    meaning their DLNA buffering latency is identical and no calibration is needed.
+    auto_synced is True when every zone has the same non-empty brand key,
+    meaning their buffering latency is identical and calibration is not needed.
     """
-    manufacturers = [_resolve_zone_manufacturer(z.output_device_id) for z in zone_instances]
-    non_empty = [m for m in manufacturers if m]
+    keys = [_resolve_zone_brand_key(z.output_device_id) for z in zone_instances]
+    non_empty = [k for k in keys if k]
     if non_empty and len(set(non_empty)) == 1 and len(non_empty) == len(zone_instances):
         return True, non_empty[0]
     return False, ""

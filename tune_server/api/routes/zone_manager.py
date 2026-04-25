@@ -386,23 +386,18 @@ async def measure_latency(zone_id: int):
 @router.post("/groups/{group_id}/calibrate")
 async def calibrate_group(group_id: str):
     """Auto-calibrate sync delays for all zones in a group."""
-    zm = deps.zone_manager
+    gm = deps.group_manager
+    if not gm:
+        raise HTTPException(status_code=503, detail="Zone grouping not available")
 
-    # Find leader and followers
-    group_row = await deps.db.fetchone("SELECT * FROM zone_groups WHERE id = ?", (group_id,))
-    if not group_row:
+    # Groups are managed in-memory by GroupManager — no DB lookup needed.
+    group = gm.get_group(group_id)
+    if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    leader = zm.get_zone(group_row["leader_zone_id"])
-    if not leader:
-        raise HTTPException(status_code=404, detail="Leader zone not found")
-
-    member_rows = await deps.db.fetchall(
-        "SELECT zone_id FROM zone_group_members WHERE group_id = ?", (group_id,))
-    followers = [zm.get_zone(m["zone_id"]) for m in member_rows
-                 if m["zone_id"] != leader.zone_id and zm.get_zone(m["zone_id"])]
-
-    results = await LatencyMeasurer.auto_calibrate_group(leader, followers, db=deps.db)
+    results = await LatencyMeasurer.auto_calibrate_group(
+        group.leader, group.followers, db=deps.db
+    )
     return {"group_id": group_id, "calibration": results}
 
 
