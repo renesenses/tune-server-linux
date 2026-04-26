@@ -89,13 +89,16 @@ def _mock_pipeline(close_immediately: bool = True, stream_info: AudioStreamInfo 
 class TestScannerRaceCondition:
     """Verify that files added by the watcher during a scan aren't deleted."""
 
+    @patch("tune_server.library.scanner.compute_audio_hash")
     @patch("tune_server.library.scanner.get_album_artwork", return_value=None)
     @patch("tune_server.library.scanner.read_metadata")
-    async def test_watcher_added_file_not_deleted(self, mock_read, mock_art, db, event_bus, tmp_path):
+    async def test_watcher_added_file_not_deleted(self, mock_read, mock_art, mock_hash, db, event_bus, tmp_path):
         """Files added via scan_single during a scan must survive the removal step."""
         from tune_server.library.scanner import LibraryScanner
 
         mock_read.return_value = _make_metadata()
+        # Distinct hashes so the dedup-by-audio-hash logic doesn't collapse f1 and f2.
+        mock_hash.side_effect = lambda path: f"hash-{path}"
         scanner = LibraryScanner(db, event_bus)
 
         # Create initial file and scan

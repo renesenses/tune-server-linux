@@ -48,10 +48,13 @@ async def test_scan_empty_dir(mock_read, mock_art, scanner, tmp_path):
     assert stats["removed"] == 0
 
 
+@patch("tune_server.library.scanner.compute_audio_hash")
 @patch("tune_server.library.scanner.get_album_artwork", return_value=None)
 @patch("tune_server.library.scanner.read_metadata")
-async def test_scan_adds_tracks(mock_read, mock_art, scanner, tmp_path):
+async def test_scan_adds_tracks(mock_read, mock_art, mock_hash, scanner, tmp_path):
     mock_read.return_value = _make_metadata()
+    # Distinct hashes so the audio-content dedup doesn't drop the second file.
+    mock_hash.side_effect = lambda path: f"hash-{path}"
 
     # Create mock FLAC files
     (tmp_path / "track1.flac").touch()
@@ -336,14 +339,16 @@ async def test_album_get_or_create_reuses_existing(
 # ---------------------------------------------------------------------------
 
 
+@patch("tune_server.library.scanner.compute_audio_hash")
 @patch("tune_server.library.scanner.fetch_cover_from_musicbrainz", return_value=None)
 @patch("tune_server.library.scanner.get_album_artwork", return_value=None)
 @patch("tune_server.library.scanner.read_metadata")
 async def test_quality_based_album_split(
-    mock_read, mock_art, mock_mb, scanner, tmp_path
+    mock_read, mock_art, mock_mb, mock_hash, scanner, tmp_path
 ):
     """Tracks with different sample rates should be split into separate albums."""
     from tune_server.library.metadata_reader import TrackMetadata
+    mock_hash.side_effect = lambda path: f"hash-{path}"
 
     # First track: CD quality
     cd_meta = TrackMetadata(
@@ -464,14 +469,16 @@ async def test_scan_dir_with_non_audio_files(mock_read, mock_art, scanner, tmp_p
 # ---------------------------------------------------------------------------
 
 
+@patch("tune_server.library.scanner.compute_audio_hash")
 @patch("tune_server.library.scanner.fetch_cover_from_musicbrainz", return_value=None)
 @patch("tune_server.library.scanner.get_album_artwork", return_value=None)
 @patch("tune_server.library.scanner.read_metadata")
 async def test_scan_nested_subdirectories(
-    mock_read, mock_art, mock_mb, scanner, tmp_path
+    mock_read, mock_art, mock_mb, mock_hash, scanner, tmp_path
 ):
     """Scanner should recurse into nested subdirectories to find audio files."""
     mock_read.return_value = _make_metadata()
+    mock_hash.side_effect = lambda path: f"hash-{path}"
 
     # Create nested structure: Artist/Album/track.flac
     nested = tmp_path / "Artist" / "Album"

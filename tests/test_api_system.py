@@ -74,13 +74,13 @@ async def test_list_devices_no_discovery(app_client):
 
 
 async def test_get_device_no_discovery(app_client):
-    from fastapi.exceptions import ResponseValidationError
     from tune_server.api.deps import deps
 
     deps.discovery_manager = None
-    # The route returns {"error": ...} which doesn't match DiscoveredDevice model
-    with pytest.raises(ResponseValidationError):
-        await app_client.get("/api/v1/devices/some-id")
+    # Route now raises HTTPException(503) when discovery_manager is missing
+    # instead of returning an unvalidated dict.
+    resp = await app_client.get("/api/v1/devices/some-id")
+    assert resp.status_code == 503
 
 
 # --- Streaming ---

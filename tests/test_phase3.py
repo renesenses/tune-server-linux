@@ -555,7 +555,9 @@ class TestAirPlayRecovery:
         async def quick_op():
             pass
 
-        result = await output._remote_call("test", quick_op())
+        # _remote_call now takes a callable factory (lambda/coroutine func),
+        # not an already-awaited coroutine instance.
+        result = await output._remote_call("test", quick_op)
         assert result is True
         assert output._available is True
 

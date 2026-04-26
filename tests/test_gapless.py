@@ -92,9 +92,11 @@ async def test_take_pipeline(mock_pipeline_cls, handler, sample_track, mock_stre
     await handler.preload(sample_track)
     await handler._preload_task
 
-    pipeline, info = handler.take_pipeline()
+    pipeline, info, chunks = handler.take_pipeline()
     assert pipeline is mock_pipeline
     assert info is mock_stream_info
+    # chunks list is whatever was pre-buffered during preload (mocked).
+    assert isinstance(chunks, list)
 
 
 @patch("tune_server.playback.gapless.AudioPipeline")
