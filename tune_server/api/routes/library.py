@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
@@ -338,20 +339,30 @@ async def history_dashboard():
             "new_artists_discovered": 0, "sources": [],
         }
 
+    # Compute cutoffs in Python — avoids DB-specific INTERVAL syntax (SQLite vs PostgreSQL).
+    now = datetime.now(tz=timezone.utc)
+    cutoff_30d = now - timedelta(days=30)
+    cutoff_14d = now - timedelta(days=14)
+    is_postgres = settings.db_engine == "postgres"
+    hour_expr = "EXTRACT(HOUR FROM played_at)::INTEGER" if is_postgres \
+        else "CAST(strftime('%H', played_at) AS INTEGER)"
+
     # Total listening time (last 30 days)
     total_row = await deps.db.fetchone(
         """SELECT COUNT(*) as plays, COALESCE(SUM(listened_ms), 0) as total_ms
            FROM playback_history
-           WHERE played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'""",
+           WHERE played_at > ?""",
+        (cutoff_30d,),
     )
 
     # Plays per day (last 14 days)
     daily_rows = await deps.db.fetchall(
         """SELECT DATE(played_at) as day, COUNT(*) as plays, COALESCE(SUM(listened_ms), 0) as ms
            FROM playback_history
-           WHERE played_at > CURRENT_TIMESTAMP - INTERVAL '14 days'
+           WHERE played_at > ?
            GROUP BY DATE(played_at)
            ORDER BY day""",
+        (cutoff_14d,),
     )
 
     # Genre distribution (join through tracks -> albums for genre)
@@ -360,41 +371,45 @@ async def history_dashboard():
            FROM playback_history ph
            JOIN tracks t ON ph.track_id = t.id
            JOIN albums a ON t.album_id = a.id
-           WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '30 days' AND a.genre IS NOT NULL
+           WHERE ph.played_at > ? AND a.genre IS NOT NULL
            GROUP BY a.genre
            ORDER BY plays DESC
            LIMIT 10""",
+        (cutoff_30d,),
     )
 
     # Listening by hour of day
     hourly_rows = await deps.db.fetchall(
-        """SELECT EXTRACT(HOUR FROM played_at)::INTEGER as hour, COUNT(*) as plays
+        f"""SELECT {hour_expr} as hour, COUNT(*) as plays
            FROM playback_history
-           WHERE played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
+           WHERE played_at > ?
            GROUP BY hour
            ORDER BY hour""",
+        (cutoff_30d,),
     )
 
     # New artists discovered (first listen in last 30 days)
     new_artists_row = await deps.db.fetchone(
         """SELECT COUNT(DISTINCT ph.artist_name)
            FROM playback_history ph
-           WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
+           WHERE ph.played_at > ?
            AND ph.artist_name IS NOT NULL
            AND ph.artist_name NOT IN (
                SELECT DISTINCT ph2.artist_name FROM playback_history ph2
-               WHERE ph2.played_at <= CURRENT_TIMESTAMP - INTERVAL '30 days'
+               WHERE ph2.played_at <= ?
                AND ph2.artist_name IS NOT NULL
            )""",
+        (cutoff_30d, cutoff_30d),
     )
 
     # Source distribution (local vs streaming)
     source_rows = await deps.db.fetchall(
         """SELECT source, COUNT(*) as plays
            FROM playback_history
-           WHERE played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
+           WHERE played_at > ?
            GROUP BY source
            ORDER BY plays DESC""",
+        (cutoff_30d,),
     )
 
     return {
@@ -412,16 +427,21 @@ async def history_dashboard():
 @router.get("/recommendations")
 async def get_recommendations(limit: int = Query(20, le=100)):
     """Get album recommendations based on listening history."""
+    now = datetime.now(tz=timezone.utc)
+    cutoff_30d = now - timedelta(days=30)
+    cutoff_7d = now - timedelta(days=7)
+
     # Get top artists and genres from history (last 30 days)
     history_rows = await deps.db.fetchall(
         """SELECT ph.artist_name, a.genre, COUNT(*) as cnt
            FROM playback_history ph
            LEFT JOIN tracks t ON ph.track_id = t.id
            LEFT JOIN albums a ON t.album_id = a.id
-           WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
+           WHERE ph.played_at > ?
            GROUP BY ph.artist_name, a.genre
            ORDER BY cnt DESC
            LIMIT 20""",
+        (cutoff_30d,),
     )
 
     if not history_rows:
@@ -454,10 +474,10 @@ async def get_recommendations(limit: int = Query(20, le=100)):
                AND NOT EXISTS (
                    SELECT 1 FROM playback_history ph2
                    JOIN tracks t2 ON ph2.track_id = t2.id
-                   WHERE t2.album_id = a.id AND ph2.played_at > CURRENT_TIMESTAMP - INTERVAL '7 days'
+                   WHERE t2.album_id = a.id AND ph2.played_at > ?
                )
                ORDER BY RANDOM() LIMIT 3""",
-            (f"%{genre}%",),
+            (f"%{genre}%", cutoff_7d),
         )
         for r in genre_albums:
             recommendations.append({
@@ -477,10 +497,10 @@ async def get_recommendations(limit: int = Query(20, le=100)):
                AND NOT EXISTS (
                    SELECT 1 FROM playback_history ph2
                    JOIN tracks t2 ON ph2.track_id = t2.id
-                   WHERE t2.album_id = a.id AND ph2.played_at > CURRENT_TIMESTAMP - INTERVAL '7 days'
+                   WHERE t2.album_id = a.id AND ph2.played_at > ?
                )
                ORDER BY RANDOM() LIMIT 2""",
-            (artist,),
+            (artist, cutoff_7d),
         )
         for r in artist_albums:
             recommendations.append({

@@ -2,6 +2,18 @@
 
 All notable changes to Tune Server.
 
+## v0.7.14 — 2026-04-26
+
+### Fixes
+- Dashboard / recommendations: fix 500 errors on SQLite/Windows — replaced PostgreSQL-only
+  `INTERVAL` and `EXTRACT(HOUR ...)` with engine-agnostic Python cutoffs and dispatched
+  hour expression. Regression introduced in v0.7.12.
+- Scanner: strip NUL bytes (`\x00`) from tag values before DB insert (PostgreSQL UTF-8 rejection)
+- Scanner: tolerate broken Vorbis tags raising ValueError on `tags.get()`
+- Qobuz: auto-refresh credentials and retry once on 403 Forbidden (handles app_id/secret rotation)
+- Watcher: fall back to polling mode when a subdirectory is unreadable (e.g. `lost+found`)
+- SSDP: throttle `ssdp_device_create_error` warnings to debug after 3 consecutive failures per device
+
 ## v0.7.13 — 2026-04-26
 
 ### Features

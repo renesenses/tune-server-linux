@@ -27,6 +27,20 @@ class SsdpDiscovery:
         self._running = False
         self._lock = asyncio.Lock()
         self._advertisement_listener = None
+        # Per-USN failure counter: warn the first 3 times, then debug.
+        # Avoids log spam from devices that exist on the network but never
+        # respond to UPnP description fetch (e.g. powered-down audiophile gear).
+        self._create_failures: dict[str, int] = {}
+
+    def _log_create_failure(self, usn: str, location: str, name: str, exc: Exception) -> None:
+        count = self._create_failures.get(usn, 0) + 1
+        self._create_failures[usn] = count
+        log = logger.warning if count <= 3 else logger.debug
+        log(
+            "ssdp_device_create_error",
+            location=location, usn=usn, name=name,
+            error=str(exc), failure_count=count,
+        )
 
     @property
     def devices(self) -> dict[str, DiscoveredDevice]:
@@ -179,6 +193,7 @@ class SsdpDiscovery:
                                 },
                             )
 
+                            self._create_failures.pop(usn, None)
                             async with self._lock:
                                 was_lost = dev_id in self._devices and not self._devices[dev_id].available
                                 is_new = dev_id not in self._devices
@@ -201,11 +216,7 @@ class SsdpDiscovery:
                         except Exception as exc:
                             # Extract name from USN for better logging
                             _name = usn.split("uuid:")[-1].split("::")[0] if "uuid:" in usn else usn
-                            logger.warning(
-                                "ssdp_device_create_error",
-                                location=location, usn=usn, name=_name,
-                                error=str(exc),
-                            )
+                            self._log_create_failure(usn, location, _name, exc)
                             # Fallback: register device from SSDP headers alone
                             # so it at least appears in the device list
                             parsed_loc = urlparse(location)
@@ -338,6 +349,7 @@ class SsdpDiscovery:
                     },
                 )
 
+                self._create_failures.pop(usn, None)
                 async with self._lock:
                     was_lost = dev_id in self._devices and not self._devices[dev_id].available
                     is_new = dev_id not in self._devices
@@ -354,10 +366,7 @@ class SsdpDiscovery:
 
             except Exception as exc:
                 _name = usn.split("uuid:")[-1].split("::")[0] if "uuid:" in usn else usn
-                logger.warning(
-                    "ssdp_device_create_error",
-                    location=location, usn=usn, name=_name, error=str(exc),
-                )
+                self._log_create_failure(usn, location, _name, exc)
                 # Fallback: register from SSDP headers
                 parsed_loc = urlparse(location)
                 fallback_id = usn or location
