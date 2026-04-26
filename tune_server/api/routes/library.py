@@ -301,14 +301,14 @@ async def history_dashboard():
     total_row = await deps.db.fetchone(
         """SELECT COUNT(*) as plays, COALESCE(SUM(listened_ms), 0) as total_ms
            FROM playback_history
-           WHERE played_at > datetime('now', '-30 days')""",
+           WHERE played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'""",
     )
 
     # Plays per day (last 14 days)
     daily_rows = await deps.db.fetchall(
         """SELECT DATE(played_at) as day, COUNT(*) as plays, COALESCE(SUM(listened_ms), 0) as ms
            FROM playback_history
-           WHERE played_at > datetime('now', '-14 days')
+           WHERE played_at > CURRENT_TIMESTAMP - INTERVAL '14 days'
            GROUP BY DATE(played_at)
            ORDER BY day""",
     )
@@ -319,7 +319,7 @@ async def history_dashboard():
            FROM playback_history ph
            JOIN tracks t ON ph.track_id = t.id
            JOIN albums a ON t.album_id = a.id
-           WHERE ph.played_at > datetime('now', '-30 days') AND a.genre IS NOT NULL
+           WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '30 days' AND a.genre IS NOT NULL
            GROUP BY a.genre
            ORDER BY plays DESC
            LIMIT 10""",
@@ -327,9 +327,9 @@ async def history_dashboard():
 
     # Listening by hour of day
     hourly_rows = await deps.db.fetchall(
-        """SELECT CAST(strftime('%H', played_at) AS INTEGER) as hour, COUNT(*) as plays
+        """SELECT EXTRACT(HOUR FROM played_at)::INTEGER as hour, COUNT(*) as plays
            FROM playback_history
-           WHERE played_at > datetime('now', '-30 days')
+           WHERE played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
            GROUP BY hour
            ORDER BY hour""",
     )
@@ -338,11 +338,11 @@ async def history_dashboard():
     new_artists_row = await deps.db.fetchone(
         """SELECT COUNT(DISTINCT ph.artist_name)
            FROM playback_history ph
-           WHERE ph.played_at > datetime('now', '-30 days')
+           WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
            AND ph.artist_name IS NOT NULL
            AND ph.artist_name NOT IN (
                SELECT DISTINCT ph2.artist_name FROM playback_history ph2
-               WHERE ph2.played_at <= datetime('now', '-30 days')
+               WHERE ph2.played_at <= CURRENT_TIMESTAMP - INTERVAL '30 days'
                AND ph2.artist_name IS NOT NULL
            )""",
     )
@@ -351,7 +351,7 @@ async def history_dashboard():
     source_rows = await deps.db.fetchall(
         """SELECT source, COUNT(*) as plays
            FROM playback_history
-           WHERE played_at > datetime('now', '-30 days')
+           WHERE played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
            GROUP BY source
            ORDER BY plays DESC""",
     )
@@ -377,7 +377,7 @@ async def get_recommendations(limit: int = Query(20, le=100)):
            FROM playback_history ph
            LEFT JOIN tracks t ON ph.track_id = t.id
            LEFT JOIN albums a ON t.album_id = a.id
-           WHERE ph.played_at > datetime('now', '-30 days')
+           WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '30 days'
            GROUP BY ph.artist_name, a.genre
            ORDER BY cnt DESC
            LIMIT 20""",
@@ -413,7 +413,7 @@ async def get_recommendations(limit: int = Query(20, le=100)):
                AND a.id NOT IN (
                    SELECT DISTINCT t.album_id FROM playback_history ph
                    JOIN tracks t ON ph.track_id = t.id
-                   WHERE ph.played_at > datetime('now', '-7 days') AND t.album_id IS NOT NULL
+                   WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '7 days' AND t.album_id IS NOT NULL
                )
                ORDER BY RANDOM() LIMIT 3""",
             (f"%{genre}%",),
@@ -436,7 +436,7 @@ async def get_recommendations(limit: int = Query(20, le=100)):
                AND a.id NOT IN (
                    SELECT DISTINCT t.album_id FROM playback_history ph
                    JOIN tracks t ON ph.track_id = t.id
-                   WHERE ph.played_at > datetime('now', '-7 days') AND t.album_id IS NOT NULL
+                   WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '7 days' AND t.album_id IS NOT NULL
                )
                ORDER BY RANDOM() LIMIT 2""",
             (artist,),
