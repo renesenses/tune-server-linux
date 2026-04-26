@@ -410,10 +410,10 @@ async def get_recommendations(limit: int = Query(20, le=100)):
                       a.cover_path, a.format, a.sample_rate, a.bit_depth
                FROM albums a
                WHERE a.genre LIKE ?
-               AND a.id NOT IN (
-                   SELECT DISTINCT t.album_id FROM playback_history ph
-                   JOIN tracks t ON ph.track_id = t.id
-                   WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '7 days' AND t.album_id IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM playback_history ph2
+                   JOIN tracks t2 ON ph2.track_id = t2.id
+                   WHERE t2.album_id = a.id AND ph2.played_at > CURRENT_TIMESTAMP - INTERVAL '7 days'
                )
                ORDER BY RANDOM() LIMIT 3""",
             (f"%{genre}%",),
@@ -433,10 +433,10 @@ async def get_recommendations(limit: int = Query(20, le=100)):
                       a.cover_path, a.format, a.sample_rate, a.bit_depth
                FROM albums a
                WHERE a.artist_name = ?
-               AND a.id NOT IN (
-                   SELECT DISTINCT t.album_id FROM playback_history ph
-                   JOIN tracks t ON ph.track_id = t.id
-                   WHERE ph.played_at > CURRENT_TIMESTAMP - INTERVAL '7 days' AND t.album_id IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM playback_history ph2
+                   JOIN tracks t2 ON ph2.track_id = t2.id
+                   WHERE t2.album_id = a.id AND ph2.played_at > CURRENT_TIMESTAMP - INTERVAL '7 days'
                )
                ORDER BY RANDOM() LIMIT 2""",
             (artist,),
