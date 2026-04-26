@@ -2,6 +2,18 @@
 
 All notable changes to Tune Server.
 
+## v0.7.17 — 2026-04-26
+
+### Fixes
+- **Critical**: schema migrations are now auto-detected from the SA model.
+  v0.7.16 only fixed the transaction-scoping bug, but the explicit ALTER
+  list was massively incomplete (missing `albums.bio`, all `tracks.*`
+  columns added since v0.5, `artists.source_id`, `zones.muted`,
+  `zones.online`, etc.). Users upgrading from older versions still got
+  HTTP 500 on `/library/albums/*`, `/library/recommendations`, etc.
+  The new logic compares live schema vs SA metadata and adds every
+  missing column, so future column additions are auto-migrated too.
+
 ## v0.7.16 — 2026-04-26
 
 ### Fixes
