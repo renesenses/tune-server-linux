@@ -2,6 +2,13 @@
 
 All notable changes to Tune Server.
 
+## v0.7.15 — 2026-04-26
+
+### Fixes
+- Dashboard / recommendations: PostgreSQL DataError "can't subtract offset-naive
+  and offset-aware datetimes". Use naive UTC cutoffs to match
+  `TIMESTAMP WITHOUT TIME ZONE` columns. Fix-up of v0.7.14 dashboard fix.
+
 ## v0.7.14 — 2026-04-26
 
 ### Fixes
