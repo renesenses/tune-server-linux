@@ -406,7 +406,7 @@ async def get_recommendations(limit: int = Query(20, le=100)):
     # By genre
     for genre in list(top_genres)[:5]:
         genre_albums = await deps.db.fetchall(
-            """SELECT DISTINCT a.id, a.title, a.artist_name, a.year, a.genre,
+            """SELECT a.id, a.title, a.artist_name, a.year, a.genre,
                       a.cover_path, a.format, a.sample_rate, a.bit_depth
                FROM albums a
                WHERE a.genre LIKE ?
@@ -429,7 +429,7 @@ async def get_recommendations(limit: int = Query(20, le=100)):
     # By artist (other albums)
     for artist in list(top_artists)[:5]:
         artist_albums = await deps.db.fetchall(
-            """SELECT DISTINCT a.id, a.title, a.artist_name, a.year, a.genre,
+            """SELECT a.id, a.title, a.artist_name, a.year, a.genre,
                       a.cover_path, a.format, a.sample_rate, a.bit_depth
                FROM albums a
                WHERE a.artist_name = ?
