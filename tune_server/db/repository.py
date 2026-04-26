@@ -10,15 +10,21 @@ from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStati
 logger = structlog.get_logger()
 
 
+def _row_get(row, key, default=None):
+    # sqlite3.Row supports indexed access but not .get(); SA Row supports both.
+    keys = row.keys() if hasattr(row, "keys") else []
+    return row[key] if key in keys else default
+
+
 def _row_to_artist(row) -> Artist:
     return Artist(
         id=row["id"],
         name=row["name"],
-        sort_name=row.get("sort_name"),
-        musicbrainz_id=row.get("musicbrainz_id"),
-        discogs_id=row.get("discogs_id"),
-        bio=row.get("bio"),
-        image_path=row.get("image_path"),
+        sort_name=_row_get(row, "sort_name"),
+        musicbrainz_id=_row_get(row, "musicbrainz_id"),
+        discogs_id=_row_get(row, "discogs_id"),
+        bio=_row_get(row, "bio"),
+        image_path=_row_get(row, "image_path"),
     )
 
 
@@ -45,7 +51,9 @@ def _row_to_album(row) -> Album:
         id=row["id"],
         title=row["title"],
         artist_id=row["artist_id"],
-        artist_name=row["artist_name"] if "artist_name" in keys else None,
+        # Prefer the joined artist name over the denormalized al.artist_name.
+        artist_name=(row["joined_artist_name"] if "joined_artist_name" in keys
+                     else row["artist_name"] if "artist_name" in keys else None),
         year=row["year"],
         genre=row["genre"],
         disc_count=row["disc_count"],
@@ -192,7 +200,9 @@ class ArtistRepo:
 
 
 class AlbumRepo:
-    _SELECT = """SELECT al.*, ar.name as artist_name,
+    # ar.name aliased to joined_artist_name to avoid clash with al.artist_name
+    # (denormalized column added by migration). _row_to_album prefers the join.
+    _SELECT = """SELECT al.*, ar.name as joined_artist_name,
                al.sample_rate as max_sample_rate, al.bit_depth as max_bit_depth,
                al.format as dominant_format
                FROM albums al
@@ -1177,7 +1187,7 @@ def _row_to_track_credit(row) -> TrackCredit:
         artist_id=row["artist_id"],
         artist_name=row["artist_name"],
         role=row["role"],
-        instrument=row.get("instrument"),
+        instrument=_row_get(row, "instrument"),
         position=row["position"],
     )
 

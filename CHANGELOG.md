@@ -2,6 +2,16 @@
 
 All notable changes to Tune Server.
 
+## v0.7.16 — 2026-04-26
+
+### Fixes
+- **Critical**: schema migrations on existing SQLite databases silently
+  skipped after the first column-already-exists error because the entire
+  batch ran in a single transaction. Each ALTER now runs in its own
+  transaction. Causes `OperationalError: no such column: al.sample_rate`
+  → HTTP 500 on `/library/albums/*`, `/library/recommendations`, etc.
+  for users upgrading from older versions.
+
 ## v0.7.15 — 2026-04-26
 
 ### Fixes

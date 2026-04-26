@@ -17,6 +17,9 @@ def _make_mock_zone(zone_id, state=PlaybackState.PLAYING, position_ms=10000):
     zone.player = AsyncMock()
     zone.player.state = state
     zone.sync_delay_ms = 0
+    # Explicit False — MagicMock would return a truthy mock and the sync engine
+    # skips followers it considers muted.
+    zone.muted = False
     zone.output = AsyncMock()
     zone.output.get_position_ms = AsyncMock(return_value=position_ms)
     type(zone).position_ms = PropertyMock(return_value=position_ms)
@@ -65,7 +68,8 @@ async def test_sync_leader_position_zero(gm, event_bus):
 
 async def test_sync_within_threshold(gm, event_bus):
     leader = _make_mock_zone(1, position_ms=10000)
-    follower = _make_mock_zone(2, position_ms=10400)  # 400ms drift < 500ms threshold
+    # 30ms drift < 50ms fine threshold: no correction at all.
+    follower = _make_mock_zone(2, position_ms=10030)
     group = _make_group(leader, [follower])
 
     engine = SyncEngine(gm)
