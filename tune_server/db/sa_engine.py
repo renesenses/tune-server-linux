@@ -174,12 +174,15 @@ class SADatabase:
             "ALTER TABLE zones ADD COLUMN stereo_pair_id TEXT",
             "ALTER TABLE zones ADD COLUMN stereo_channel TEXT",
         ]
-        async with self._engine.begin() as conn:
-            for sql in migrations:
-                try:
+        # Each ALTER must run in its own transaction. SQLite/asyncpg both abort
+        # the entire transaction on the first OperationalError ("column already
+        # exists"), silently skipping all subsequent migrations.
+        for sql in migrations:
+            try:
+                async with self._engine.begin() as conn:
                     await conn.execute(sa.text(sql))
-                except Exception:
-                    pass  # Column already exists
+            except Exception:
+                pass  # Column already exists
 
         # Track credits table (idempotent via CREATE TABLE IF NOT EXISTS in SA metadata.create_all)
         # Ensure indexes exist for older databases

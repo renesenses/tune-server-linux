@@ -364,7 +364,8 @@ class TestQobuzTokenValidation:
 
         svc = QobuzService()
         session = await svc._ensure_session()
-        assert session.timeout.total == 30
+        # Default api_timeout is 60s (raised from 30s — Tidal 280 playlists take 34s)
+        assert session.timeout.total >= 30
         assert session.timeout.connect == 10
         await svc.close()
 
@@ -376,18 +377,21 @@ class TestQobuzTokenValidation:
         svc = QobuzService()
         svc._user_auth_token = "valid-token"
 
-        # Mock the session to return 401
-        mock_resp = AsyncMock()
+        # session.request() returns a response with status 401; raise_for_status()
+        # raises ClientResponseError which the qobuz wrapper translates.
+        mock_resp = MagicMock()
         mock_resp.status = 401
         mock_resp.request_info = MagicMock()
         mock_resp.history = ()
+        mock_resp.release = MagicMock()
+        mock_resp.raise_for_status = MagicMock(side_effect=aiohttp.ClientResponseError(
+            request_info=mock_resp.request_info, history=mock_resp.history,
+            status=401, message="Unauthorized",
+        ))
 
         mock_session = MagicMock()
         mock_session.closed = False
-        mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_session.get = MagicMock(return_value=mock_cm)
+        mock_session.request = AsyncMock(return_value=mock_resp)
         svc._session = mock_session
 
         with pytest.raises(aiohttp.ClientResponseError):
@@ -402,24 +406,23 @@ class TestQobuzTokenValidation:
         svc = QobuzService()
         svc._user_auth_token = "my-token"
 
-        mock_resp = AsyncMock()
+        mock_resp = MagicMock()
         mock_resp.status = 200
         mock_resp.json = AsyncMock(return_value={"result": "ok"})
         mock_resp.raise_for_status = MagicMock()
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
 
         mock_session = MagicMock()
         mock_session.closed = False
-        mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_session.get = MagicMock(return_value=mock_cm)
+        mock_session.request = AsyncMock(return_value=mock_resp)
         svc._session = mock_session
 
         result = await svc._api_get("test/endpoint")
         assert result == {"result": "ok"}
 
-        # Verify the auth header was passed
-        call_args = mock_session.get.call_args
+        # Verify the auth header was passed via session.request kwargs
+        call_args = mock_session.request.call_args
         headers = call_args.kwargs.get("headers", {})
         assert headers.get("X-User-Auth-Token") == "my-token"
 
