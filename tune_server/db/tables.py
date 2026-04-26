@@ -662,6 +662,40 @@ collaborative_playlist_tracks = sa.Table(
 )
 
 # ---------------------------------------------------------------------------
+# collections
+# ---------------------------------------------------------------------------
+collections = sa.Table(
+    "collections",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text),
+    sa.Column("icon", sa.Text, server_default="folder"),
+    sa.Column("color", sa.Text, server_default="#6366f1"),
+    sa.Column("profile_id", sa.Integer),
+    sa.Column("sort_order", sa.Integer, server_default="0"),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+# ---------------------------------------------------------------------------
+# collection_albums
+# ---------------------------------------------------------------------------
+collection_albums = sa.Table(
+    "collection_albums",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column(
+        "collection_id",
+        sa.Integer,
+        sa.ForeignKey("collections.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("album_id", sa.Integer, nullable=False),
+    sa.Column("added_at", sa.DateTime, server_default=sa.func.now()),
+    sa.UniqueConstraint("collection_id", "album_id"),
+)
+
+# ---------------------------------------------------------------------------
 # zone_profiles
 # ---------------------------------------------------------------------------
 zone_profiles = sa.Table(
@@ -673,5 +707,23 @@ zone_profiles = sa.Table(
     sa.Column("config", sa.Text),
     sa.Column("icon", sa.Text),
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+# ---------------------------------------------------------------------------
+# zone_audio_profiles (room correction / per-zone EQ)
+# ---------------------------------------------------------------------------
+zone_audio_profiles = sa.Table(
+    "zone_audio_profiles",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("zone_id", sa.Integer, nullable=False),
+    sa.Column("name", sa.Text, nullable=False, server_default="Default"),
+    sa.Column("eq_preset", sa.Text),
+    sa.Column("bass_boost", sa.Float, server_default="0"),
+    sa.Column("treble_boost", sa.Float, server_default="0"),
+    sa.Column("loudness_compensation", sa.Boolean, server_default=sa.text("FALSE")),
+    sa.Column("crossfeed", sa.Text),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.UniqueConstraint("zone_id", "name"),
 )
 

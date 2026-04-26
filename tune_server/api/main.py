@@ -57,6 +57,7 @@ def create_api_app() -> FastAPI:
     app.include_router(library.router, prefix="/api/v1")
     app.include_router(playlists.router, prefix="/api/v1")
     app.include_router(playback.router, prefix="/api/v1")
+    app.include_router(playback.global_router, prefix="/api/v1")
     app.include_router(zones.router, prefix="/api/v1")
     app.include_router(devices.router, prefix="/api/v1")
     app.include_router(streaming.router, prefix="/api/v1")

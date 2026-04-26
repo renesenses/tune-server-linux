@@ -49,6 +49,27 @@ async def get_track(track_id: int):
 
 
 
+@router.post("/tracks/{track_id}/quick-fav")
+async def quick_favorite_toggle(track_id: int, profile_id: int = 1):
+    """Toggle favorite status for a track. Returns new state."""
+    is_fav = await deps.db.fetchone(
+        "SELECT 1 FROM user_favorites WHERE user_id = ? AND track_id = ?",
+        (profile_id, track_id))
+
+    if is_fav:
+        await deps.db.execute(
+            "DELETE FROM user_favorites WHERE user_id = ? AND track_id = ?",
+            (profile_id, track_id))
+        await deps.db.commit()
+        return {"is_favorite": False, "track_id": track_id}
+    else:
+        await deps.db.execute(
+            "INSERT INTO user_favorites (user_id, track_id) VALUES (?, ?)",
+            (profile_id, track_id))
+        await deps.db.commit()
+        return {"is_favorite": True, "track_id": track_id}
+
+
 @router.get("/tracks/{track_id}/credits", response_model=list[TrackCredit])
 async def get_track_credits(track_id: int):
     track = await deps.track_repo.get(track_id)
@@ -73,6 +94,26 @@ async def stream_track_audio(track_id: int):
           ".aac": "audio/aac", ".m4a": "audio/mp4", ".ogg": "audio/ogg",
           ".opus": "audio/opus", ".aiff": "audio/aiff", ".dsf": "audio/dsf"}
     return FileResponse(filepath, media_type=mt.get(suffix, "application/octet-stream"), filename=filepath.name)
+
+@router.post("/albums/{album_id}/quick-fav")
+async def quick_favorite_album(album_id: int, profile_id: int = 1):
+    """Toggle favorite status for an album. Returns new state."""
+    is_fav = await deps.db.fetchone(
+        "SELECT 1 FROM user_favorites WHERE user_id = ? AND album_id = ?",
+        (profile_id, album_id))
+    if is_fav:
+        await deps.db.execute(
+            "DELETE FROM user_favorites WHERE user_id = ? AND album_id = ?",
+            (profile_id, album_id))
+        await deps.db.commit()
+        return {"is_favorite": False, "album_id": album_id}
+    else:
+        await deps.db.execute(
+            "INSERT INTO user_favorites (user_id, album_id) VALUES (?, ?)",
+            (profile_id, album_id))
+        await deps.db.commit()
+        return {"is_favorite": True, "album_id": album_id}
+
 
 @router.get("/albums/top-rated")
 async def top_rated_albums(limit: int = 20):
@@ -1076,6 +1117,248 @@ async def rescan_artwork():
         return {"status": "already_running"}
     asyncio.create_task(_rescan_artwork_task())
     return {"status": "started"}
+
+
+# --- Offline Mode ---
+
+
+@router.post("/offline/mark")
+async def mark_offline(body: dict):
+    """Mark tracks/playlists for offline availability."""
+    track_ids = body.get("track_ids", [])
+    playlist_id = body.get("playlist_id")
+    album_id = body.get("album_id")
+
+    marked = []
+
+    if playlist_id:
+        tracks = await deps.playlist_repo.get_tracks(playlist_id)
+        track_ids.extend([t.id for t in tracks if t.id])
+
+    if album_id:
+        tracks = await deps.track_repo.list_by_album(album_id)
+        track_ids.extend([t.id for t in tracks if t.id])
+
+    for tid in set(track_ids):
+        track = await deps.track_repo.get(tid)
+        if track and track.file_path:
+            marked.append({
+                "track_id": tid,
+                "title": track.title,
+                "artist": track.artist_name,
+                "file_path": track.file_path,
+                "size_estimate_mb": round((track.duration_ms or 0) * 0.02 / 1000, 1),  # rough estimate
+            })
+
+    return {"marked": len(marked), "tracks": marked}
+
+
+@router.get("/offline/status")
+async def offline_status():
+    """Get offline download status."""
+    return {
+        "available": False,  # Client-side feature — server provides file access
+        "message": "Offline mode is managed by the client app. Use the /stream endpoint to download tracks.",
+    }
+
+
+# --- Smart Duplicate Detection ---
+
+@router.get("/duplicates/smart")
+async def smart_duplicates(limit: int = 50):
+    """Detect albums that exist both locally and on streaming services.
+    Suggests the best version based on quality."""
+    # Find local albums
+    local_albums = await deps.db.fetchall(
+        """SELECT id, title, artist_name, format, sample_rate, bit_depth, source
+           FROM albums WHERE source = 'local' OR source IS NULL
+           ORDER BY title LIMIT 500""")
+
+    duplicates = []
+    for album in local_albums:
+        title = album["title"]
+        artist = album["artist_name"] or ""
+
+        # Search for streaming versions
+        streaming_matches = await deps.db.fetchall(
+            """SELECT id, title, artist_name, format, sample_rate, bit_depth, source, source_id, cover_path
+               FROM albums
+               WHERE title LIKE ? AND source != 'local' AND source IS NOT NULL
+               LIMIT 5""",
+            (f"%{title}%",))
+
+        for match in streaming_matches:
+            # Compare quality
+            local_quality = (album["sample_rate"] or 44100) * (album["bit_depth"] or 16)
+            streaming_quality = (match["sample_rate"] or 44100) * (match["bit_depth"] or 16)
+
+            best = "local" if local_quality >= streaming_quality else "streaming"
+
+            duplicates.append({
+                "local": {
+                    "id": album["id"], "title": album["title"], "artist": artist,
+                    "format": album["format"], "sample_rate": album["sample_rate"],
+                    "bit_depth": album["bit_depth"],
+                },
+                "streaming": {
+                    "id": match["id"], "title": match["title"], "artist": match["artist_name"],
+                    "source": match["source"], "format": match["format"],
+                    "sample_rate": match["sample_rate"], "bit_depth": match["bit_depth"],
+                    "cover_path": match["cover_path"],
+                },
+                "best_version": best,
+                "reason": f"Local: {album['format']} {album['sample_rate']}Hz/{album['bit_depth']}bit vs Streaming: {match['format']} {match['sample_rate']}Hz/{match['bit_depth']}bit"
+            })
+
+    return {"duplicates": duplicates[:limit], "total": len(duplicates)}
+
+
+# --- Collections (Album Grouping) ---
+
+@router.get("/collections")
+async def list_collections():
+    rows = await deps.db.fetchall(
+        "SELECT c.*, COUNT(ca.album_id) as album_count FROM collections c LEFT JOIN collection_albums ca ON c.id = ca.collection_id GROUP BY c.id ORDER BY c.sort_order, c.name")
+    return [dict(r) for r in rows]
+
+
+@router.post("/collections")
+async def create_collection(body: dict):
+    name = body.get("name", "New Collection")
+    description = body.get("description")
+    icon = body.get("icon", "folder")
+    color = body.get("color", "#6366f1")
+    await deps.db.execute(
+        "INSERT INTO collections (name, description, icon, color) VALUES (?, ?, ?, ?)",
+        (name, description, icon, color))
+    await deps.db.commit()
+    row = await deps.db.fetchone("SELECT * FROM collections ORDER BY id DESC LIMIT 1")
+    return dict(row)
+
+
+@router.put("/collections/{collection_id}")
+async def update_collection(collection_id: int, body: dict):
+    name = body.get("name")
+    description = body.get("description")
+    icon = body.get("icon")
+    color = body.get("color")
+    if name:
+        await deps.db.execute("UPDATE collections SET name = ? WHERE id = ?", (name, collection_id))
+    if description is not None:
+        await deps.db.execute("UPDATE collections SET description = ? WHERE id = ?", (description, collection_id))
+    if icon:
+        await deps.db.execute("UPDATE collections SET icon = ? WHERE id = ?", (icon, collection_id))
+    if color:
+        await deps.db.execute("UPDATE collections SET color = ? WHERE id = ?", (color, collection_id))
+    await deps.db.commit()
+    return {"updated": True}
+
+
+@router.delete("/collections/{collection_id}")
+async def delete_collection(collection_id: int):
+    await deps.db.execute("DELETE FROM collection_albums WHERE collection_id = ?", (collection_id,))
+    await deps.db.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
+    await deps.db.commit()
+    return {"deleted": True}
+
+
+@router.get("/collections/{collection_id}/albums")
+async def collection_albums(collection_id: int):
+    rows = await deps.db.fetchall(
+        """SELECT a.id, a.title, a.artist_name, a.year, a.genre, a.cover_path, a.format, a.sample_rate, a.bit_depth, ca.added_at
+           FROM collection_albums ca JOIN albums a ON ca.album_id = a.id
+           WHERE ca.collection_id = ? ORDER BY ca.added_at DESC""",
+        (collection_id,))
+    return [dict(r) for r in rows]
+
+
+@router.post("/collections/{collection_id}/albums")
+async def add_album_to_collection(collection_id: int, body: dict):
+    album_id = body.get("album_id")
+    if not album_id:
+        raise HTTPException(400, "album_id required")
+    try:
+        await deps.db.execute(
+            "INSERT INTO collection_albums (collection_id, album_id) VALUES (?, ?)",
+            (collection_id, album_id))
+        await deps.db.commit()
+    except Exception:
+        pass  # already exists
+    return {"added": True, "collection_id": collection_id, "album_id": album_id}
+
+
+@router.delete("/collections/{collection_id}/albums/{album_id}")
+async def remove_album_from_collection(collection_id: int, album_id: int):
+    await deps.db.execute(
+        "DELETE FROM collection_albums WHERE collection_id = ? AND album_id = ?",
+        (collection_id, album_id))
+    await deps.db.commit()
+    return {"removed": True}
+
+
+# --- Import/Export Ratings ---
+
+@router.get("/ratings/export")
+async def export_ratings():
+    """Export all ratings as JSON."""
+    rows = await deps.db.fetchall(
+        """SELECT ar.album_id, a.title, a.artist_name, ar.rating, ar.note, ar.updated_at
+           FROM album_ratings ar JOIN albums a ON ar.album_id = a.id
+           ORDER BY ar.rating DESC""")
+    return {"ratings": [dict(r) for r in rows], "count": len(rows)}
+
+
+@router.post("/ratings/import")
+async def import_ratings(body: dict):
+    """Import ratings from JSON array."""
+    ratings = body.get("ratings", [])
+    imported = 0
+    for r in ratings:
+        album_id = r.get("album_id")
+        rating = r.get("rating")
+        note = r.get("note")
+        if album_id and rating:
+            try:
+                await deps.db.execute(
+                    """INSERT INTO album_ratings (album_id, rating, note)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(album_id, profile_id) DO UPDATE SET rating=?, note=?""",
+                    (album_id, rating, note, rating, note))
+                imported += 1
+            except Exception:
+                pass
+    await deps.db.commit()
+    return {"imported": imported, "total": len(ratings)}
+
+
+# --- Activity Feed ---
+
+@router.get("/activity")
+async def activity_feed(limit: int = 30):
+    """Recent activity across all profiles/zones."""
+    rows = await deps.db.fetchall(
+        """SELECT ph.track_title, ph.artist_name, ph.album_title, ph.cover_path,
+                  ph.source, ph.played_at, ph.zone_id
+           FROM playback_history ph
+           ORDER BY ph.played_at DESC
+           LIMIT ?""",
+        (limit,))
+
+    # Get zone names
+    zone_names = {}
+    if deps.zone_manager:
+        for z in deps.zone_manager.list_zones():
+            zone_names[z.zone_id] = z.name
+
+    return [{
+        "track_title": r["track_title"],
+        "artist_name": r["artist_name"],
+        "album_title": r["album_title"],
+        "cover_path": r["cover_path"],
+        "source": r["source"],
+        "played_at": r["played_at"],
+        "zone_name": zone_names.get(r["zone_id"], f"Zone {r['zone_id']}"),
+    } for r in rows]
 
 
 # --- Browse by directory ---

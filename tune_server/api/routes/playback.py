@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
 
 import structlog
 
@@ -26,8 +27,10 @@ from tune_server.models import (
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/zones/{zone_id}", tags=["playback"])
+global_router = APIRouter(tags=["playback"])
 
 _sleep_timers: dict[int, asyncio.Task] = {}
+_alarms: dict[int, dict] = {}
 
 
 def _clean_file_title(file_path: str) -> str:
@@ -623,3 +626,206 @@ async def set_normalization(zone_id: int, body: dict = {}):
 async def get_status(zone_id: int):
     zone = _get_zone(zone_id)
     return zone.to_model()
+
+
+# --- Alarm Clock ---
+
+
+@router.post("/alarm")
+async def set_alarm(zone_id: int, body: dict = {}):
+    """Set a musical alarm. Plays at the given time with fade-in."""
+    zone = _get_zone(zone_id)
+
+    time_str = body.get("time")  # "07:30"
+    if not time_str:
+        # Cancel alarm
+        if zone_id in _alarms:
+            task = _alarms[zone_id].get("task")
+            if task:
+                task.cancel()
+            del _alarms[zone_id]
+        return {"alarm": None}
+
+    playlist_id = body.get("playlist_id")
+    radio_id = body.get("radio_id")
+    album_id = body.get("album_id")
+    fade_seconds = body.get("fade_seconds", 30)
+    volume = body.get("volume", 0.5)
+
+    # Parse time
+    hour, minute = map(int, time_str.split(":"))
+
+    # Calculate seconds until alarm
+    now = _dt.datetime.now()
+    alarm_time = now.replace(hour=hour, minute=minute, second=0)
+    if alarm_time <= now:
+        alarm_time += _dt.timedelta(days=1)
+    delay = (alarm_time - now).total_seconds()
+
+    # Cancel existing
+    if zone_id in _alarms:
+        task = _alarms[zone_id].get("task")
+        if task:
+            task.cancel()
+
+    async def _alarm_fire():
+        await asyncio.sleep(delay)
+        # Start at volume 0, fade in
+        await zone.player.set_volume(0.0)
+
+        if album_id:
+            tracks = await deps.track_repo.list_by_album(album_id)
+            if tracks:
+                await zone.player.play(tracks=tracks)
+        elif playlist_id:
+            playlist_tracks = await deps.playlist_repo.get_tracks(playlist_id)
+            if playlist_tracks:
+                await zone.player.play(tracks=playlist_tracks)
+        elif radio_id:
+            radio = await deps.radio_repo.get(radio_id)
+            if radio:
+                from tune_server.models import Track, Source, AudioFormat
+                radio_track = Track(title=radio.name, file_path=radio.stream_url, source=Source.RADIO)
+                await zone.player.play(tracks=[radio_track])
+
+        # Fade in
+        steps = max(1, int(fade_seconds * 2))
+        for i in range(steps + 1):
+            vol = (i / steps) * volume
+            await zone.player.set_volume(vol)
+            await asyncio.sleep(fade_seconds / steps)
+
+        if zone_id in _alarms:
+            del _alarms[zone_id]
+
+    task = asyncio.create_task(_alarm_fire())
+    _alarms[zone_id] = {
+        "task": task,
+        "time": time_str,
+        "fade_seconds": fade_seconds,
+        "alarm_time": alarm_time.isoformat(),
+    }
+
+    return {"alarm": time_str, "fires_in_seconds": int(delay), "fade_seconds": fade_seconds}
+
+
+@router.get("/alarm")
+async def get_alarm(zone_id: int):
+    """Get alarm status."""
+    if zone_id in _alarms:
+        info = _alarms[zone_id]
+        return {"active": True, "time": info["time"], "alarm_time": info.get("alarm_time")}
+    return {"active": False}
+
+
+@router.delete("/alarm")
+async def cancel_alarm(zone_id: int):
+    """Cancel alarm."""
+    if zone_id in _alarms:
+        task = _alarms[zone_id].get("task")
+        if task:
+            task.cancel()
+        del _alarms[zone_id]
+    return {"cancelled": True}
+
+
+# --- Global endpoints (no zone_id) ---
+
+
+@global_router.get("/zones/now-listening")
+async def now_listening():
+    """What's playing right now across all zones."""
+    if not deps.zone_manager:
+        return []
+
+    result = []
+    for zone in deps.zone_manager.list_zones():
+        if zone.player.state.value in ("playing", "paused"):
+            track = zone.current_track
+            if track:
+                result.append({
+                    "zone_id": zone.zone_id,
+                    "zone_name": zone.name,
+                    "state": zone.player.state.value,
+                    "track": {
+                        "title": track.title,
+                        "artist": track.artist_name,
+                        "album": track.album_title,
+                        "cover_path": track.cover_path,
+                        "duration_ms": track.duration_ms,
+                    },
+                    "position_ms": zone.player.position_ms,
+                    "volume": zone.player.volume,
+                })
+
+    return result
+
+
+@global_router.get("/widget/data")
+async def widget_data():
+    """Compact data for mobile widgets -- current track + controls."""
+    if not deps.zone_manager:
+        return {"playing": False}
+
+    # Find the first playing zone
+    active = None
+    for zone in deps.zone_manager.list_zones():
+        if zone.player.state.value == "playing":
+            active = zone
+            break
+
+    if not active:
+        # Try paused
+        for zone in deps.zone_manager.list_zones():
+            if zone.player.state.value == "paused":
+                active = zone
+                break
+
+    if not active or not active.current_track:
+        return {"playing": False}
+
+    track = active.current_track
+    return {
+        "playing": active.player.state.value == "playing",
+        "zone_id": active.zone_id,
+        "zone_name": active.name,
+        "title": track.title,
+        "artist": track.artist_name,
+        "album": track.album_title,
+        "cover_url": f"/api/v1/library/artwork/{track.cover_path.split('/')[-1]}" if track.cover_path and not track.cover_path.startswith("http") else track.cover_path,
+        "position_ms": active.player.position_ms,
+        "duration_ms": track.duration_ms,
+        "volume": active.player.volume,
+    }
+
+
+# --- Zone Audio Profiles ---
+
+
+@router.get("/audio-profile")
+async def get_audio_profile(zone_id: int):
+    row = await deps.db.fetchone(
+        "SELECT * FROM zone_audio_profiles WHERE zone_id = ?", (zone_id,))
+    if row:
+        return dict(row)
+    return {"zone_id": zone_id, "name": "Default", "eq_preset": None, "bass_boost": 0, "treble_boost": 0}
+
+
+@router.post("/audio-profile")
+async def set_audio_profile(zone_id: int, body: dict = {}):
+    name = body.get("name", "Default")
+    eq_preset = body.get("eq_preset")
+    bass_boost = body.get("bass_boost", 0)
+    treble_boost = body.get("treble_boost", 0)
+    loudness_comp = body.get("loudness_compensation", False)
+    crossfeed = body.get("crossfeed")
+
+    await deps.db.execute(
+        """INSERT INTO zone_audio_profiles (zone_id, name, eq_preset, bass_boost, treble_boost, loudness_compensation, crossfeed)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(zone_id, name) DO UPDATE SET eq_preset=?, bass_boost=?, treble_boost=?, loudness_compensation=?, crossfeed=?""",
+        (zone_id, name, eq_preset, bass_boost, treble_boost, loudness_comp, crossfeed,
+         eq_preset, bass_boost, treble_boost, loudness_comp, crossfeed))
+    await deps.db.commit()
+
+    return {"zone_id": zone_id, "name": name, "eq_preset": eq_preset, "bass_boost": bass_boost, "treble_boost": treble_boost}

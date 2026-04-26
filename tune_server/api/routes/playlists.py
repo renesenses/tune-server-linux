@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -814,3 +815,61 @@ async def delete_collaborative_playlist(playlist_id: int):
     await deps.db.execute("DELETE FROM collaborative_playlists WHERE id = ?", (playlist_id,))
     await deps.db.commit()
     return {"deleted": True}
+
+
+# --- Share Playlist by Link ---
+
+
+@router.get("/{playlist_id}/share")
+async def share_playlist(playlist_id: int):
+    """Generate a shareable link/data for a playlist."""
+    playlist = await deps.playlist_repo.get(playlist_id)
+    if not playlist:
+        raise HTTPException(404, "Playlist not found")
+
+    tracks = await deps.playlist_repo.get_tracks(playlist_id)
+
+    share_data = {
+        "name": playlist.name,
+        "description": playlist.description,
+        "track_count": len(tracks),
+        "tracks": [
+            {"title": t.title, "artist": t.artist_name, "album": t.album_title, "duration_ms": t.duration_ms}
+            for t in tracks[:100]  # limit to 100 tracks
+        ],
+    }
+
+    # Generate a simple share token
+    token = hashlib.md5(f"{playlist_id}:{playlist.name}".encode()).hexdigest()[:12]
+
+    return {
+        "playlist_id": playlist_id,
+        "name": playlist.name,
+        "token": token,
+        "share_url": f"/shared/playlist/{token}",
+        "data": share_data,
+        "text": f"\U0001f3b5 {playlist.name} ({len(tracks)} titres)\n" + "\n".join(
+            f"  {i+1}. {t.artist_name} \u2014 {t.title}" for i, t in enumerate(tracks[:20])
+        ),
+    }
+
+
+@router.get("/shared/{token}")
+async def get_shared_playlist(token: str):
+    """View a shared playlist by token."""
+    # For now, search by hash match — in production, store tokens in DB
+    playlists = await deps.playlist_repo.list()
+    for p in playlists:
+        check = hashlib.md5(f"{p.id}:{p.name}".encode()).hexdigest()[:12]
+        if check == token:
+            tracks = await deps.playlist_repo.get_tracks(p.id)
+            return {
+                "name": p.name,
+                "description": p.description,
+                "tracks": [
+                    {"title": t.title, "artist": t.artist_name, "album": t.album_title,
+                     "duration_ms": t.duration_ms, "cover_path": t.cover_path}
+                    for t in tracks
+                ],
+            }
+    raise HTTPException(404, "Shared playlist not found")

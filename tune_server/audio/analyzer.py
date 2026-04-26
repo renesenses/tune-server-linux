@@ -84,6 +84,37 @@ async def measure_loudness(file_path: str) -> float | None:
     return None
 
 
+async def detect_trailing_silence(file_path: str, threshold_db: float = -40.0) -> float:
+    """Detect trailing silence duration in seconds.
+    Returns the number of seconds of silence at the end of the track.
+    """
+    try:
+        # Use FFmpeg silencedetect filter
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-i", file_path,
+            "-af", f"silencedetect=noise={threshold_db}dB:d=0.5",
+            "-f", "null", "-",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+
+        # Parse silence_end from stderr
+        lines = stderr.decode()
+        silence_duration = 0.0
+        for line in lines.split('\n'):
+            if 'silence_end' in line:
+                # Format: [silencedetect @ 0x...] silence_end: 123.456 | silence_duration: 2.345
+                dur_parts = line.split('silence_duration:')
+                if len(dur_parts) > 1:
+                    silence_duration = float(dur_parts[1].strip())
+
+        return silence_duration
+    except Exception:
+        logger.debug("silence_detect_failed", file=file_path)
+        return 0.0
+
+
 async def detect_bpm(file_path: str, duration: int = 30) -> float | None:
     """Detect BPM using FFmpeg PCM extraction + numpy autocorrelation.
 

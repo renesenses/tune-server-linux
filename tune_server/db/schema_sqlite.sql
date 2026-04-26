@@ -303,6 +303,26 @@ CREATE TABLE IF NOT EXISTS album_ratings (
     UNIQUE(album_id, profile_id)
 );
 
+-- Collections (album grouping)
+CREATE TABLE IF NOT EXISTS collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    icon TEXT DEFAULT 'folder',
+    color TEXT DEFAULT '#6366f1',
+    profile_id INTEGER,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS collection_albums (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    album_id INTEGER NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(collection_id, album_id)
+);
+
 -- Collaborative playlists
 CREATE TABLE IF NOT EXISTS collaborative_playlists (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -322,4 +342,18 @@ CREATE TABLE IF NOT EXISTS collaborative_playlist_tracks (
     added_by INTEGER,
     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     votes INTEGER DEFAULT 0
+);
+
+-- Zone audio profiles (room correction / per-zone EQ)
+CREATE TABLE IF NOT EXISTS zone_audio_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zone_id INTEGER NOT NULL,
+    name TEXT NOT NULL DEFAULT 'Default',
+    eq_preset TEXT,
+    bass_boost REAL DEFAULT 0,
+    treble_boost REAL DEFAULT 0,
+    loudness_compensation BOOLEAN DEFAULT 0,
+    crossfeed TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(zone_id, name)
 );
