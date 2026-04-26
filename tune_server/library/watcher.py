@@ -79,16 +79,31 @@ class FileSystemWatcher:
                     except Exception:
                         logger.exception("watcher_process_error", path=path_str)
 
-            async for changes in awatch(*paths):
-                for change_type, path_str in changes:
-                    if Path(path_str).suffix.lower() not in SUPPORTED_EXTENSIONS:
-                        continue
-                    pending[path_str] = change_type
+            # Inotify recurses into all subdirectories; a single unreadable
+            # subdir (e.g. /mnt/recordings/lost+found owned by root) makes
+            # RustNotify raise PermissionError. Polling mode tolerates this.
+            force_polling = False
+            while True:
+                try:
+                    async for changes in awatch(*paths, force_polling=force_polling):
+                        for change_type, path_str in changes:
+                            if Path(path_str).suffix.lower() not in SUPPORTED_EXTENSIONS:
+                                continue
+                            pending[path_str] = change_type
 
-                # Reset debounce timer
-                if debounce_task and not debounce_task.done():
-                    debounce_task.cancel()
-                debounce_task = asyncio.create_task(_flush_pending())
+                        if debounce_task and not debounce_task.done():
+                            debounce_task.cancel()
+                        debounce_task = asyncio.create_task(_flush_pending())
+                    break
+                except PermissionError as exc:
+                    if force_polling:
+                        raise
+                    logger.warning(
+                        "watcher_permission_fallback_polling",
+                        error=str(exc),
+                        hint="Some subdirectory is unreadable — falling back to polling mode",
+                    )
+                    force_polling = True
 
         except ImportError:
             logger.warning("watchfiles_not_installed")

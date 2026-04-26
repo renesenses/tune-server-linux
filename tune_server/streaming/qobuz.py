@@ -48,7 +48,7 @@ class QobuzService(StreamingService):
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
-    async def _api_get(self, endpoint: str, params: dict = None) -> dict:
+    async def _api_get(self, endpoint: str, params: dict = None, _retry: bool = True) -> dict:
         session = await self._ensure_session()
         headers = {"X-App-Id": self._app_id}
         if self._user_auth_token:
@@ -65,6 +65,13 @@ class QobuzService(StreamingService):
             if exc.status == 401:
                 logger.warning("qobuz_token_expired")
                 self._user_auth_token = None
+            elif exc.status == 403 and _retry:
+                # 403 often means rotated app_id/app_secret. Force re-fetch
+                # remote credentials and retry once.
+                logger.warning("qobuz_forbidden_refreshing_credentials", endpoint=endpoint)
+                self._credentials_refreshed = False
+                await self._refresh_credentials()
+                return await self._api_get(endpoint, params, _retry=False)
             raise
 
         async with resp:

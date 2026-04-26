@@ -45,13 +45,22 @@ class TrackMetadata:
     credits: list[dict] | None = None
 
 
+def _clean_text(value: str) -> str:
+    # Strip NUL bytes — PostgreSQL UTF-8 columns reject 0x00
+    return value.replace("\x00", "").strip() if value else value
+
+
 def _get_first(tags: dict, keys: list[str], default: str = "") -> str:
     for key in keys:
-        val = tags.get(key)
+        try:
+            val = tags.get(key)
+        except (ValueError, KeyError):
+            # Broken vorbis tags raise ValueError on .get()
+            continue
         if val:
             if isinstance(val, list):
-                return str(val[0])
-            return str(val)
+                return _clean_text(str(val[0]))
+            return _clean_text(str(val))
     return default
 
 
