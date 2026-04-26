@@ -156,33 +156,57 @@ class SADatabase:
                      url=self._sa_url.split("@")[-1] if "@" in self._sa_url else self._sa_url)
 
     async def _run_column_migrations(self) -> None:
-        """Add missing columns to existing tables (SA create_all only creates new tables)."""
-        migrations = [
-            "ALTER TABLE albums ADD COLUMN format TEXT",
-            "ALTER TABLE albums ADD COLUMN sample_rate INTEGER",
-            "ALTER TABLE albums ADD COLUMN bit_depth INTEGER",
-            "ALTER TABLE albums ADD COLUMN artist_name TEXT",
-            "ALTER TABLE albums ADD COLUMN musicbrainz_release_id TEXT",
-            "ALTER TABLE albums ADD COLUMN label TEXT",
-            "ALTER TABLE albums ADD COLUMN catalog_number TEXT",
-            "ALTER TABLE albums ADD COLUMN barcode TEXT",
-            "ALTER TABLE artists ADD COLUMN musicbrainz_id TEXT",
-            "ALTER TABLE artists ADD COLUMN discogs_id TEXT",
-            "ALTER TABLE artists ADD COLUMN bio TEXT",
-            "ALTER TABLE artists ADD COLUMN image_path TEXT",
-            "ALTER TABLE artists ADD COLUMN sort_name TEXT",
-            "ALTER TABLE zones ADD COLUMN stereo_pair_id TEXT",
-            "ALTER TABLE zones ADD COLUMN stereo_channel TEXT",
-        ]
-        # Each ALTER must run in its own transaction. SQLite/asyncpg both abort
-        # the entire transaction on the first OperationalError ("column already
-        # exists"), silently skipping all subsequent migrations.
-        for sql in migrations:
-            try:
-                async with self._engine.begin() as conn:
-                    await conn.execute(sa.text(sql))
-            except Exception:
-                pass  # Column already exists
+        """Add missing columns to existing tables.
+
+        SA's create_all only creates *missing* tables — it never touches an
+        existing table's schema. We compare the live schema with the SA
+        metadata and add any column the model declares but the DB lacks,
+        each in its own transaction (SQLite/asyncpg abort the whole tx on
+        the first error). This is bulletproof against future column
+        additions: any new sa.Column in tables.py is auto-migrated.
+        """
+        from sqlalchemy import inspect as sa_inspect
+
+        def _live_schema(sync_conn):
+            insp = sa_inspect(sync_conn)
+            existing_tables = set(insp.get_table_names())
+            return {
+                table_name: {c["name"] for c in insp.get_columns(table_name)}
+                for table_name in existing_tables
+            }
+
+        async with self._engine.begin() as conn:
+            live = await conn.run_sync(_live_schema)
+
+        for table in metadata.tables.values():
+            if table.name not in live:
+                continue  # create_all should have created it
+            existing_cols = live[table.name]
+            for col in table.columns:
+                if col.name in existing_cols:
+                    continue
+                # Compile column type for the active dialect
+                try:
+                    coltype = col.type.compile(dialect=self._engine.dialect)
+                except Exception:
+                    coltype = "TEXT"
+                sql = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {coltype}"
+                try:
+                    async with self._engine.begin() as conn:
+                        await conn.execute(sa.text(sql))
+                    logger.info(
+                        "migration_added_column",
+                        table=table.name,
+                        column=col.name,
+                        type=coltype,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "migration_column_failed",
+                        table=table.name,
+                        column=col.name,
+                        error=str(e),
+                    )
 
         # Track credits table (idempotent via CREATE TABLE IF NOT EXISTS in SA metadata.create_all)
         # Ensure indexes exist for older databases
