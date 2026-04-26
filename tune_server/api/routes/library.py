@@ -74,6 +74,13 @@ async def stream_track_audio(track_id: int):
           ".opus": "audio/opus", ".aiff": "audio/aiff", ".dsf": "audio/dsf"}
     return FileResponse(filepath, media_type=mt.get(suffix, "application/octet-stream"), filename=filepath.name)
 
+@router.get("/albums/top-rated")
+async def top_rated_albums(limit: int = 20):
+    if not deps.album_rating_repo:
+        return []
+    return await deps.album_rating_repo.top_rated(limit)
+
+
 @router.get("/albums/recent", response_model=list[Album])
 async def list_recent_albums(limit: int = Query(50, le=200)):
     """Albums recently added to the library, sorted by creation date descending."""
@@ -142,6 +149,27 @@ async def get_album(album_id: int):
 @router.get("/albums/{album_id}/tracks", response_model=list[Track])
 async def get_album_tracks(album_id: int):
     return await deps.track_repo.list_by_album(album_id)
+
+
+@router.post("/albums/{album_id}/rate")
+async def rate_album(album_id: int, body: dict):
+    rating = body.get("rating")
+    note = body.get("note")
+    profile_id = body.get("profile_id")
+    if not rating or rating < 1 or rating > 5:
+        raise HTTPException(400, "Rating must be 1-5")
+    if not deps.album_rating_repo:
+        raise HTTPException(503, "Rating not available")
+    result = await deps.album_rating_repo.rate(album_id, rating, note, profile_id)
+    return result
+
+
+@router.get("/albums/{album_id}/rating")
+async def get_album_rating(album_id: int, profile_id: int | None = None):
+    if not deps.album_rating_repo:
+        return {"album_id": album_id, "rating": None, "note": None}
+    result = await deps.album_rating_repo.get(album_id, profile_id)
+    return result or {"album_id": album_id, "rating": None, "note": None}
 
 
 @router.get("/artists", response_model=list[Artist])
@@ -257,6 +285,179 @@ async def top_artists(limit: int = Query(20, le=100)):
     if not deps.history_repo:
         return []
     return await deps.history_repo.top_artists(limit)
+
+
+@router.get("/history/dashboard")
+async def history_dashboard():
+    """Advanced listening statistics."""
+    if not deps.history_repo:
+        return {
+            "period": "30 days", "total_plays": 0, "total_listening_ms": 0,
+            "daily": [], "genres": [], "hourly": [],
+            "new_artists_discovered": 0, "sources": [],
+        }
+
+    # Total listening time (last 30 days)
+    total_row = await deps.db.fetchone(
+        """SELECT COUNT(*) as plays, COALESCE(SUM(listened_ms), 0) as total_ms
+           FROM playback_history
+           WHERE played_at > datetime('now', '-30 days')""",
+    )
+
+    # Plays per day (last 14 days)
+    daily_rows = await deps.db.fetchall(
+        """SELECT DATE(played_at) as day, COUNT(*) as plays, COALESCE(SUM(listened_ms), 0) as ms
+           FROM playback_history
+           WHERE played_at > datetime('now', '-14 days')
+           GROUP BY DATE(played_at)
+           ORDER BY day""",
+    )
+
+    # Genre distribution (join through tracks -> albums for genre)
+    genre_rows = await deps.db.fetchall(
+        """SELECT a.genre, COUNT(*) as plays
+           FROM playback_history ph
+           JOIN tracks t ON ph.track_id = t.id
+           JOIN albums a ON t.album_id = a.id
+           WHERE ph.played_at > datetime('now', '-30 days') AND a.genre IS NOT NULL
+           GROUP BY a.genre
+           ORDER BY plays DESC
+           LIMIT 10""",
+    )
+
+    # Listening by hour of day
+    hourly_rows = await deps.db.fetchall(
+        """SELECT CAST(strftime('%H', played_at) AS INTEGER) as hour, COUNT(*) as plays
+           FROM playback_history
+           WHERE played_at > datetime('now', '-30 days')
+           GROUP BY hour
+           ORDER BY hour""",
+    )
+
+    # New artists discovered (first listen in last 30 days)
+    new_artists_row = await deps.db.fetchone(
+        """SELECT COUNT(DISTINCT ph.artist_name)
+           FROM playback_history ph
+           WHERE ph.played_at > datetime('now', '-30 days')
+           AND ph.artist_name IS NOT NULL
+           AND ph.artist_name NOT IN (
+               SELECT DISTINCT ph2.artist_name FROM playback_history ph2
+               WHERE ph2.played_at <= datetime('now', '-30 days')
+               AND ph2.artist_name IS NOT NULL
+           )""",
+    )
+
+    # Source distribution (local vs streaming)
+    source_rows = await deps.db.fetchall(
+        """SELECT source, COUNT(*) as plays
+           FROM playback_history
+           WHERE played_at > datetime('now', '-30 days')
+           GROUP BY source
+           ORDER BY plays DESC""",
+    )
+
+    return {
+        "period": "30 days",
+        "total_plays": total_row["plays"] if total_row else 0,
+        "total_listening_ms": total_row["total_ms"] if total_row else 0,
+        "daily": [{"day": r["day"], "plays": r["plays"], "listening_ms": r["ms"]} for r in daily_rows],
+        "genres": [{"genre": r["genre"], "plays": r["plays"]} for r in genre_rows],
+        "hourly": [{"hour": r["hour"], "plays": r["plays"]} for r in hourly_rows],
+        "new_artists_discovered": list(new_artists_row.values())[0] if new_artists_row else 0,
+        "sources": [{"source": r["source"], "plays": r["plays"]} for r in source_rows],
+    }
+
+
+@router.get("/recommendations")
+async def get_recommendations(limit: int = Query(20, le=100)):
+    """Get album recommendations based on listening history."""
+    # Get top artists and genres from history (last 30 days)
+    history_rows = await deps.db.fetchall(
+        """SELECT ph.artist_name, a.genre, COUNT(*) as cnt
+           FROM playback_history ph
+           LEFT JOIN tracks t ON ph.track_id = t.id
+           LEFT JOIN albums a ON t.album_id = a.id
+           WHERE ph.played_at > datetime('now', '-30 days')
+           GROUP BY ph.artist_name, a.genre
+           ORDER BY cnt DESC
+           LIMIT 20""",
+    )
+
+    if not history_rows:
+        # Fallback: random albums
+        albums = await deps.album_repo.list(limit=limit)
+        return {
+            "recommendations": [a.model_dump(exclude_none=False) for a in albums],
+            "reason": "random",
+        }
+
+    # Collect top genres and artists
+    top_genres = set()
+    top_artists = set()
+    for row in history_rows:
+        if row["genre"]:
+            top_genres.add(row["genre"])
+        if row["artist_name"]:
+            top_artists.add(row["artist_name"])
+
+    # Find albums in those genres/by those artists that user hasn't listened to recently
+    recommendations = []
+
+    # By genre
+    for genre in list(top_genres)[:5]:
+        genre_albums = await deps.db.fetchall(
+            """SELECT DISTINCT a.id, a.title, a.artist_name, a.year, a.genre,
+                      a.cover_path, a.format, a.sample_rate, a.bit_depth
+               FROM albums a
+               WHERE a.genre LIKE ?
+               AND a.id NOT IN (
+                   SELECT DISTINCT t.album_id FROM playback_history ph
+                   JOIN tracks t ON ph.track_id = t.id
+                   WHERE ph.played_at > datetime('now', '-7 days') AND t.album_id IS NOT NULL
+               )
+               ORDER BY RANDOM() LIMIT 3""",
+            (f"%{genre}%",),
+        )
+        for r in genre_albums:
+            recommendations.append({
+                "id": r["id"], "title": r["title"], "artist_name": r["artist_name"],
+                "year": r["year"], "genre": r["genre"], "cover_path": r["cover_path"],
+                "format": r["format"], "sample_rate": r["sample_rate"],
+                "bit_depth": r["bit_depth"], "reason": f"Genre: {genre}",
+            })
+
+    # By artist (other albums)
+    for artist in list(top_artists)[:5]:
+        artist_albums = await deps.db.fetchall(
+            """SELECT DISTINCT a.id, a.title, a.artist_name, a.year, a.genre,
+                      a.cover_path, a.format, a.sample_rate, a.bit_depth
+               FROM albums a
+               WHERE a.artist_name = ?
+               AND a.id NOT IN (
+                   SELECT DISTINCT t.album_id FROM playback_history ph
+                   JOIN tracks t ON ph.track_id = t.id
+                   WHERE ph.played_at > datetime('now', '-7 days') AND t.album_id IS NOT NULL
+               )
+               ORDER BY RANDOM() LIMIT 2""",
+            (artist,),
+        )
+        for r in artist_albums:
+            recommendations.append({
+                "id": r["id"], "title": r["title"], "artist_name": r["artist_name"],
+                "year": r["year"], "genre": r["genre"], "cover_path": r["cover_path"],
+                "format": r["format"], "sample_rate": r["sample_rate"],
+                "bit_depth": r["bit_depth"], "reason": f"Artiste: {artist}",
+            })
+
+    # Deduplicate and limit
+    seen = set()
+    unique = []
+    for r in recommendations:
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            unique.append(r)
+
+    return {"recommendations": unique[:limit]}
 
 
 # --- Smart Playlists ---

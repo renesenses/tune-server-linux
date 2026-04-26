@@ -60,6 +60,30 @@ async def _get_duration(file_path: str) -> float:
         return 0.0
 
 
+async def measure_loudness(file_path: str) -> float | None:
+    """Measure integrated loudness in LUFS using FFmpeg ebur128 filter.
+    Returns LUFS value (typically -14 to -23 for music).
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-i", file_path, "-af", "ebur128=peak=true",
+            "-f", "null", "-",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        # Parse "I: -14.0 LUFS" from ebur128 output
+        for line in stderr.decode().split('\n'):
+            if 'I:' in line and 'LUFS' in line:
+                parts = line.strip().split()
+                for i, p in enumerate(parts):
+                    if p == 'I:':
+                        return float(parts[i + 1])
+    except Exception:
+        logger.debug("loudness_measure_failed", file=file_path)
+    return None
+
+
 async def detect_bpm(file_path: str, duration: int = 30) -> float | None:
     """Detect BPM using FFmpeg PCM extraction + numpy autocorrelation.
 

@@ -27,6 +27,8 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/zones/{zone_id}", tags=["playback"])
 
+_sleep_timers: dict[int, asyncio.Task] = {}
+
 
 def _clean_file_title(file_path: str) -> str:
     """Extract a clean title from a file path, avoiding raw UPnP IDs."""
@@ -334,6 +336,31 @@ async def set_equalizer(zone_id: int, body: dict):
     return {"preset": "flat", "filter": None}
 
 
+@router.post("/dsp")
+async def set_dsp(zone_id: int, body: dict = {}):
+    """Set DSP effects (crossfeed, etc.).
+
+    Crossfeed reduces stereo separation for more natural headphone listening
+    by mixing a portion of each channel into the other.
+
+    body: { "crossfeed": "light" | "medium" | "strong" | null }
+    """
+    zone = _get_zone(zone_id)
+
+    crossfeed = body.get("crossfeed", None)  # None, "light", "medium", "strong"
+
+    if crossfeed:
+        levels = {"light": 0.15, "medium": 0.3, "strong": 0.45}
+        mix = levels.get(crossfeed, 0.3)
+        # Mix some of each channel into the other for a natural crossfeed effect
+        filter_str = f"pan=stereo|c0={1-mix}*c0+{mix}*c1|c1={mix}*c0+{1-mix}*c1"
+        zone.player.set_channel_filter(filter_str)
+    else:
+        zone.player.set_channel_filter(None)
+
+    return {"crossfeed": crossfeed}
+
+
 @router.get("/share")
 async def share_now_playing(zone_id: int):
     """Generate a shareable 'Now Playing' card."""
@@ -513,6 +540,83 @@ async def clear_queue(zone_id: int):
     zone.player.queue.clear()
     await zone.player.stop()
     return QueueLengthResponse(queue_length=0)
+
+
+@router.post("/sleep")
+async def set_sleep_timer(zone_id: int, body: dict = {}):
+    """Set a sleep timer. Stops playback after `minutes`. Pass 0 to cancel."""
+    zone = _get_zone(zone_id)
+
+    minutes = body.get("minutes", 30)
+
+    # Cancel existing timer
+    if zone_id in _sleep_timers:
+        _sleep_timers[zone_id].cancel()
+        del _sleep_timers[zone_id]
+
+    if minutes <= 0:
+        return {"sleep_timer": None, "zone_id": zone_id}
+
+    async def _sleep_stop():
+        await asyncio.sleep(minutes * 60)
+        await zone.player.stop()
+        if zone_id in _sleep_timers:
+            del _sleep_timers[zone_id]
+        logger.info("sleep_timer_fired", zone_id=zone_id, minutes=minutes)
+
+    _sleep_timers[zone_id] = asyncio.create_task(_sleep_stop())
+    return {"sleep_timer": minutes, "zone_id": zone_id}
+
+
+@router.get("/sleep")
+async def get_sleep_timer(zone_id: int):
+    """Get remaining sleep timer."""
+    if zone_id in _sleep_timers and not _sleep_timers[zone_id].done():
+        return {"active": True, "zone_id": zone_id}
+    return {"active": False, "zone_id": zone_id}
+
+
+@router.post("/queue/save-as-playlist")
+async def save_queue_as_playlist(zone_id: int, body: dict = {}):
+    """Save the current queue as a new playlist."""
+    zone = _get_zone(zone_id)
+
+    name = body.get("name", f"Queue {zone.name}")
+    tracks = zone.player.queue.tracks
+    if not tracks:
+        raise HTTPException(400, "Queue is empty")
+
+    # Create playlist
+    playlist_id = await deps.playlist_repo.create(name)
+
+    # Add tracks
+    track_ids = [t.id for t in tracks if t.id]
+    if track_ids:
+        await deps.playlist_repo.add_tracks(playlist_id, track_ids)
+
+    return {"playlist_id": playlist_id, "name": name, "track_count": len(track_ids)}
+
+
+@router.post("/crossfade")
+async def set_crossfade(zone_id: int, body: dict = {}):
+    """Enable/disable crossfade between tracks."""
+    zone = _get_zone(zone_id)
+    enabled = body.get("enabled", True)
+    duration = body.get("duration", 3.0)
+    zone.player._crossfade_enabled = enabled
+    zone.player._crossfade_duration = duration
+    return {"crossfade_enabled": enabled, "crossfade_duration": duration}
+
+
+@router.post("/normalization")
+async def set_normalization(zone_id: int, body: dict = {}):
+    """Enable/disable volume normalization."""
+    zone = _get_zone(zone_id)
+    enabled = body.get("enabled", True)
+    target_lufs = body.get("target_lufs", -14.0)
+    zone.player._normalization_enabled = enabled
+    zone.player._normalization_target = target_lufs
+    return {"normalization_enabled": enabled, "target_lufs": target_lufs}
 
 
 @router.get("/status", response_model=Zone)

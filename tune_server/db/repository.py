@@ -85,6 +85,7 @@ def _row_to_track(row) -> Track:
         bpm=row["bpm"] if "bpm" in keys else None,
         waveform_data=row["waveform_data"] if "waveform_data" in keys else None,
         waveform_generated_at=str(row["waveform_generated_at"]) if "waveform_generated_at" in keys and row["waveform_generated_at"] else None,
+        loudness_lufs=row["loudness_lufs"] if "loudness_lufs" in keys else None,
     )
 
 
@@ -800,6 +801,13 @@ class TrackRepo:
         )
         await self._db.commit()
 
+    async def update_loudness(self, track_id: int, lufs: float) -> None:
+        await self._db.execute(
+            "UPDATE tracks SET loudness_lufs = ? WHERE id = ?",
+            (lufs, track_id),
+        )
+        await self._db.commit()
+
     async def count_by_root(self, root_dir: str) -> int:
         """Count all tracks under a root directory."""
         prefix = root_dir.replace("\\", "/").rstrip("/") + "/"
@@ -1481,6 +1489,37 @@ class PartyVoteRepo:
                 "UPDATE party_votes SET queue_position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (pos_a, row_b["id"]))
         await self._db.commit()
+
+
+class AlbumRatingRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def rate(self, album_id: int, rating: int, note: str | None = None, profile_id: int | None = None) -> dict:
+        await self._db.execute(
+            """INSERT INTO album_ratings (album_id, profile_id, rating, note)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(album_id, profile_id) DO UPDATE SET rating=?, note=?, updated_at=CURRENT_TIMESTAMP""",
+            (album_id, profile_id, rating, note, rating, note))
+        await self._db.commit()
+        return {"album_id": album_id, "rating": rating, "note": note}
+
+    async def get(self, album_id: int, profile_id: int | None = None) -> dict | None:
+        row = await self._db.fetchone(
+            "SELECT rating, note FROM album_ratings WHERE album_id = ? AND (profile_id = ? OR profile_id IS NULL)",
+            (album_id, profile_id))
+        if row:
+            return {"album_id": album_id, "rating": row["rating"], "note": row["note"]}
+        return None
+
+    async def top_rated(self, limit: int = 20) -> list:
+        rows = await self._db.fetchall(
+            """SELECT ar.album_id, a.title, a.artist_name, a.cover_path, ar.rating, ar.note
+               FROM album_ratings ar JOIN albums a ON ar.album_id = a.id
+               ORDER BY ar.rating DESC, ar.updated_at DESC LIMIT ?""",
+            (limit,))
+        return [{"album_id": r["album_id"], "title": r["title"], "artist_name": r["artist_name"],
+                 "cover_path": r["cover_path"], "rating": r["rating"], "note": r["note"]} for r in rows]
 
 
 async def full_text_search(db: Database, query: str, limit: int = 50) -> SearchResult:

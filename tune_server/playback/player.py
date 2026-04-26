@@ -47,6 +47,12 @@ class Player:
         self._lock = asyncio.Lock()
         self._signal_path: "SignalPath | None" = None
         self._channel_filter: str | None = None
+        # Crossfade
+        self._crossfade_enabled = settings.crossfade_enabled
+        self._crossfade_duration = settings.crossfade_duration
+        # Volume normalization
+        self._normalization_enabled = False
+        self._normalization_target = -14.0
 
     @property
     def state(self) -> PlaybackState:
@@ -90,6 +96,21 @@ class Player:
 
     def set_channel_filter(self, channel_filter: str | None) -> None:
         self._channel_filter = channel_filter
+
+    async def _check_crossfade(self):
+        """Check if we should start crossfading to the next track."""
+        if not self._crossfade_enabled or self._crossfade_duration <= 0:
+            return
+        track = self.current_track
+        if not track or not track.duration_ms:
+            return
+        remaining_ms = track.duration_ms - self.position_ms
+        threshold_ms = int(self._crossfade_duration * 1000)
+        if remaining_ms <= threshold_ms and remaining_ms > threshold_ms - 500:
+            # Apply fade-out filter
+            fade_filter = f"afade=t=out:st=0:d={self._crossfade_duration}"
+            if self._pipeline:
+                self._channel_filter = fade_filter
 
     async def _persist_queue(self) -> None:
         """Persist current queue state if callback is set."""
@@ -355,6 +376,29 @@ class Player:
         if self._gapless:
             await self._gapless.preload(next_track)
 
+    async def _pre_buffer_next(self) -> None:
+        """Pre-decode the start of the next track for seamless transitions.
+
+        Called when the current track is within the pre-buffer threshold
+        (10s before end). If gapless handler already has this track queued,
+        this is a no-op.
+        """
+        if not self._gapless or not self._output:
+            return
+        next_track = self._queue.peek_next()
+        if not next_track:
+            return
+        # Resolve stream URL if needed
+        if not next_track.file_path and next_track.source_id and self._stream_url_resolver:
+            try:
+                url = await self._stream_url_resolver(next_track)
+                if url:
+                    next_track.file_path = url
+            except Exception:
+                return
+        if next_track.file_path:
+            self._gapless.pre_buffer_track(next_track)
+
     async def _playback_loop(self) -> None:
         try:
             while self._state in (PlaybackState.PLAYING, PlaybackState.BUFFERING, PlaybackState.PAUSED):
@@ -488,6 +532,12 @@ class Player:
 
                 pos = output_pos if output_pos >= 0 else self.position_ms
 
+                # Trigger early pre-buffering when approaching track end
+                if (duration_ms and self._gapless
+                        and (duration_ms - pos) <= self._gapless.PRE_BUFFER_THRESHOLD_MS
+                        and not self._gapless.has_next):
+                    await self._pre_buffer_next()
+
                 if duration_ms and pos >= duration_ms:
                     break
                 # No duration but output signals completion (pos >= 1)
@@ -518,8 +568,8 @@ class Player:
             logger.info("gapless_format_mismatch", zone_id=self._zone_id)
             return False
 
-        # Take the preloaded pipeline
-        new_pipeline, new_stream_info = self._gapless.take_pipeline()
+        # Take the preloaded pipeline and pre-buffered chunks
+        new_pipeline, new_stream_info, pre_buffered_chunks = self._gapless.take_pipeline()
         if not new_pipeline:
             return False
 
@@ -538,6 +588,15 @@ class Player:
         self._position_ms = 0
         self._position_start_time = time.monotonic()
 
+        # Flush pre-buffered chunks to the output immediately for seamless transition
+        if pre_buffered_chunks and self._output:
+            for chunk in pre_buffered_chunks:
+                try:
+                    await asyncio.wait_for(self._output.write(chunk), timeout=5)
+                except Exception:
+                    logger.warning("gapless_prebuffer_write_failed", zone_id=self._zone_id)
+                    break
+
         await self._persist_queue()
 
         await self._event_bus.emit(Event(
@@ -550,7 +609,8 @@ class Player:
             source="player",
         ))
 
-        logger.info("gapless_transition", track=next_track.title)
+        logger.info("gapless_transition", track=next_track.title,
+                     pre_buffered_chunks=len(pre_buffered_chunks))
 
         # Preload the NEXT next track
         await self._preload_next()

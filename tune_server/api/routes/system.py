@@ -636,3 +636,98 @@ async def install_update():
     if success:
         return {"status": "installed", "version": deps.update_checker.latest_version, "restart_required": True}
     raise HTTPException(status_code=500, detail="Update installation failed")
+
+
+@router.post("/restart")
+async def restart_server():
+    """Restart the server process. Returns immediately, server restarts after 2s."""
+    import os
+    import signal
+
+    async def _delayed_restart():
+        await asyncio.sleep(2)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    asyncio.create_task(_delayed_restart())
+    return {"status": "restarting", "message": "Server will restart in 2 seconds"}
+
+
+@router.post("/rescan")
+async def rescan_library():
+    """Trigger a full library rescan (all music directories)."""
+    if not deps.scanner:
+        raise HTTPException(503, "Scanner not available")
+    asyncio.create_task(deps.scanner.scan())
+    return {"status": "scanning"}
+
+
+@router.post("/clear-cache")
+async def clear_cache():
+    """Clear artwork cache and temporary files."""
+    import shutil
+    cleared = 0
+    cache_dir = Path(settings.data_dir) / "artwork_cache" if hasattr(settings, "data_dir") else None
+    if cache_dir and cache_dir.is_dir():
+        for f in cache_dir.iterdir():
+            if f.is_file() and f.suffix in (".jpg", ".png", ".webp"):
+                f.unlink()
+                cleared += 1
+    return {"cleared": cleared}
+
+
+@router.get("/logs")
+async def get_logs(lines: int = 100):
+    """Get recent server logs."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["journalctl", "-u", "tune-server", "--no-pager", "-n", str(lines)],
+            capture_output=True, text=True, timeout=10,
+        )
+        return {"logs": result.stdout, "lines": lines}
+    except FileNotFoundError:
+        # Not a systemd system — try log file
+        log_file = Path("/tmp/tune-server.log")
+        if log_file.exists():
+            text = log_file.read_text()
+            log_lines = text.strip().split("\n")
+            return {"logs": "\n".join(log_lines[-lines:]), "lines": len(log_lines[-lines:])}
+        return {"logs": "", "lines": 0}
+
+
+@router.get("/diagnostics")
+async def diagnostics():
+    """Full system diagnostics for the diagnostics view."""
+    import platform
+    import sys
+    import os
+
+    from tune_server import __version__
+
+    diag = {
+        "version": __version__,
+        "python": sys.version,
+        "platform": platform.platform(),
+        "pid": os.getpid(),
+        "uptime_seconds": None,
+        "memory_mb": None,
+        "cpu_count": os.cpu_count(),
+        "db_engine": settings.db_engine if hasattr(settings, "db_engine") else "sqlite",
+        "music_dirs": settings.music_dirs,
+        "zones_count": len(deps.zone_manager.list_zones()) if deps.zone_manager else 0,
+        "streaming_services": {
+            name: {"enabled": svc.enabled if hasattr(svc, "enabled") else True}
+            for name, svc in deps.streaming_services.items()
+        },
+    }
+
+    # Uptime
+    try:
+        import psutil
+        proc = psutil.Process(os.getpid())
+        diag["uptime_seconds"] = int(proc.create_time())
+        diag["memory_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
+    except ImportError:
+        pass
+
+    return diag

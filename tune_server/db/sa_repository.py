@@ -14,7 +14,7 @@ from tune_server.db.sa_engine import SADatabase
 from tune_server.db.tables import (
     artists, albums, tracks, playlists, playlist_tracks,
     zones, play_queue, streaming_auth, radio_favorites, radio_stations,
-    user_profiles, user_favorites, party_votes,
+    user_profiles, user_favorites, party_votes, album_ratings,
 )
 from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track
 
@@ -1204,6 +1204,76 @@ class SAPartyVoteRepo:
                 party_votes.update().where(party_votes.c.id == row_b["id"])
                 .values(queue_position=pos_a, updated_at=sa.func.now())
             )
+
+
+# ===================================================================
+# AlbumRatingRepo — SA Core
+# ===================================================================
+
+class SAAlbumRatingRepo:
+    def __init__(self, db: SADatabase) -> None:
+        self._db = db
+
+    async def rate(self, album_id: int, rating: int, note: str | None = None, profile_id: int | None = None) -> dict:
+        # Try update first, then insert
+        existing = await self._db.sa_fetchone(
+            sa.select(album_ratings.c.id).where(
+                sa.and_(
+                    album_ratings.c.album_id == album_id,
+                    album_ratings.c.profile_id == profile_id if profile_id is not None
+                    else album_ratings.c.profile_id.is_(None),
+                )
+            )
+        )
+        if existing:
+            await self._db.sa_execute(
+                album_ratings.update()
+                .where(album_ratings.c.id == existing["id"])
+                .values(rating=rating, note=note, updated_at=sa.func.now())
+            )
+        else:
+            await self._db.sa_execute(
+                album_ratings.insert().values(
+                    album_id=album_id, profile_id=profile_id, rating=rating, note=note,
+                )
+            )
+        return {"album_id": album_id, "rating": rating, "note": note}
+
+    async def get(self, album_id: int, profile_id: int | None = None) -> dict | None:
+        stmt = sa.select(album_ratings.c.rating, album_ratings.c.note).where(
+            sa.and_(
+                album_ratings.c.album_id == album_id,
+                sa.or_(
+                    album_ratings.c.profile_id == profile_id,
+                    album_ratings.c.profile_id.is_(None),
+                ),
+            )
+        )
+        row = await self._db.sa_fetchone(stmt)
+        if row:
+            return {"album_id": album_id, "rating": row["rating"], "note": row["note"]}
+        return None
+
+    async def top_rated(self, limit: int = 20) -> list:
+        stmt = (
+            sa.select(
+                album_ratings.c.album_id,
+                albums.c.title,
+                albums.c.artist_name,
+                albums.c.cover_path,
+                album_ratings.c.rating,
+                album_ratings.c.note,
+            )
+            .join(albums, album_ratings.c.album_id == albums.c.id)
+            .order_by(album_ratings.c.rating.desc(), album_ratings.c.updated_at.desc())
+            .limit(limit)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [
+            {"album_id": r["album_id"], "title": r["title"], "artist_name": r["artist_name"],
+             "cover_path": r["cover_path"], "rating": r["rating"], "note": r["note"]}
+            for r in rows
+        ]
 
 
 # ===================================================================

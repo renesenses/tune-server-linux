@@ -216,9 +216,10 @@ class TuneServer:
         history_repo = PlaybackHistoryRepo(self._db)
         deps.history_repo = history_repo
         self._setup_playback_history(history_repo)
-        from tune_server.db.sa_repository import SARadioFavoriteRepo, SAPartyVoteRepo
+        from tune_server.db.sa_repository import SARadioFavoriteRepo, SAPartyVoteRepo, SAAlbumRatingRepo
         deps.radio_fav_repo = SARadioFavoriteRepo(self._db)
         deps.party_vote_repo = SAPartyVoteRepo(self._db)
+        deps.album_rating_repo = SAAlbumRatingRepo(self._db)
 
         # Auto-update checker
         from tune_server.updater import UpdateChecker

@@ -751,3 +751,66 @@ async def reorder_playlist_tracks(playlist_id: int, req: PlaylistReorderRequest)
         source="playlists",
     ))
     return await deps.playlist_repo.get_tracks(playlist_id)
+
+
+# --- Collaborative Playlists ---
+
+
+@router.post("/collaborative")
+async def create_collaborative_playlist(body: dict):
+    name = body.get("name", "Collaborative Playlist")
+    description = body.get("description")
+    profile_id = body.get("profile_id")
+    await deps.db.execute(
+        "INSERT INTO collaborative_playlists (name, description, created_by) VALUES (?, ?, ?)",
+        (name, description, profile_id))
+    await deps.db.commit()
+    row = await deps.db.fetchone("SELECT last_insert_rowid() as id")
+    return {"id": row["id"], "name": name}
+
+
+@router.get("/collaborative")
+async def list_collaborative_playlists():
+    rows = await deps.db.fetchall(
+        "SELECT id, name, description, created_by, created_at FROM collaborative_playlists ORDER BY created_at DESC")
+    return [{"id": r["id"], "name": r["name"], "description": r["description"],
+             "created_by": r["created_by"], "created_at": r["created_at"]} for r in rows]
+
+
+@router.post("/collaborative/{playlist_id}/add")
+async def add_to_collaborative(playlist_id: int, body: dict):
+    track_id = body.get("track_id")
+    title = body.get("title", "")
+    artist = body.get("artist", "")
+    profile_id = body.get("profile_id")
+
+    if track_id:
+        track = await deps.track_repo.get(track_id)
+        if track:
+            title = track.title
+            artist = track.artist_name or ""
+
+    await deps.db.execute(
+        "INSERT INTO collaborative_playlist_tracks (playlist_id, track_id, track_title, track_artist, added_by) VALUES (?, ?, ?, ?, ?)",
+        (playlist_id, track_id, title, artist, profile_id))
+    await deps.db.commit()
+    return {"added": True, "title": title}
+
+
+@router.get("/collaborative/{playlist_id}/tracks")
+async def get_collaborative_tracks(playlist_id: int):
+    rows = await deps.db.fetchall(
+        """SELECT ct.id, ct.track_id, ct.track_title, ct.track_artist, ct.added_by, ct.added_at, ct.votes
+           FROM collaborative_playlist_tracks ct WHERE ct.playlist_id = ? ORDER BY ct.added_at""",
+        (playlist_id,))
+    return [{"id": r["id"], "track_id": r["track_id"], "title": r["track_title"],
+             "artist": r["track_artist"], "added_by": r["added_by"],
+             "added_at": r["added_at"], "votes": r["votes"]} for r in rows]
+
+
+@router.delete("/collaborative/{playlist_id}")
+async def delete_collaborative_playlist(playlist_id: int):
+    await deps.db.execute("DELETE FROM collaborative_playlist_tracks WHERE playlist_id = ?", (playlist_id,))
+    await deps.db.execute("DELETE FROM collaborative_playlists WHERE id = ?", (playlist_id,))
+    await deps.db.commit()
+    return {"deleted": True}

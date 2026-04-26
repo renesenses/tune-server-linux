@@ -118,6 +118,7 @@ tracks = sa.Table(
     sa.Column("album_title", sa.Text),
     sa.Column("artist_name", sa.Text),
     sa.Column("cover_path", sa.Text),
+    sa.Column("loudness_lufs", sa.Float),
 )
 
 sa.Index("idx_tracks_album_id", tracks.c.album_id)
@@ -609,6 +610,56 @@ party_votes = sa.Table(
 )
 
 sa.Index("idx_party_votes_zone", party_votes.c.zone_id)
+
+# ---------------------------------------------------------------------------
+# album_ratings
+# ---------------------------------------------------------------------------
+album_ratings = sa.Table(
+    "album_ratings",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("album_id", sa.Integer, nullable=False),
+    sa.Column("profile_id", sa.Integer),
+    sa.Column("rating", sa.Integer),
+    sa.Column("note", sa.Text),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+# ---------------------------------------------------------------------------
+# collaborative_playlists
+# ---------------------------------------------------------------------------
+collaborative_playlists = sa.Table(
+    "collaborative_playlists",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text),
+    sa.Column("created_by", sa.Integer),
+    sa.Column("is_public", sa.Boolean, server_default=sa.text("TRUE")),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+# ---------------------------------------------------------------------------
+# collaborative_playlist_tracks
+# ---------------------------------------------------------------------------
+collaborative_playlist_tracks = sa.Table(
+    "collaborative_playlist_tracks",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column(
+        "playlist_id",
+        sa.Integer,
+        sa.ForeignKey("collaborative_playlists.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("track_id", sa.Integer),
+    sa.Column("track_title", sa.Text, nullable=False),
+    sa.Column("track_artist", sa.Text),
+    sa.Column("added_by", sa.Integer),
+    sa.Column("added_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("votes", sa.Integer, server_default="0"),
+)
 
 # ---------------------------------------------------------------------------
 # zone_profiles

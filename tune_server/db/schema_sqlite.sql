@@ -290,3 +290,36 @@ CREATE TABLE IF NOT EXISTS party_votes (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_party_votes_zone ON party_votes(zone_id);
+
+-- Album ratings & notes
+CREATE TABLE IF NOT EXISTS album_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    album_id INTEGER NOT NULL,
+    profile_id INTEGER,
+    rating INTEGER CHECK(rating BETWEEN 1 AND 5),
+    note TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(album_id, profile_id)
+);
+
+-- Collaborative playlists
+CREATE TABLE IF NOT EXISTS collaborative_playlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_by INTEGER,
+    is_public BOOLEAN DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS collaborative_playlist_tracks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    playlist_id INTEGER NOT NULL REFERENCES collaborative_playlists(id) ON DELETE CASCADE,
+    track_id INTEGER,
+    track_title TEXT NOT NULL,
+    track_artist TEXT,
+    added_by INTEGER,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    votes INTEGER DEFAULT 0
+);

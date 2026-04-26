@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     sync_correction_cooldown_s: float = 15.0       # seconds, min between corrections per follower
     sync_dlna_default_buffer_s: float = 3.0        # seconds, default DLNA buffer delay
 
+    # Crossfade
+    crossfade_enabled: bool = False
+    crossfade_duration: float = 3.0  # seconds
+
     # Audio
     ffmpeg_path: str = Field(default_factory=lambda: _detect_bin("ffmpeg"))
     ffprobe_path: str = Field(default_factory=lambda: _detect_bin("ffprobe"))

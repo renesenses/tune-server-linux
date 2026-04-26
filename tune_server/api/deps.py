@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from tune_server.db.engine import Database
-    from tune_server.db.repository import AlbumRepo, ArtistRepo, PartyVoteRepo, PlaybackHistoryRepo, PlaylistRepo, PlayQueueRepo, RadioFavoriteRepo, RadioStationRepo, TrackCreditRepo, TrackRepo, ZoneRepo
+    from tune_server.db.repository import AlbumRatingRepo, AlbumRepo, ArtistRepo, PartyVoteRepo, PlaybackHistoryRepo, PlaylistRepo, PlayQueueRepo, RadioFavoriteRepo, RadioStationRepo, TrackCreditRepo, TrackRepo, ZoneRepo
     from tune_server.discovery.manager import DiscoveryManager
     from tune_server.event_bus import EventBus
     from tune_server.library.enrichment import MetadataEnricher
@@ -48,6 +48,7 @@ class AppDeps:
         self.credit_repo: TrackCreditRepo | None = None
         self.history_repo: PlaybackHistoryRepo | None = None
         self.party_vote_repo: PartyVoteRepo | None = None
+        self.album_rating_repo: AlbumRatingRepo | None = None
 
     @property
     def tidal(self):

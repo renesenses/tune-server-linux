@@ -117,6 +117,7 @@ class Track(BaseModel):
     bpm: Optional[float] = None
     waveform_data: Optional[str] = None
     waveform_generated_at: Optional[str] = None
+    loudness_lufs: Optional[float] = None
     credits: list[TrackCredit] | None = None
 
 
