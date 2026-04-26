@@ -138,6 +138,11 @@ def mock_output():
     output.name = "mock-output"
     type(output).capabilities = PropertyMock(return_value=LOCAL_CAPABILITIES)
     type(output).is_available = PropertyMock(return_value=True)
+    # supports_direct_url is sync — explicit MagicMock so the player's
+    # `if self._output.supports_direct_url(track):` evaluates to False
+    # (otherwise an unbound AsyncMock returns a truthy coroutine).
+    from unittest.mock import MagicMock as _MM
+    output.supports_direct_url = _MM(return_value=False)
     return output
 
 

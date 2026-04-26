@@ -75,6 +75,9 @@ class TestPlaybackTimeouts:
             return_value=MagicMock(max_sample_rate=192000, max_bit_depth=24,
                                    supported_formats=[AudioFormat.FLAC])
         )
+        # supports_direct_url is sync — explicit MagicMock returning False so
+        # the player goes through the AudioPipeline path (not direct stream).
+        output.supports_direct_url = MagicMock(return_value=False)
         player.set_output(output)
         return player, bus
 

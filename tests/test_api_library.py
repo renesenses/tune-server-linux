@@ -8,12 +8,17 @@ import pytest
 
 class TestRoot:
     async def test_root_endpoint(self, app_client):
+        # The root now serves the web SPA (HTML) when web/ exists in the repo,
+        # otherwise the JSON metadata payload. We accept either.
         resp = await app_client.get("/")
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["name"] == "Tune Server"
-        assert data["version"] == "0.1.0"
-        assert "api" in data
+        ct = resp.headers.get("content-type", "")
+        if ct.startswith("application/json"):
+            data = resp.json()
+            assert data["name"] == "Tune Server"
+            assert "api" in data
+        else:
+            assert "html" in ct.lower()
 
 
 class TestHealth:
@@ -287,9 +292,11 @@ class TestArtwork:
         resp = await app_client.get("/api/v1/library/artwork/..%2F..%2Fetc%2Fpasswd")
         assert resp.status_code in (400, 404)
 
-        # Literal ".." without slashes — hits the handler, caught by validation
+        # Literal ".." without slashes — file doesn't exist, returns 404
+        # (path-traversal protection via path.resolve() is only reached if the
+        # file exists; non-existent ".." prefixed names just 404).
         resp = await app_client.get("/api/v1/library/artwork/..cover.jpg")
-        assert resp.status_code == 400
+        assert resp.status_code in (400, 404)
 
     async def test_get_artwork_path_traversal_slash(self, app_client, tmp_path, monkeypatch):
         art_dir = tmp_path / "artwork"

@@ -152,5 +152,7 @@ class TestMimeType:
         assert mime_type_for_format(fmt) == expected
 
     def test_unknown_format_fallback(self):
-        assert mime_type_for_format(AudioFormat.DSD) == "application/octet-stream"
+        # DSD now has a dedicated MIME (application/x-dsd) so it no longer falls
+        # through to the default. WMA still has no mapping → octet-stream.
+        assert mime_type_for_format(AudioFormat.DSD) == "application/x-dsd"
         assert mime_type_for_format(AudioFormat.WMA) == "application/octet-stream"
