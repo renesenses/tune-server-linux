@@ -340,7 +340,8 @@ async def history_dashboard():
         }
 
     # Compute cutoffs in Python — avoids DB-specific INTERVAL syntax (SQLite vs PostgreSQL).
-    now = datetime.now(tz=timezone.utc)
+    # Naive UTC: matches `TIMESTAMP WITHOUT TIME ZONE` columns expected by asyncpg.
+    now = datetime.now(tz=timezone.utc).replace(tzinfo=None)
     cutoff_30d = now - timedelta(days=30)
     cutoff_14d = now - timedelta(days=14)
     is_postgres = settings.db_engine == "postgres"
@@ -427,7 +428,7 @@ async def history_dashboard():
 @router.get("/recommendations")
 async def get_recommendations(limit: int = Query(20, le=100)):
     """Get album recommendations based on listening history."""
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=timezone.utc).replace(tzinfo=None)
     cutoff_30d = now - timedelta(days=30)
     cutoff_7d = now - timedelta(days=7)
 
