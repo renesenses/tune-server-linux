@@ -2,6 +2,21 @@
 
 All notable changes to Tune Server.
 
+## v0.7.13 — 2026-04-26
+
+### Features
+- Alarm clock — musical wake-up with fade-in
+- Collections — group albums by theme
+- Quick favorites — 1-click toggle on tracks and albums
+- Activity feed — recent plays across all zones
+- Now listening — real-time multi-zone status
+- Smart duplicate detection (local vs streaming)
+- Share playlist by link (token + text)
+- Room correction — per-zone audio profiles
+- Import/export ratings
+- Widget data endpoint for mobile apps
+- Silence detection for intelligent crossfade
+
 ## v0.7.12 — 2026-04-26
 
 ### UX
