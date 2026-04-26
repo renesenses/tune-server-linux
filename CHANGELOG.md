@@ -2,6 +2,24 @@
 
 All notable changes to Tune Server.
 
+## v0.7.12 — 2026-04-26
+
+### UX
+- Sleep timer, Queue to Playlist, Crossfade between tracks
+- Clickable dashboard stats, History tracks with play icon
+
+### Audio
+- Volume normalization (EBU R128), Crossfeed DSP, Pre-buffer gapless
+
+### Discovery
+- Recommendations, Advanced listening dashboard
+
+### Social
+- Album ratings (1-5 stars + notes), Collaborative playlists
+
+### Diagnostics
+- Restart, rescan, clear cache, view logs buttons
+
 ## v0.7.11 — 2026-04-25
 
 ### DJ Beatmatch
