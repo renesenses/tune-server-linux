@@ -2,9 +2,12 @@
 
 Validates backward compatibility with raw SQL and SA-native methods.
 """
+import sqlite3
+import tempfile
+
 import pytest
 from tune_server.db.sa_engine import SADatabase
-from tune_server.db.tables import artists, albums, tracks
+from tune_server.db.tables import artists, albums, metadata, tracks
 from tune_server.models import Artist
 
 
@@ -333,3 +336,137 @@ async def test_track_repo_list_by_album(db: SADatabase):
     assert tracks_list[0].title == "A"  # track_number=1
     assert tracks_list[1].title == "B"  # track_number=2
     assert tracks_list[2].title == "C"  # track_number=3
+
+
+# ---------------------------------------------------------------------------
+# Regression: column auto-migration on legacy databases
+# ---------------------------------------------------------------------------
+# v0.7.13 → v0.7.16 shipped with an incomplete migration list: any user
+# upgrading from v0.5.x got HTTP 500 on /library/albums/* because columns
+# like albums.bio, tracks.loudness_lufs, etc. were declared in the SA model
+# but never added by ALTER TABLE. v0.7.17 replaced the hand-list with
+# reflection-based auto-detection.
+#
+# These tests pin that behavior so any regression is caught immediately.
+
+async def test_auto_migration_adds_missing_columns():
+    """Open a deliberately stale SQLite DB and verify every column from the
+    SA model gets added by _run_column_migrations."""
+    db_path = tempfile.mktemp(suffix=".db")
+
+    # Build a v0.5-era schema by hand: each table has only the original few
+    # columns. Anything declared in tables.py but absent here MUST be added
+    # by the auto-migration on connect.
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE artists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            sort_name TEXT
+        );
+        CREATE TABLE albums (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            artist_id INTEGER,
+            year INTEGER,
+            genre TEXT,
+            disc_count INTEGER DEFAULT 1,
+            track_count INTEGER DEFAULT 0,
+            cover_path TEXT,
+            source TEXT NOT NULL DEFAULT 'local',
+            source_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            album_id INTEGER,
+            artist_id INTEGER,
+            disc_number INTEGER DEFAULT 1,
+            track_number INTEGER DEFAULT 0,
+            duration_ms INTEGER DEFAULT 0,
+            file_path TEXT UNIQUE,
+            format TEXT,
+            sample_rate INTEGER,
+            bit_depth INTEGER,
+            channels INTEGER DEFAULT 2,
+            source TEXT NOT NULL DEFAULT 'local',
+            source_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE zones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            output_type TEXT NOT NULL DEFAULT 'local',
+            output_device_id TEXT,
+            volume REAL DEFAULT 0.7,
+            group_id INTEGER,
+            sync_delay_ms INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            queue_json TEXT
+        );
+        INSERT INTO artists (name) VALUES ('Test Artist');
+        INSERT INTO albums (title, artist_id) VALUES ('Test Album', 1);
+        INSERT INTO tracks (title, album_id, artist_id, file_path)
+            VALUES ('Test Track', 1, 1, '/test.flac');
+    """)
+    conn.commit()
+    conn.close()
+
+    database = SADatabase(engine_name="sqlite", db_path=db_path)
+    try:
+        await database.connect()
+
+        # Read live schema after migrations
+        live = sqlite3.connect(db_path)
+        try:
+            live_cols = {
+                table_name: {row[1] for row in live.execute(f"PRAGMA table_info({table_name})")}
+                for table_name in ("artists", "albums", "tracks", "zones")
+            }
+        finally:
+            live.close()
+
+        # Every column declared in the SA model must now exist in the DB.
+        for table in metadata.tables.values():
+            if table.name not in live_cols:
+                continue
+            model_cols = {c.name for c in table.columns}
+            missing = model_cols - live_cols[table.name]
+            assert not missing, (
+                f"After migration, table {table.name} is still missing "
+                f"columns {missing} declared in tables.py"
+            )
+
+        # Sanity: a real album-by-id query (the one Jacques hit) succeeds.
+        from tune_server.db.sa_repository import SAAlbumRepo
+        album = await SAAlbumRepo(database).get(1)
+        assert album is not None
+        assert album.title == "Test Album"
+    finally:
+        await database.close()
+        import os
+        os.unlink(db_path)
+
+
+async def test_auto_migration_idempotent():
+    """Running migrations twice on the same DB should be a no-op."""
+    db_path = tempfile.mktemp(suffix=".db")
+
+    database = SADatabase(engine_name="sqlite", db_path=db_path)
+    try:
+        await database.connect()
+        # Connect again with a fresh SADatabase on the same file — no errors,
+        # all migrations skip silently because columns already exist.
+        await database.close()
+
+        database2 = SADatabase(engine_name="sqlite", db_path=db_path)
+        await database2.connect()
+        # If we get here without raising, the second run was clean.
+        await database2.close()
+    finally:
+        import os
+        if os.path.exists(db_path):
+            os.unlink(db_path)
