@@ -2,6 +2,25 @@
 
 All notable changes to Tune Server.
 
+## v0.7.34 — 2026-04-27
+
+### Fixes
+
+- **`GET /api/v1/playlists/{id}/tracks` 500'd on PostgreSQL** with the
+  same `Ambiguous column name 'album_title'` error v0.7.33 fixed in
+  the local-search query. The `PlaylistRepository.get_tracks` SA
+  select projected `tracks` (whole table, including its denormalised
+  `album_title`/`artist_name`/`cover_path` columns) AND the JOINed
+  `albums.title.label("album_title")` etc. — same label twice in the
+  result set, asyncpg refused to map. Renamed the JOINed labels to
+  `_resolved` suffix (already supported by `_row_to_track`).
+
+User-visible: opening a transferred playlist (e.g. fip select with 66
+matched tracks) now actually displays the tracks instead of an
+empty 500'd view.
+
+---
+
 ## v0.7.33 — 2026-04-27
 
 ### Fixes

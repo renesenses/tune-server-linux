@@ -787,12 +787,17 @@ class SAPlaylistRepo:
         )
 
     async def get_tracks(self, playlist_id: int) -> list[Track]:
+        # The tracks table has its own denormalised album_title /
+        # artist_name / cover_path columns; we MUST label the JOINed
+        # values with the `_resolved` suffix recognised by
+        # _row_to_track, otherwise asyncpg/SA refuses to map the result
+        # set with `Ambiguous column name 'album_title' …`.
         stmt = (
             sa.select(
                 tracks,
-                albums.c.title.label("album_title"),
-                artists.c.name.label("artist_name"),
-                albums.c.cover_path.label("cover_path"),
+                albums.c.title.label("album_title_resolved"),
+                artists.c.name.label("artist_name_resolved"),
+                albums.c.cover_path.label("cover_path_resolved"),
             )
             .select_from(
                 playlist_tracks
