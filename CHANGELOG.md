@@ -2,6 +2,16 @@
 
 All notable changes to Tune Server.
 
+## v0.7.19 — 2026-04-27
+
+### Stabilization
+- **Auto-update opt-in** (`TUNE_AUTO_UPDATE=true`): UpdateChecker now
+  downloads + installs + restarts without a UI click when the setting
+  is enabled. Skipped on Windows (the running .exe is file-locked;
+  stage-and-swap is deferred to v0.7.20+). Default off, enable per
+  tester. Linux/macOS server users get truly silent updates when
+  paired with systemd / launchd auto-restart.
+
 ## v0.7.18 — 2026-04-27
 
 ### Stabilization

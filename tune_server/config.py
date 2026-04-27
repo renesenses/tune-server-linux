@@ -144,6 +144,12 @@ class Settings(BaseSettings):
     # Must be high enough for large Tidal playlist fetches (~34s for 280 playlists).
     api_timeout: int = 60
 
+    # Auto-update: when true, the UpdateChecker downloads + installs new
+    # releases without requiring a UI click, then restarts the process.
+    # Skipped on Windows (running .exe is locked, can't be replaced in place).
+    # Default off for safety; enable per-tester via TUNE_AUTO_UPDATE=true.
+    auto_update: bool = False
+
     # Streaming services
     tidal_enabled: bool = False
     tidal_quality: str = "HI_RES_LOSSLESS"  # LOW, HIGH, LOSSLESS, HI_RES_LOSSLESS

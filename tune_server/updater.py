@@ -1,7 +1,8 @@
 """Auto-update checker and installer for Tune Server.
 
 Periodically checks GitHub Releases for new versions.
-Notifies the user via WebSocket. Installs on confirmation.
+Notifies the user via WebSocket. Installs on confirmation, OR
+auto-installs and restarts when settings.auto_update is True.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import asyncio
 import os
 import platform
 import shutil
+import signal
 import sys
 import tempfile
 import zipfile
@@ -20,6 +22,7 @@ import aiohttp
 import structlog
 
 from tune_server import __version__
+from tune_server.config import settings
 
 logger = structlog.get_logger()
 
@@ -78,10 +81,41 @@ class UpdateChecker:
         await asyncio.sleep(30)
         while True:
             try:
-                await self.check_for_update()
+                info = await self.check_for_update()
+                if info and settings.auto_update:
+                    await self._auto_install_and_restart()
             except Exception:
                 logger.debug("update_check_failed")
             await asyncio.sleep(CHECK_INTERVAL_HOURS * 3600)
+
+    async def _auto_install_and_restart(self) -> None:
+        """Download + install + restart, no UI click needed.
+
+        Skipped on Windows: the running tune-server.exe is locked by the
+        OS and shutil.copy2 will fail. Stage-and-swap on next start is
+        deferred to v0.7.20+. For now, Windows users keep the manual
+        "Installer" button which prompts them to restart manually.
+        """
+        if platform.system().lower() == "windows":
+            logger.info(
+                "auto_update_skipped_windows",
+                hint="manual install via UI required; running .exe is file-locked",
+            )
+            return
+
+        logger.info("auto_update_starting", version=self._latest_version)
+        ok = await self.download_and_install()
+        if not ok:
+            logger.warning("auto_update_install_failed")
+            return
+
+        # systemd / launchd / supervisord will restart us; for plain
+        # `python -m tune_server` runs the user has to relaunch manually.
+        logger.info("auto_update_restarting")
+        # Give the event bus a chance to flush the update_installed event
+        # before SIGTERM kills us.
+        await asyncio.sleep(2)
+        os.kill(os.getpid(), signal.SIGTERM)
 
     async def check_for_update(self) -> dict | None:
         """Check GitHub for the latest release. Returns update info or None."""
