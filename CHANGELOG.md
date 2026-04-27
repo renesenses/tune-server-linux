@@ -2,6 +2,19 @@
 
 All notable changes to Tune Server.
 
+## v0.7.27 — 2026-04-27
+
+### Fixes
+
+- **Spotify Connect relay shutdown was 60s slow** because aiohttp
+  AppRunner cleanup waits the default `shutdown_timeout` (60s) for
+  active stream handlers to finish — librespot connections are
+  effectively endless. Set `shutdown_timeout=2.0` and signal EOF to
+  subscribers before runner cleanup so handlers exit promptly. The
+  unit test suite went from 60s → 0.2s; CI tests stopped timing out.
+
+---
+
 ## v0.7.26 — 2026-04-27
 
 ### Fixes

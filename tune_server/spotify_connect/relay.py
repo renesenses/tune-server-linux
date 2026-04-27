@@ -75,7 +75,10 @@ class SpotifyConnectRelay:
         # explicitly would clash. We only register GET; the auto-HEAD reuses
         # the same handler but discards the response body.
         self._app.router.add_get(self.stream_url_path, self._handle_stream)
-        self._runner = web.AppRunner(self._app)
+        # shutdown_timeout=2 (default 60) — librespot connections are
+        # streaming and never finish cleanly, so we don't want runner
+        # cleanup to wait a full minute on shutdown.
+        self._runner = web.AppRunner(self._app, shutdown_timeout=2.0)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self._host, self._port, reuse_address=True)
         await site.start()
@@ -86,13 +89,19 @@ class SpotifyConnectRelay:
         if self._fanout_task:
             self._fanout_task.cancel()
             self._fanout_task = None
+        # Signal EOF to active subscribers BEFORE runner cleanup so the
+        # handlers can exit promptly; otherwise runner.cleanup waits up to
+        # `shutdown_timeout` seconds for them to finish.
+        for q in list(self._subscribers):
+            try:
+                q.put_nowait(b"")
+            except Exception:
+                pass
+        self._subscribers.clear()
         if self._runner:
             await self._runner.cleanup()
             self._runner = None
         self._app = None
-        for q in list(self._subscribers):
-            await q.put(b"")  # signal EOF to active responses
-        self._subscribers.clear()
         logger.info("spotify_connect_relay_stopped")
 
     async def _fanout_loop(self) -> None:
