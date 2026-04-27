@@ -233,7 +233,9 @@ class TuneServer:
 
         # Spotify Connect receiver (zeroconf-based, optional)
         from tune_server.spotify_connect import SpotifyConnectManager
-        self._spotify_connect = SpotifyConnectManager(self._event_bus)
+        self._spotify_connect = SpotifyConnectManager(
+            self._event_bus, zone_manager=self._zone_manager,
+        )
         deps.spotify_connect = self._spotify_connect
         if settings.spotify_connect_enabled and settings.spotify_connect_zone_id is not None:
             try:
