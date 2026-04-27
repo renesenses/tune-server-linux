@@ -9,8 +9,12 @@ import structlog
 from tune_server.config import settings
 from tune_server.event_bus import EventBus
 from tune_server.spotify_connect.daemon import LibrespotDaemon
+from tune_server.spotify_connect.relay import SpotifyConnectRelay
+from tune_server.utils.network import get_local_ip
 
 logger = structlog.get_logger()
+
+DEFAULT_RELAY_PORT = 8082
 
 
 def _default_device_name() -> str:
@@ -19,11 +23,21 @@ def _default_device_name() -> str:
 
 
 class SpotifyConnectManager:
-    """Lifecycle of the Spotify Connect receiver: 1 device <-> 1 zone."""
+    """Lifecycle of the Spotify Connect receiver: 1 device <-> 1 zone.
+
+    Composition:
+        - LibrespotDaemon: librespot subprocess in zeroconf mode
+        - SpotifyConnectRelay: HTTP server that serves the daemon's PCM as WAV
+
+    The zone integration (telling a target zone to play the relay URL) is
+    exposed via `stream_url`; clients/server can route it through the existing
+    play-by-URL infrastructure.
+    """
 
     def __init__(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
         self._daemon: LibrespotDaemon | None = None
+        self._relay: SpotifyConnectRelay | None = None
         self._zone_id: int | None = None
         self._device_name: str = _default_device_name()
 
@@ -32,12 +46,19 @@ class SpotifyConnectManager:
         return self._daemon is not None and self._daemon.is_running
 
     @property
+    def stream_url(self) -> str | None:
+        if not self._relay:
+            return None
+        return self._relay.url_for(get_local_ip())
+
+    @property
     def status(self) -> dict:
         return {
             "enabled": self.is_enabled,
             "device_name": self._device_name,
             "zone_id": self._zone_id,
             "binary_available": self._binary_available(),
+            "stream_url": self.stream_url,
         }
 
     def _binary_available(self) -> bool:
@@ -59,9 +80,19 @@ class SpotifyConnectManager:
             on_event=self._handle_event,
         )
         await self._daemon.start()
-        logger.info("spotify_connect_enabled", zone_id=zone_id, name=self._device_name)
+        self._relay = SpotifyConnectRelay(self._daemon, port=DEFAULT_RELAY_PORT)
+        await self._relay.start()
+        logger.info(
+            "spotify_connect_enabled",
+            zone_id=zone_id,
+            name=self._device_name,
+            stream_url=self.stream_url,
+        )
 
     async def disable(self) -> None:
+        if self._relay:
+            await self._relay.stop()
+            self._relay = None
         if self._daemon:
             await self._daemon.stop()
             self._daemon = None
@@ -69,7 +100,4 @@ class SpotifyConnectManager:
         logger.info("spotify_connect_disabled")
 
     async def _handle_event(self, event: str, track_id: str | None, raw: str) -> None:
-        # TODO v0.7.21+: route PCM chunks from daemon.read_pcm_chunk() into
-        # the target zone's audio pipeline. Requires a new "live PCM source"
-        # input on Player. For now, log only.
         logger.info("spotify_connect_event", event=event, track_id=track_id)
