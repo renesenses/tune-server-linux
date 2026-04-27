@@ -169,10 +169,17 @@ class Settings(BaseSettings):
     amazon_music_region: str = "us"
     amazon_music_quality: str = "HD"  # SD, HD, ULTRA_HD
 
-    # Spotify
+    # Spotify (catalogue connector — search/browse via Spotify Web API)
     spotify_enabled: bool = False
     spotify_client_id: str | None = None
     spotify_redirect_uri: str = "http://localhost:8888/api/v1/streaming/spotify/callback"
+
+    # Spotify Connect receiver (Tune appears as a Spotify Connect device)
+    spotify_connect_enabled: bool = False
+    spotify_connect_zone_id: int | None = None  # zone that receives the audio
+    spotify_connect_device_name: str | None = None  # default = hostname-based
+    spotify_connect_bitrate: int = 320  # 96 / 160 / 320
+    spotify_connect_binary: str | None = None  # path to librespot (default: PATH lookup)
 
     # Deezer
     deezer_enabled: bool = False

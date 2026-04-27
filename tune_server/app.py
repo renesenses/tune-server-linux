@@ -231,6 +231,19 @@ class TuneServer:
         deps.update_checker = self._update_checker
         self._update_checker.start()
 
+        # Spotify Connect receiver (zeroconf-based, optional)
+        from tune_server.spotify_connect import SpotifyConnectManager
+        self._spotify_connect = SpotifyConnectManager(self._event_bus)
+        deps.spotify_connect = self._spotify_connect
+        if settings.spotify_connect_enabled and settings.spotify_connect_zone_id is not None:
+            try:
+                await self._spotify_connect.enable(
+                    zone_id=settings.spotify_connect_zone_id,
+                    device_name=settings.spotify_connect_device_name,
+                )
+            except FileNotFoundError as exc:
+                logger.warning("spotify_connect_unavailable", error=str(exc))
+
         # Playlist auto-sync scheduler
         from tune_server.playlist_manager.scheduler import AutoSyncScheduler
         self._autosync = AutoSyncScheduler(
@@ -551,6 +564,9 @@ class TuneServer:
 
         if self._mount_manager:
             await self._safe_stop("mount_manager", self._mount_manager.stop())
+
+        if hasattr(self, "_spotify_connect") and self._spotify_connect:
+            await self._safe_stop("spotify_connect", self._spotify_connect.disable())
 
         if self._discovery_manager:
             await self._safe_stop("discovery", self._discovery_manager.stop())
