@@ -36,12 +36,21 @@ def _is_postgres() -> bool:
 
 async def _search_local_tracks(query: str, limit: int) -> list[dict]:
     """Search local library — compatible SQLite + PostgreSQL.
-    PostgreSQL doesn't have artist_name on tracks table (uses JOIN).
+
+    NOTE: tracks has its own denormalised `album_title` column AND we
+    JOIN albums for the canonical title. asyncpg/SA error
+    ``Ambiguous column name 'album_title' in result set column
+    descriptions`` if both ever land in the result set, so we alias
+    every column explicitly to avoid the collision and tolerate either
+    schema variant.
     """
     like = "ILIKE" if _is_postgres() else "LIKE"
     rows = await deps.db.fetchall(
-        f"""SELECT t.id as source_id, t.title, ar.name as artist_name,
-                   a.title as album_title, t.duration_ms
+        f"""SELECT t.id AS source_id,
+                   t.title AS track_title,
+                   ar.name AS track_artist_name,
+                   a.title AS track_album_title,
+                   t.duration_ms AS track_duration_ms
             FROM tracks t
             LEFT JOIN albums a ON a.id = t.album_id
             LEFT JOIN artists ar ON ar.id = t.artist_id
@@ -49,7 +58,16 @@ async def _search_local_tracks(query: str, limit: int) -> list[dict]:
             LIMIT ?""",
         (f"%{query}%", f"%{query}%", limit),
     )
-    return [dict(r) for r in rows]
+    return [
+        {
+            "source_id": r["source_id"],
+            "title": r["track_title"] or "",
+            "artist_name": r["track_artist_name"] or "",
+            "album_title": r["track_album_title"] or "",
+            "duration_ms": r["track_duration_ms"] or 0,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/services")

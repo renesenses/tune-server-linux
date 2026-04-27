@@ -2,6 +2,26 @@
 
 All notable changes to Tune Server.
 
+## v0.7.33 — 2026-04-27
+
+### Fixes
+
+- **Local-target playlist transfer 500'd on PostgreSQL** with
+  `sqlalchemy.exc.InvalidRequestError: Ambiguous column name
+  'album_title' in result set column descriptions`. The `tracks` table
+  has a denormalised `album_title` column AND the search query also
+  joined `albums` and aliased `a.title AS album_title` — asyncpg sees
+  two columns with the same final label and SA refuses to map.
+  Aliased every column in `_search_local_tracks` with a `track_*`
+  prefix to break the ambiguity, then unwrap to the public field
+  names in the dict comprehension.
+
+End-to-end Soundiiz-style transfer is now actually working:
+fip select Tidal → Local matched **66 tracks** against the local
+library on .18.
+
+---
+
 ## v0.7.32 — 2026-04-27
 
 ### Fixes (durable)
