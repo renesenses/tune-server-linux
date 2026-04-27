@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -29,6 +30,22 @@ _PAUSE_EVENTS = {"paused"}
 def _default_device_name() -> str:
     host = socket.gethostname().split(".")[0]
     return f"Tune ({host})"
+
+
+def _resolve_librespot_binary() -> str:
+    """Locate the librespot binary. Order:
+    1. settings.spotify_connect_binary (explicit override)
+    2. <bundle dir>/librespot[.exe]  — PyInstaller release bundle
+    3. "librespot" on PATH
+    """
+    if settings.spotify_connect_binary:
+        return settings.spotify_connect_binary
+    # PyInstaller: sys.executable points to the unpacked dist/tune-server/tune-server[.exe]
+    bundle_dir = Path(sys.executable).resolve().parent
+    candidate = bundle_dir / ("librespot.exe" if sys.platform == "win32" else "librespot")
+    if candidate.is_file():
+        return str(candidate)
+    return "librespot"
 
 
 def _synthetic_track(stream_url: str) -> Track:
@@ -94,8 +111,8 @@ class SpotifyConnectManager:
 
     def _binary_available(self) -> bool:
         from shutil import which
-        path = settings.spotify_connect_binary or "librespot"
-        return which(path) is not None or Path(path).exists()
+        path = _resolve_librespot_binary()
+        return which(path) is not None or Path(path).is_file()
 
     async def enable(self, zone_id: int, device_name: Optional[str] = None) -> None:
         if self.is_enabled:
@@ -104,7 +121,7 @@ class SpotifyConnectManager:
         self._zone_playing = False
         if device_name:
             self._device_name = device_name
-        binary = settings.spotify_connect_binary or "librespot"
+        binary = _resolve_librespot_binary()
         self._daemon = LibrespotDaemon(
             device_name=self._device_name,
             binary_path=binary,

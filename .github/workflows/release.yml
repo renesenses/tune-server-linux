@@ -42,6 +42,31 @@ jobs:
           pip install pyinstaller
           pip install .
 
+      - name: Set up Rust (for librespot)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + librespot binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/bin/librespot
+            ~/.cargo/bin/librespot.exe
+          key: ${{ runner.os }}-${{ runner.arch }}-librespot-0.4.2
+
+      - name: Build librespot (Spotify Connect receiver)
+        shell: bash
+        continue-on-error: true
+        run: |
+          # --backend pipe = raw PCM stdout, so no audio backend needed (skips
+          # alsa/coreaudio/portaudio compilation, ~3x faster build).
+          if ! command -v librespot >/dev/null 2>&1; then
+            cargo install librespot --version 0.4.2 --locked --no-default-features
+          fi
+          # Confirm
+          which librespot || true
+          librespot --version || true
+
       - name: Build binary with PyInstaller (Unix)
         if: matrix.platform != 'windows'
         run: |
@@ -55,6 +80,31 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           pyinstaller --name tune-server --onedir --noconsole --add-data "web;web" --collect-all tune_server --noconfirm tune_server/__main__.py
+
+      - name: Bundle librespot binary (Unix)
+        if: matrix.platform != 'windows'
+        shell: bash
+        continue-on-error: true
+        run: |
+          if [ -x "$HOME/.cargo/bin/librespot" ]; then
+            cp "$HOME/.cargo/bin/librespot" dist/tune-server/librespot
+            echo "Bundled librespot at dist/tune-server/librespot"
+          else
+            echo "::warning::librespot not found — Spotify Connect feature will be unavailable in this build"
+          fi
+
+      - name: Bundle librespot binary (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $cargoBin = "$env:USERPROFILE\.cargo\bin\librespot.exe"
+          if (Test-Path $cargoBin) {
+            Copy-Item $cargoBin "dist/tune-server/librespot.exe"
+            Write-Host "Bundled librespot at dist/tune-server/librespot.exe"
+          } else {
+            Write-Host "::warning::librespot.exe not found — Spotify Connect feature will be unavailable in this build"
+          }
 
       - name: Bundle FFmpeg for Windows
         if: matrix.platform == 'windows'
