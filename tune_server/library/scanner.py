@@ -89,6 +89,9 @@ class LibraryScanner:
         self._credit_repo = credit_repo
         self._scanning = False
         self._lock = asyncio.Lock()
+        # Snapshot of the last completed scan, for diagnostics.
+        self.last_scan_stats: dict | None = None
+        self.last_scan_at: str | None = None
 
     @property
     def is_scanning(self) -> bool:
@@ -181,6 +184,9 @@ class LibraryScanner:
                 logger.info("deleted_orphan_albums", count=orphans)
 
             logger.info("scan_completed", **stats)
+            from datetime import datetime, timezone
+            self.last_scan_stats = dict(stats)
+            self.last_scan_at = datetime.now(timezone.utc).isoformat()
 
         finally:
             self._scanning = False

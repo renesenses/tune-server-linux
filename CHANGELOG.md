@@ -2,6 +2,25 @@
 
 All notable changes to Tune Server.
 
+## v0.7.18 — 2026-04-27
+
+### Stabilization
+- **DB backup before migrations**: SQLite databases are snapshotted to
+  `tune_server.db.bak.YYYYMMDD-HHMMSS` before any ALTER runs. Keeps the
+  5 most recent. Failures are non-fatal. Skipped for `:memory:` and
+  PostgreSQL.
+- **Enriched `/api/v1/system/diagnostics`**: now returns DB info (engine,
+  path/url with masked credentials, size), live schema-drift report
+  (columns in SA model not present in DB — should always be empty),
+  last scan timestamp + stats, ring buffer of the last 50 warning/error
+  log events, per-service streaming auth status (with auth-error if any),
+  outputs health (DLNA/AirPlay device counts). Single JSON for remote
+  triage — testers can `curl /api/v1/system/diagnostics` instead of
+  needing journalctl access.
+- **CI dual-engine** (`tests.yml`): pytest now runs on both SQLite and
+  PostgreSQL via a service container. Catches PG-only / SQLite-only
+  regressions before they ship.
+
 ## v0.7.17 — 2026-04-26
 
 ### Fixes

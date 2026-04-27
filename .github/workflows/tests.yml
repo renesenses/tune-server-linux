@@ -1,0 +1,62 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: pytest (${{ matrix.engine }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [sqlite, postgres]
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tune
+          POSTGRES_PASSWORD: tune
+          POSTGRES_DB: tune_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ffmpeg (used by some tests via subprocess)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Run pytest — full suite (SQLite)
+        if: matrix.engine == 'sqlite'
+        run: pytest -q --tb=short
+
+      - name: Run pytest — SA engine + repos (PostgreSQL)
+        if: matrix.engine == 'postgres'
+        env:
+          TUNE_TEST_PG_URL: postgresql+asyncpg://tune:tune@localhost:5432/tune_test
+        # Only the SA-engine + repo + auto-migration tests honor the env
+        # var. The legacy `Database(":memory:")` fixture in conftest is
+        # SQLite-only and is exercised by the sqlite job.
+        run: pytest -q --tb=short tests/test_sa_engine.py
