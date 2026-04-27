@@ -38,9 +38,86 @@ logger = structlog.get_logger()
 COMPONENT_SHUTDOWN_TIMEOUT = 5  # seconds
 
 
+class _TeeStream:
+    """Forward writes to multiple streams, ignore failures.
+
+    Used to send all structlog/uvicorn output to BOTH the original stdout
+    (visible in console / launchers) AND a log file next to the running
+    binary. On Windows --noconsole the original stdout is /dev/null so the
+    file becomes the only place to read logs from.
+    """
+
+    def __init__(self, *streams) -> None:
+        self._streams = [s for s in streams if s is not None]
+
+    def write(self, data) -> int:
+        for s in self._streams:
+            try:
+                s.write(data)
+                s.flush()
+            except Exception:
+                pass
+        return len(data) if isinstance(data, str) else 0
+
+    def flush(self) -> None:
+        for s in self._streams:
+            try:
+                s.flush()
+            except Exception:
+                pass
+
+
+def _resolve_log_path() -> "Path | None":
+    """Pick a log file location based on platform / packaging mode."""
+    import sys
+    from pathlib import Path
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        # PyInstaller bundle: log next to the running .exe / binary
+        candidates.append(Path(sys.executable).resolve().parent / "tune-server.log")
+    candidates.append(Path.home() / ".tune" / "tune-server.log")
+    candidates.append(Path("tune-server.log"))
+    for p in candidates:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            # Touch the file to confirm writability.
+            with p.open("a", encoding="utf-8"):
+                pass
+            return p
+        except Exception:
+            continue
+    return None
+
+
+def _install_file_logging() -> None:
+    """Tee stdout/stderr to a log file so launchers (Windows .bat, journalctl
+    on Linux) can show users what happened on crash."""
+    import sys
+    log_path = _resolve_log_path()
+    if not log_path:
+        return
+    try:
+        # Cap file size at 2 MB by truncating on rotation. Keep one rolled-over
+        # copy so a crash doesn't lose the immediately preceding session.
+        if log_path.exists() and log_path.stat().st_size > 2 * 1024 * 1024:
+            backup = log_path.with_suffix(log_path.suffix + ".1")
+            try:
+                backup.unlink()
+            except FileNotFoundError:
+                pass
+            log_path.rename(backup)
+        fh = log_path.open("a", encoding="utf-8", buffering=1)
+        sys.stdout = _TeeStream(sys.stdout, fh)
+        sys.stderr = _TeeStream(sys.stderr, fh)
+    except Exception:
+        # Logging setup must never block startup.
+        pass
+
+
 def _configure_logging() -> None:
     from tune_server.utils.error_buffer import capture_processor
 
+    _install_file_logging()
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

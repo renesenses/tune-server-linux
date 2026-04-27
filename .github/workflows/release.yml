@@ -118,16 +118,8 @@ jobs:
           $binDir = Get-ChildItem -Path ffmpeg-tmp -Recurse -Directory -Filter "bin" | Select-Object -First 1
           Copy-Item "$($binDir.FullName)/ffmpeg.exe" "dist/tune-server/ffmpeg.exe"
           Copy-Item "$($binDir.FullName)/ffprobe.exe" "dist/tune-server/ffprobe.exe"
-          # Create start batch file
-          @"
-          @echo off
-          echo Starting Tune Server...
-          echo Open http://localhost:8888 in your browser
-          echo.
-          cd /d "%~dp0"
-          tune-server.exe
-          pause
-          "@ | Set-Content -Path "dist/tune-server/start-tune-server.bat" -Encoding ASCII
+          # Ship the versioned launcher (pre-flight checks + crash UX)
+          Copy-Item "scripts/start-tune-server.bat" "dist/tune-server/start-tune-server.bat"
 
       - name: Package (Linux)
         if: matrix.platform == 'linux'
