@@ -40,8 +40,8 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install ffmpeg (used by some tests via subprocess)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install system deps (ffmpeg + libportaudio for sounddevice)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libportaudio2
 
       - name: Install dependencies
         run: |
