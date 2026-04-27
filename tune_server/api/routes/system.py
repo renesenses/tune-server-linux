@@ -695,6 +695,83 @@ async def get_logs(lines: int = 100):
         return {"logs": "", "lines": 0}
 
 
+@router.get("/diagnostics/bundle")
+async def diagnostics_bundle():
+    """One-click diagnostic ZIP for testers.
+
+    Bundles diagnostics.json + the recent log file + a masked copy of the
+    runtime config. Designed so a non-technical Windows tester can hit a
+    button in the web UI and email me the resulting file. NEVER include
+    raw credentials, ARLs, OAuth tokens, or DB passwords.
+    """
+    import io
+    import json as _json
+    import re
+    import sys
+    import zipfile
+    from datetime import datetime
+
+    diag_json = await diagnostics(errors_limit=200)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("diagnostics.json", _json.dumps(diag_json, indent=2, default=str))
+
+        # tune-server.log — same path the app teed stdout to. Search a few
+        # likely candidates so we work whether the user is running from
+        # source, from a PyInstaller bundle, or from a packager install.
+        candidates = []
+        if getattr(sys, "frozen", False):
+            candidates.append(Path(sys.executable).resolve().parent / "tune-server.log")
+        candidates.append(Path.home() / ".tune" / "tune-server.log")
+        candidates.append(Path.cwd() / "tune-server.log")
+        for log_path in candidates:
+            if log_path.is_file():
+                try:
+                    zf.write(log_path, arcname="tune-server.log")
+                except Exception:
+                    pass
+                # Also bundle the rolled-over copy if any.
+                rolled = log_path.with_suffix(log_path.suffix + ".1")
+                if rolled.is_file():
+                    try:
+                        zf.write(rolled, arcname="tune-server.log.1")
+                    except Exception:
+                        pass
+                break
+
+        # Mask env-style secrets and embed for context.
+        env_path = Path.cwd() / ".env"
+        if env_path.is_file():
+            try:
+                raw = env_path.read_text(encoding="utf-8", errors="replace")
+                masked_lines = []
+                for line in raw.splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        key, _, val = line.partition("=")
+                        if any(s in key.upper() for s in (
+                            "TOKEN", "PASSWORD", "ARL", "SECRET", "CLIENT_ID",
+                            "API_KEY", "AUTH", "DB_URL", "WEBHOOK",
+                        )) and val.strip():
+                            stripped = val.strip().strip('"').strip("'")
+                            if len(stripped) > 6:
+                                line = f"{key}={stripped[:3]}***{stripped[-3:]}"
+                            else:
+                                line = f"{key}=***"
+                    masked_lines.append(line)
+                zf.writestr(".env.masked", "\n".join(masked_lines))
+            except Exception:
+                pass
+
+    buf.seek(0)
+    fname = f"tune-diagnostics-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @router.get("/diagnostics")
 async def diagnostics(errors_limit: int = Query(50, le=200)):
     """Full system diagnostics — single JSON for remote debugging.
