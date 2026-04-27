@@ -434,12 +434,11 @@ class DeezerService(StreamingService):
         if not token:
             return None
 
-        quality_map = {
-            "MP3_128": "1",
-            "MP3_320": "3",
-            "FLAC": "9",
-        }
-        format_id = quality_map.get(self._quality, "9")
+        # Deezer's media API expects format *names* ("FLAC", "MP3_320",
+        # "MP3_128"), not the legacy numeric IDs ("9", "3", "1"). Sending
+        # numeric IDs returns 403 Forbidden silently and the player falls
+        # back to the 30-second preview URL — which is the bug users see.
+        format_name = self._quality if self._quality in {"FLAC", "MP3_320", "MP3_128"} else "FLAC"
 
         session = await self._ensure_session()
         try:
@@ -449,7 +448,7 @@ class DeezerService(StreamingService):
                     "license_token": self._license_token,
                     "media": [{
                         "type": "FULL",
-                        "formats": [{"cipher": "BF_CBC_STRIPE", "format": format_id}],
+                        "formats": [{"cipher": "BF_CBC_STRIPE", "format": format_name}],
                     }],
                     "track_tokens": [token],
                 },
