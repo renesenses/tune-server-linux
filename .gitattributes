@@ -1,0 +1,11 @@
+# Force Windows-style line endings on .bat / .cmd files. Some cmd.exe
+# builds (notably French Windows installs) refuse to execute LF-only
+# scripts and the window closes silently — the launcher does nothing
+# and the tester is stuck. CRLF guarantees both git on Linux/macOS and
+# the GitHub Actions Windows runner ship the file correctly.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Everything else stays LF.
+*       text=auto

@@ -2,6 +2,20 @@
 
 All notable changes to Tune Server.
 
+## v0.7.25 — 2026-04-27
+
+### Fixes
+
+- **Windows launcher silently failed to start** on some installs (most
+  visible on French Windows) because `scripts/start-tune-server.bat`
+  shipped with LF-only line endings. Some `cmd.exe` builds refuse to
+  execute LF batch files — the window flashes and closes with no
+  output. Added `.gitattributes` enforcing `eol=crlf` for `*.bat /
+  *.cmd / *.ps1`, normalised the file in-place. Reported by Jacques
+  on v0.7.24.
+
+---
+
 ## v0.7.24 — 2026-04-27
 
 ### Windows robustness pack
