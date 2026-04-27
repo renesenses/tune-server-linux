@@ -2,6 +2,40 @@
 
 All notable changes to Tune Server.
 
+## v0.7.24 — 2026-04-27
+
+### Windows robustness pack
+
+Targeted at the upcoming wave of Windows testers from the on-mag.fr
+article — make first-run, support, and updates self-service.
+
+- **Pre-flight launcher**: `start-tune-server.bat` now checks for
+  `tune-server.exe`, `ffmpeg.exe`, and a free port 8888 before launch;
+  opens the browser automatically once `/api/v1/system/health`
+  responds; on exit, dumps the last 30 lines of `tune-server.log` so
+  testers can paste them into a bug report.
+- **File logging**: `--noconsole` previously sent stdout to devnull on
+  Windows, leaving zero forensic trail. We now tee stdout/stderr to a
+  rotating `tune-server.log` (next to the binary, capped at 2 MB +
+  one rolled-over copy).
+- **One-click diagnostics**: new `GET /api/v1/system/diagnostics/bundle`
+  endpoint returns a ZIP with `diagnostics.json`, `tune-server.log`,
+  and a credentials-masked `.env` copy. Web UI exposes a "Télécharger
+  le diagnostic" button in Settings → About.
+- **Auto-update stage-and-swap**: Windows could not update before
+  because the running `tune-server.exe` is file-locked. New flow:
+  download → extract to `_update_staging/` → write
+  `_apply_update.bat` → spawn detached → SIGTERM ourselves → applier
+  `taskkill`s, `robocopy /MIR`s, restarts the launcher. The
+  `_update_staging` folder is also the signal the watchdog uses to
+  step aside instead of restarting.
+- **Watchdog auto-restart**: the launcher now wraps
+  `tune-server.exe` in a 3-attempt retry loop with linear backoff
+  (5/10/15 s). Clean exits (code 0, user closed the window, update
+  hand-off) end the watchdog; only genuine crashes trigger a restart.
+
+---
+
 ## v0.7.23 — 2026-04-27
 
 ### Fixes
