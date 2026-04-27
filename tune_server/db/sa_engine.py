@@ -388,10 +388,27 @@ class SADatabase:
                 bound = {f"p{i+1}": v for i, v in enumerate(params)}
                 await conn.execute(sa.text(text_sql), bound)
 
+    @staticmethod
+    def _is_write_statement(sql: str) -> bool:
+        """True if the SQL mutates state (INSERT/UPDATE/DELETE) and so
+        must run inside a transaction that commits — including paths
+        like INSERT ... RETURNING which return rows but still write."""
+        head = sql.lstrip().split(None, 1)
+        if not head:
+            return False
+        return head[0].upper() in {"INSERT", "UPDATE", "DELETE", "MERGE", "REPLACE"}
+
     async def fetchone(self, sql: str, params: tuple = ()) -> Any | None:
-        """Fetch a single row. Returns _SARow (supports row['key'] and row[0])."""
+        """Fetch a single row. Returns _SARow (supports row['key'] and row[0]).
+
+        Auto-detects mutating statements (INSERT/UPDATE/DELETE — including
+        the RETURNING form) and runs them under engine.begin() so they
+        actually commit. Plain SELECTs stay on engine.connect() to avoid
+        starting unnecessary transactions.
+        """
         text_sql, bound_params = self._prepare_raw(sql, params)
-        async with self._engine.connect() as conn:
+        ctx = self._engine.begin() if self._is_write_statement(text_sql) else self._engine.connect()
+        async with ctx as conn:
             result = await conn.execute(sa.text(text_sql), bound_params)
             row = result.first()
             return _SARow(row._mapping) if row else None
@@ -399,7 +416,8 @@ class SADatabase:
     async def fetchall(self, sql: str, params: tuple = ()) -> list[Any]:
         """Fetch all rows. Returns list of _SARow."""
         text_sql, bound_params = self._prepare_raw(sql, params)
-        async with self._engine.connect() as conn:
+        ctx = self._engine.begin() if self._is_write_statement(text_sql) else self._engine.connect()
+        async with ctx as conn:
             result = await conn.execute(sa.text(text_sql), bound_params)
             return [_SARow(row._mapping) for row in result.all()]
 

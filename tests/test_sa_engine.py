@@ -306,6 +306,51 @@ async def test_raw_select_count(db: SADatabase):
     assert row["cnt"] == 2
 
 
+def test_is_write_statement_classifies_correctly():
+    """Direct unit test of the static helper that picks engine.begin vs
+    engine.connect for fetchone/fetchall.
+
+    Regression: before v0.7.32, fetchone always used engine.connect,
+    silently dropping INSERT...RETURNING writes (the row never
+    committed and any FK reference exploded later)."""
+    cls = SADatabase
+    assert cls._is_write_statement("INSERT INTO playlists (name) VALUES (?)") is True
+    assert cls._is_write_statement("  insert into x VALUES(1)") is True
+    assert cls._is_write_statement("INSERT INTO x ... RETURNING id") is True
+    assert cls._is_write_statement("UPDATE x SET y=1") is True
+    assert cls._is_write_statement("DELETE FROM x WHERE id=1") is True
+    assert cls._is_write_statement("MERGE INTO ...") is True
+    assert cls._is_write_statement("REPLACE INTO ...") is True
+    assert cls._is_write_statement("SELECT * FROM x") is False
+    assert cls._is_write_statement("  select 1") is False
+    assert cls._is_write_statement("WITH cte AS (SELECT 1) SELECT * FROM cte") is False
+    assert cls._is_write_statement("") is False
+    assert cls._is_write_statement("   ") is False
+
+
+async def test_fetchone_insert_returning_persists(db: SADatabase):
+    """Regression for the v0.7.32 transfer-to-local FK violation: when
+    fetchone runs an INSERT...RETURNING it MUST commit so the new row
+    is visible to subsequent statements (and to other connections).
+
+    Before v0.7.32, fetchone always used engine.connect (no commit);
+    the INSERT rolled back on context exit and a follow-up FK INSERT
+    on a child table failed with ForeignKeyViolationError on PG and
+    silently dropped the work on SQLite."""
+    row = await db.fetchone(
+        "INSERT INTO artists (name) VALUES (?) RETURNING id",
+        ("Persistence Test",),
+    )
+    assert row is not None
+    new_id = row["id"]
+    assert new_id is not None
+
+    # A second connection / fresh fetchone must see the row.
+    check = await db.fetchone("SELECT id, name FROM artists WHERE id = ?", (new_id,))
+    assert check is not None
+    assert check["name"] == "Persistence Test"
+
+
 async def test_sa_insert_then_delete(db: SADatabase):
     """SA insert + delete cycle should work."""
     import sqlalchemy as sa

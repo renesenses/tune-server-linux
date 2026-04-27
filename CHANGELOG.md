@@ -2,6 +2,28 @@
 
 All notable changes to Tune Server.
 
+## v0.7.32 — 2026-04-27
+
+### Fixes (durable)
+
+- **`SADatabase.fetchone` silently dropped INSERT...RETURNING writes**.
+  The wrapper used `engine.connect()` (no transaction) for every
+  fetchone, so an INSERT...RETURNING returned the new id but rolled
+  back when the connection closed. Subsequent FK references then
+  exploded (`ForeignKeyViolationError` on PG, silent data loss on
+  SQLite). v0.7.31 worked around this in transfer.py only; v0.7.32
+  fixes the root cause: fetchone/fetchall now auto-detect mutating
+  statements (INSERT/UPDATE/DELETE/MERGE/REPLACE) and run them under
+  `engine.begin()` so they actually commit.
+- **Regression tests** (`test_is_write_statement_classifies_correctly`,
+  `test_fetchone_insert_returning_persists`) now exercise the
+  detection helper and the round-trip on both SQLite and PG (CI
+  dual-engine matrix).
+- transfer.py reverted to the natural `db.fetchone(INSERT...RETURNING)`
+  form — the SA wrapper does the right thing now.
+
+---
+
 ## v0.7.31 — 2026-04-27
 
 ### Fixes (transfer to local target)

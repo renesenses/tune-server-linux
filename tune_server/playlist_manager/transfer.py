@@ -162,9 +162,6 @@ async def execute_transfer(
 
     if not dry_run and db and target_service == "local":
         try:
-            # `RETURNING id` works on both SQLite ≥3.35 and PostgreSQL —
-            # last_insert_rowid() is SQLite-only and was breaking the
-            # path on PG-backed installs.
             row = await db.fetchone(
                 "INSERT INTO playlists (name, description) VALUES (?, ?) RETURNING id",
                 (playlist_name, f"Transferred from {source_service}: {source_playlist_name}"),
@@ -191,7 +188,6 @@ async def execute_transfer(
                         (local_playlist_id, track_id, position),
                     )
                     position += 1
-            await db.commit()
         except Exception:
             logger.exception("transfer_create_playlist_error")
 
