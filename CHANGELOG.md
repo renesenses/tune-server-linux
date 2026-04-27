@@ -2,6 +2,22 @@
 
 All notable changes to Tune Server.
 
+## v0.7.36 — 2026-04-27
+
+### Fixes
+
+- **Spotify : track_count = 0 sur toutes les playlists**. Spotify a
+  renommé le champ `tracks` en `items` dans la réponse de
+  `current_user_playlists` (constaté 2026-04-27 ; payload reçu
+  contient `"items": {"href": ..., "total": 120}` à la place de
+  `"tracks": {...}`). `_map_playlist` lisait l'ancien chemin → 0
+  partout. Lit désormais les deux pour rester compatible si Spotify
+  revient en arrière. Toutes les autres routes
+  (`playlist_tracks`, etc.) continuent à fonctionner — seul
+  l'inventaire des playlists était cassé.
+
+---
+
 ## v0.7.35 — 2026-04-27
 
 ### New: Spotify OAuth via mozaiklabs.fr bouncer

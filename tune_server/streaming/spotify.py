@@ -487,12 +487,16 @@ class SpotifyService(StreamingService):
     def _map_playlist(self, p: dict) -> StreamingPlaylist:
         images = p.get("images") or []
         cover_path = images[0]["url"] if images else None
-        tracks_info = p.get("tracks") or {}
+        # Spotify a renommé `tracks` → `items` dans current_user_playlists
+        # (constaté 2026-04-27 ; legacy `tracks` toujours servi par d'autres
+        # endpoints comme playlist(id), donc on lit les deux pour ne pas
+        # casser au prochain revirement).
+        meta = p.get("items") or p.get("tracks") or {}
         return StreamingPlaylist(
             source_id=p.get("id") or "",
             name=p.get("name") or "Unknown",
             description=p.get("description"),
-            track_count=tracks_info.get("total") or 0,
+            track_count=meta.get("total") or 0,
             duration_ms=0,
             cover_path=cover_path,
             source=Source.SPOTIFY,
