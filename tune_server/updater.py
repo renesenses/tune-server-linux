@@ -31,6 +31,60 @@ GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CHECK_INTERVAL_HOURS = 6
 
 
+# Windows-specific update applier. Spawned detached from tune-server.exe;
+# waits for the .exe to release file locks, robocopies the staged bundle
+# over the live install (preserving user data), restarts the launcher,
+# then deletes itself. Must be ASCII-safe (cmd.exe is unforgiving on UTF-8
+# in batch files).
+_WINDOWS_APPLY_UPDATE_BAT = r"""@echo off
+setlocal enabledelayedexpansion
+cd /d "%~dp0"
+
+echo [tune-update] Waiting for tune-server.exe to exit...
+ping -n 4 127.0.0.1 >nul
+taskkill /IM tune-server.exe /F >nul 2>&1
+ping -n 3 127.0.0.1 >nul
+
+if not exist "_update_staging" (
+    echo [tune-update][ERROR] _update_staging folder missing.
+    pause
+    exit /b 1
+)
+
+REM /MIR mirrors staging into install dir (delete files no longer in new
+REM build) BUT we exclude data so user state survives. /R:5 /W:2 retries
+REM 5 times if a file is still locked.
+robocopy "_update_staging" "." /MIR ^
+    /XF .env tune_server.db tune-server.log tune-server.log.1 ^
+    /XD artwork_cache backups _update_staging _backup_* ^
+    /R:5 /W:2 /NP /NJH /NJS >nul
+
+REM robocopy success codes are 0-7; 8+ is failure.
+set RC=%errorlevel%
+if %RC% GEQ 8 (
+    echo [tune-update][ERROR] robocopy failed with code %RC%.
+    pause
+    exit /b 1
+)
+
+rmdir /S /Q "_update_staging" 2>nul
+
+echo [tune-update] Update applied. Restarting Tune Server...
+if exist "start-tune-server.bat" (
+    start "" "%~dp0start-tune-server.bat"
+) else (
+    start "" "%~dp0tune-server.exe"
+)
+
+REM Note: this bat is intentionally NOT self-deleted. cmd holds the file
+REM handle while running and the rmdir/del workarounds are flaky across
+REM Windows versions. The next update will simply overwrite this file.
+
+endlocal
+exit /b 0
+"""
+
+
 def _get_platform_asset_name(version: str) -> str:
     """Return the expected asset filename for this platform."""
     system = platform.system().lower()
@@ -89,24 +143,21 @@ class UpdateChecker:
             await asyncio.sleep(CHECK_INTERVAL_HOURS * 3600)
 
     async def _auto_install_and_restart(self) -> None:
-        """Download + install + restart, no UI click needed.
-
-        Skipped on Windows: the running tune-server.exe is locked by the
-        OS and shutil.copy2 will fail. Stage-and-swap on next start is
-        deferred to v0.7.20+. For now, Windows users keep the manual
-        "Installer" button which prompts them to restart manually.
-        """
-        if platform.system().lower() == "windows":
-            logger.info(
-                "auto_update_skipped_windows",
-                hint="manual install via UI required; running .exe is file-locked",
-            )
-            return
-
+        """Download + install + restart, no UI click needed."""
         logger.info("auto_update_starting", version=self._latest_version)
         ok = await self.download_and_install()
         if not ok:
             logger.warning("auto_update_install_failed")
+            return
+
+        # On Windows the swap happens in a detached helper .bat that
+        # waits for our process to exit. We just need to trigger our own
+        # shutdown and let the helper take over.
+        if platform.system().lower() == "windows":
+            self._spawn_windows_apply_helper()
+            logger.info("auto_update_handing_off_to_windows_helper")
+            await asyncio.sleep(2)
+            os.kill(os.getpid(), signal.SIGTERM)
             return
 
         # systemd / launchd / supervisord will restart us; for plain
@@ -116,6 +167,31 @@ class UpdateChecker:
         # before SIGTERM kills us.
         await asyncio.sleep(2)
         os.kill(os.getpid(), signal.SIGTERM)
+
+    def _spawn_windows_apply_helper(self) -> None:
+        """Launch the staged update applier as a detached process so it
+        outlives the current tune-server.exe."""
+        import subprocess
+        if not getattr(sys, "frozen", False):
+            return
+        exe_dir = Path(sys.executable).resolve().parent
+        helper = exe_dir / "_apply_update.bat"
+        if not helper.is_file():
+            logger.warning("update_helper_missing", path=str(helper))
+            return
+        try:
+            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — keep the bat
+            # alive after our exit and stop signal propagation.
+            CREATE_FLAGS = 0x00000008 | 0x00000200
+            subprocess.Popen(
+                ["cmd.exe", "/c", str(helper)],
+                cwd=str(exe_dir),
+                creationflags=CREATE_FLAGS,
+                close_fds=True,
+            )
+            logger.info("update_helper_spawned", path=str(helper))
+        except Exception:
+            logger.exception("update_helper_spawn_failed")
 
     async def check_for_update(self) -> dict | None:
         """Check GitHub for the latest release. Returns update info or None."""
@@ -220,6 +296,25 @@ class UpdateChecker:
             else:
                 exe_dir = Path.cwd()
 
+            # Windows: cannot overwrite the running tune-server.exe, so we
+            # stage the new files in a sibling folder and let a detached
+            # .bat helper swap them in after we exit.
+            if platform.system().lower() == "windows":
+                self._stage_windows_update(exe_dir, source_dir)
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                if self._event_bus:
+                    from tune_server.event_bus import Event, EventType
+                    await self._event_bus.emit(Event(
+                        type=EventType.SYSTEM_UPDATE_INSTALLED,
+                        data={
+                            "version": self._latest_version,
+                            "restart_required": True,
+                            "windows_staged": True,
+                        },
+                    ))
+                logger.info("update_staged_windows", version=self._latest_version)
+                return True
+
             backup_dir = exe_dir / f"_backup_{self.current_version}"
             if backup_dir.exists():
                 shutil.rmtree(backup_dir)
@@ -255,6 +350,20 @@ class UpdateChecker:
         except Exception:
             logger.exception("update_install_error")
             return False
+
+    def _stage_windows_update(self, exe_dir: Path, source_dir: Path) -> None:
+        """Copy the new bundle into _update_staging/ and write the swap
+        helper bat. Called from download_and_install on Windows."""
+        staging = exe_dir / "_update_staging"
+        if staging.exists():
+            shutil.rmtree(staging)
+        # shutil.copytree fully populates staging; we use copy rather than
+        # move so the temp dir stays clean for the GC step in the caller.
+        shutil.copytree(str(source_dir), str(staging))
+
+        helper = exe_dir / "_apply_update.bat"
+        helper.write_text(_WINDOWS_APPLY_UPDATE_BAT, encoding="ascii")
+        logger.info("update_staged", staging=str(staging), helper=str(helper))
 
     @staticmethod
     def _is_newer(new_version: str, current_version: str) -> bool:

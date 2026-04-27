@@ -627,15 +627,41 @@ async def check_update():
 
 @router.post("/update/install")
 async def install_update():
-    """Download and install the latest update. Requires restart after."""
+    """Download + install the latest update.
+
+    On Windows the new files are staged and a helper .bat is spawned to
+    swap them in once tune-server.exe exits — the response says
+    `windows_swap_pending: true` so the client can warn that the server
+    will restart on its own. On Linux/macOS the install is in-place and
+    a manual or supervised restart is needed.
+    """
+    import platform
     if not deps.update_checker:
         raise HTTPException(status_code=503, detail="Update checker not available")
     if not deps.update_checker.update_available:
         raise HTTPException(status_code=400, detail="No update available")
     success = await deps.update_checker.download_and_install()
-    if success:
-        return {"status": "installed", "version": deps.update_checker.latest_version, "restart_required": True}
-    raise HTTPException(status_code=500, detail="Update installation failed")
+    if not success:
+        raise HTTPException(status_code=500, detail="Update installation failed")
+
+    is_windows = platform.system().lower() == "windows"
+    if is_windows:
+        # Spawn helper + trigger orderly shutdown so the swap can run.
+        deps.update_checker._spawn_windows_apply_helper()
+
+        async def _shutdown_after_response():
+            await asyncio.sleep(2)
+            import os, signal
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        asyncio.create_task(_shutdown_after_response())
+
+    return {
+        "status": "installed",
+        "version": deps.update_checker.latest_version,
+        "restart_required": True,
+        "windows_swap_pending": is_windows,
+    }
 
 
 @router.post("/restart")
