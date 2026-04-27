@@ -2,6 +2,17 @@
 
 All notable changes to Tune Server.
 
+## v0.7.26 — 2026-04-27
+
+### Fixes
+
+- **`/api/v1/system/diagnostics` reported "name 'os' is not defined"**
+  for the `db` block on SQLite installs. Added missing module-level
+  `import os` (the function-local imports elsewhere did not propagate
+  to `_db_diagnostics`). Caught in Jacques' v0.7.24 diagnostic bundle.
+
+---
+
 ## v0.7.25 — 2026-04-27
 
 ### Fixes
