@@ -2,6 +2,7 @@
 
 Validates backward compatibility with raw SQL and SA-native methods.
 """
+import os
 import sqlite3
 import tempfile
 
@@ -9,6 +10,14 @@ import pytest
 from tune_server.db.sa_engine import SADatabase
 from tune_server.db.tables import artists, albums, metadata, tracks
 from tune_server.models import Artist
+
+
+# Helper marker: skip tests that hardcode SQLite-specific behaviour when the
+# fixture is wired to PostgreSQL (CI dual-engine job sets TUNE_TEST_PG_URL).
+sqlite_only = pytest.mark.skipif(
+    os.environ.get("TUNE_TEST_PG_URL") is not None,
+    reason="SQLite-specific assertion — engine fixture is PostgreSQL"
+)
 
 
 @pytest.fixture
@@ -45,11 +54,18 @@ async def db():
 # ---------------------------------------------------------------------------
 
 async def test_tables_created(db: SADatabase):
-    """All 24 tables should be created on connect."""
-    rows = await db.fetchall(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-    )
-    table_names = {row["name"] for row in rows}
+    """All 24 tables should be created on connect.
+
+    Use the SA inspector (engine-portable) instead of sqlite_master.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    def _names(sync_conn):
+        return set(sa_inspect(sync_conn).get_table_names())
+
+    async with db.sa_engine.begin() as conn:
+        table_names = await conn.run_sync(_names)
+
     assert "artists" in table_names
     assert "albums" in table_names
     assert "tracks" in table_names
@@ -62,8 +78,14 @@ async def test_tables_created(db: SADatabase):
 # Raw SQL backward compatibility (DatabaseProtocol)
 # ---------------------------------------------------------------------------
 
+@sqlite_only
 async def test_raw_insert_and_fetch(db: SADatabase):
-    """Raw SQL INSERT + SELECT with ? placeholders should work."""
+    """Raw SQL INSERT + SELECT with ? placeholders should work.
+
+    PostgreSQL (asyncpg) doesn't expose lastrowid on plain INSERT — this
+    test pins SQLite-specific behaviour. The PG path uses INSERT
+    ... RETURNING id which is covered by SAArtistRepo tests.
+    """
     result = await db.execute(
         "INSERT INTO artists (name, sort_name) VALUES (?, ?)",
         ("Pink Floyd", "Pink Floyd"),
@@ -237,7 +259,8 @@ def test_placeholder_ignores_strings():
 # ---------------------------------------------------------------------------
 
 async def test_engine_name(db: SADatabase):
-    assert db.engine_name == "sqlite"
+    expected = "postgres" if os.environ.get("TUNE_TEST_PG_URL") else "sqlite"
+    assert db.engine_name == expected
 
 
 async def test_commit_noop(db: SADatabase):
