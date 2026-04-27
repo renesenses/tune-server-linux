@@ -2,6 +2,22 @@
 
 All notable changes to Tune Server.
 
+## v0.7.28 — 2026-04-27
+
+### Fixes
+
+- **CI test suite was being SIGTERM-killed** every run since v0.7.24
+  because `tests/test_updater.py::test_auto_install_skipped_on_windows`
+  was written for the old behaviour where Windows updates were a
+  no-op. After v0.7.24 made Windows updates work via stage-and-swap,
+  the test exercised the real `_auto_install_and_restart` Windows
+  branch — which calls `os.kill(os.getpid(), SIGTERM)` — without
+  mocking it, and pytest itself was the process that got the signal.
+  Test rewritten to assert the new behaviour (download + helper spawn
+  + SIGTERM via mocks).
+
+---
+
 ## v0.7.27 — 2026-04-27
 
 ### Fixes

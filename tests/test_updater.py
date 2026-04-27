@@ -23,17 +23,34 @@ def test_is_newer_garbage_returns_false():
 
 
 @pytest.mark.asyncio
-async def test_auto_install_skipped_on_windows():
-    """On Windows the running .exe is locked; auto-install must no-op."""
-    checker = UpdateChecker(event_bus=None)
-    checker._latest_version = "0.7.19"
-    checker._download_url = "https://example.com/foo.zip"
-    checker._asset_name = "tune-server-0.7.19-windows.zip"
+async def test_auto_install_runs_on_windows_via_helper(monkeypatch):
+    """v0.7.24+: Windows uses stage-and-swap. download_and_install runs,
+    then the apply.bat helper is spawned and SIGTERM hands off."""
+    import os
+    import signal as _signal
 
-    with patch("tune_server.updater.platform.system", return_value="Windows"):
-        with patch.object(checker, "download_and_install", new_callable=AsyncMock) as mock_install:
-            await checker._auto_install_and_restart()
-            mock_install.assert_not_awaited()
+    checker = UpdateChecker(event_bus=None)
+    checker._latest_version = "0.7.24"
+    checker._download_url = "https://example.com/foo.zip"
+    checker._asset_name = "tune-server-0.7.24-windows.zip"
+
+    sigterm_calls: list[tuple[int, int]] = []
+    helper_spawn_calls: list[None] = []
+
+    monkeypatch.setattr("tune_server.updater.platform.system", lambda: "Windows")
+    monkeypatch.setattr("tune_server.updater.os.kill",
+                        lambda pid, sig: sigterm_calls.append((pid, sig)))
+    monkeypatch.setattr(checker, "_spawn_windows_apply_helper",
+                        lambda: helper_spawn_calls.append(None))
+
+    with patch.object(checker, "download_and_install",
+                      new_callable=AsyncMock, return_value=True) as mock_install:
+        await checker._auto_install_and_restart()
+        mock_install.assert_awaited_once()
+
+    assert helper_spawn_calls == [None], "Windows must spawn the apply.bat helper"
+    assert sigterm_calls == [(os.getpid(), _signal.SIGTERM)], \
+        "Windows must SIGTERM after handing off to the helper"
 
 
 @pytest.mark.asyncio
