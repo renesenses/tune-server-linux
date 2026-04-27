@@ -11,6 +11,7 @@ from tune_server.models import (
     Album,
     Artist,
     AudioFormat,
+    FeaturedSection,
     SearchResult,
     Source,
     StreamingPlaylist,
@@ -240,6 +241,132 @@ class SpotifyService(StreamingService):
             logger.exception("spotify_stream_url_error", track_id=track_id)
             return None
 
+    async def get_featured_sections(self) -> list[FeaturedSection]:
+        # IMPORTANT — Spotify a verrouillé fin 2024 tous les endpoints
+        # "browse" (new-releases, categories, featured-playlists,
+        # recommendations) ainsi que current_user_top_* et
+        # recently_played pour les apps en **Development Mode**. Ils
+        # renvoient HTTP 403 sans aucune indication, ce qui se traduit
+        # par une grille vide dans le client.
+        #
+        # Tant que l'app n'est pas approuvée en "Extended Quota Mode"
+        # (form Spotify Developer Dashboard, review 5–7j), aucune
+        # section featured ne fonctionne. On préfère ne rien afficher
+        # plutôt que des grilles vides muettes.
+        #
+        # Le code de `get_featured` ci-dessous reste en place : si l'app
+        # passe en Extended Quota un jour, il suffira de réactiver les
+        # sections (via `settings.spotify_featured_enabled` à terme).
+        if not getattr(settings, "spotify_featured_enabled", False):
+            return []
+        sections: list[FeaturedSection] = [
+            FeaturedSection(id="new-releases", name="Nouveautés"),
+            FeaturedSection(id="top-tracks", name="Tes top tracks"),
+            FeaturedSection(id="top-artists", name="Tes top artistes"),
+            FeaturedSection(id="recently-played", name="Récemment écouté"),
+        ]
+        for cat_id, label in [
+            ("pop", "Pop"), ("rock", "Rock"), ("jazz", "Jazz"),
+            ("classical", "Classique"), ("electronic", "Électronique"),
+            ("hiphop", "Hip-hop"), ("soul", "Soul / RnB"),
+            ("indie_alt", "Indie / Alternative"), ("dance", "Dance"),
+            ("chill", "Chill"), ("workout", "Workout"), ("focus", "Focus"),
+        ]:
+            sections.append(FeaturedSection(id=f"cat-{cat_id}", name=label))
+        return sections
+
+    async def get_featured(self, section: str, limit: int = 20) -> list[Album]:
+        if not self.is_authenticated:
+            return []
+        try:
+            if section == "new-releases":
+                results = await asyncio.to_thread(
+                    self._sp.new_releases, country="FR", limit=limit,
+                )
+                items = (results.get("albums") or {}).get("items") or []
+                return [self._map_album(a) for a in items]
+
+            if section == "top-tracks":
+                # current_user_top_tracks renvoie des Track, pas des Album.
+                # On expose comme Album (cover + titre track + artiste) pour
+                # rester compatible avec la grille Featured du web client.
+                results = await asyncio.to_thread(
+                    self._sp.current_user_top_tracks,
+                    limit=limit, time_range="medium_term",
+                )
+                items = results.get("items") or []
+                return [self._map_track_as_album(t) for t in items]
+
+            if section == "top-artists":
+                results = await asyncio.to_thread(
+                    self._sp.current_user_top_artists,
+                    limit=limit, time_range="medium_term",
+                )
+                items = results.get("items") or []
+                return [self._map_artist_as_album(a) for a in items]
+
+            if section == "recently-played":
+                results = await asyncio.to_thread(
+                    self._sp.current_user_recently_played, limit=limit,
+                )
+                items = [it.get("track") for it in (results.get("items") or []) if it.get("track")]
+                return [self._map_track_as_album(t) for t in items]
+
+            if section.startswith("cat-"):
+                cat_id = section.removeprefix("cat-")
+                results = await asyncio.to_thread(
+                    self._sp.category_playlists, cat_id, country="FR", limit=limit,
+                )
+                items = (results.get("playlists") or {}).get("items") or []
+                return [self._map_playlist_as_album(p) for p in items]
+        except Exception:
+            logger.exception("spotify_featured_error", section=section)
+        return []
+
+    def _map_playlist_as_album(self, p: dict) -> Album:
+        """Render a Spotify playlist payload as an Album so the existing
+        web UI featured-grid (which expects Album cards) can show curated
+        category playlists alongside new releases."""
+        images = p.get("images") or []
+        cover = images[0]["url"] if images else None
+        return Album(
+            title=p.get("name") or "Unknown",
+            artist_name=(p.get("owner") or {}).get("display_name") or "Spotify",
+            cover_path=cover,
+            source=Source.SPOTIFY,
+            source_id=p.get("id") or "",
+        )
+
+    def _map_track_as_album(self, t: dict) -> Album:
+        """Same idea but for a track payload — used by top-tracks /
+        recently-played sections."""
+        album = t.get("album") or {}
+        images = album.get("images") or []
+        cover = images[0]["url"] if images else None
+        artists = t.get("artists") or []
+        artist_name = ", ".join(a.get("name", "") for a in artists) or "Unknown"
+        return Album(
+            title=t.get("name") or "Unknown",
+            artist_name=artist_name,
+            cover_path=cover,
+            source=Source.SPOTIFY,
+            # Use the album's source_id so clicking → opens the album
+            # detail view that already exists for streaming sources.
+            source_id=album.get("id") or t.get("id") or "",
+        )
+
+    def _map_artist_as_album(self, a: dict) -> Album:
+        """Top-artists section: render the artist as an Album card."""
+        images = a.get("images") or []
+        cover = images[0]["url"] if images else None
+        return Album(
+            title=a.get("name") or "Unknown",
+            artist_name="Artiste",
+            cover_path=cover,
+            source=Source.SPOTIFY,
+            source_id=a.get("id") or "",
+        )
+
     async def get_user_playlists(self) -> list[StreamingPlaylist]:
         if not self.is_authenticated:
             return []
@@ -268,7 +395,13 @@ class SpotifyService(StreamingService):
             )
             while results:
                 for item in results.get("items") or []:
-                    t = item.get("track")
+                    # Spotify a renommé `track` → `item` dans la réponse
+                    # de playlist_tracks (constaté 2026-04-27, cohérent
+                    # avec le rename `tracks` → `items` ailleurs). Le code
+                    # legacy lisait `item.get("track")` qui est désormais
+                    # null pour toutes les playlists. On lit les deux pour
+                    # ne pas casser si Spotify revient en arrière.
+                    t = item.get("item") or item.get("track")
                     if t and t.get("id"):
                         tracks.append(self._map_track(t))
                 if results.get("next"):

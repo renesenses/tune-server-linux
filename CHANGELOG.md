@@ -2,6 +2,35 @@
 
 All notable changes to Tune Server.
 
+## v0.7.37 — 2026-04-27
+
+### Fixes & UX (Spotify)
+
+- **Tracks d'une playlist Spotify retournaient toujours `[]`**. Spotify
+  a renommé `track` → `item` dans la réponse de
+  `playlist_tracks(playlist_id)` (cohérent avec le rename
+  `tracks` → `items` côté `current_user_playlists` v0.7.36). Le code
+  legacy lisait `item.get("track")` qui est désormais `null` pour
+  toutes les playlists, donc 0 track retourné côté client. On lit les
+  deux clés (priorité `item`, fallback `track`).
+
+- **Sections "à la une" Spotify désactivées en Development Mode**.
+  Spotify a verrouillé fin 2024 tous les endpoints `browse/*`
+  (new-releases, categories, featured-playlists), ainsi que
+  `current_user_top_*` et `recently_played` pour les apps en
+  Development Mode → toutes nos sections renvoyaient HTTP 403. Le
+  client web ne peut plus les afficher → grilles vides muettes.
+  `get_featured_sections` retourne désormais `[]` par défaut. Le code
+  des sections (Nouveautés, Tes top tracks, Récemment écouté,
+  Pop/Rock/Jazz/Classique/etc.) reste en place pour quand l'app
+  passera en Extended Quota Mode — réactivable via
+  `TUNE_SPOTIFY_FEATURED_ENABLED=true`.
+
+- **Bannière UX dans la vue Streaming Spotify** : explique le mode
+  développement et pointe vers la doc Extended Quota.
+
+---
+
 ## v0.7.36 — 2026-04-27
 
 ### Fixes
