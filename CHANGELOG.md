@@ -2,6 +2,20 @@
 
 All notable changes to Tune Server.
 
+## v0.7.29 — 2026-04-27
+
+### Fixes
+
+- **`/api/v1/playlist-manager/services` always reported every streaming
+  service as `authenticated: false`**, blocking the upcoming playlist
+  transfer wizard from offering Tidal/Qobuz/YouTube/Spotify/Deezer as
+  destinations even when the user was authenticated. Root cause: the
+  endpoint treated `streaming_manager.status[name]` as a nested dict
+  (`status.get("authenticated")`) when it is actually a plain bool.
+  Always fell through to the False default.
+
+---
+
 ## v0.7.28 — 2026-04-27
 
 ### Fixes

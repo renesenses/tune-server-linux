@@ -57,10 +57,14 @@ async def get_services_capabilities():
     """List streaming services with their playlist write capabilities."""
     sm = deps.streaming_manager
     services = {}
-    for name, status in sm.status.items():
+    # `sm.status` is a dict[str, bool] of `is_authenticated` per service —
+    # NOT a dict-of-dicts. The previous code treated `status` as a nested
+    # dict and always fell to False, so every authenticated service was
+    # reported as "non auth" in the playlist-manager wizard.
+    for name, is_authenticated in sm.status.items():
         svc = sm.service(name)
         services[name] = {
-            "authenticated": status.get("authenticated", False) if isinstance(status, dict) else getattr(status, "authenticated", False),
+            "authenticated": bool(is_authenticated),
             "supports_write": svc.supports_playlist_write if svc else False,
         }
     services["local"] = {"authenticated": True, "supports_write": True}
