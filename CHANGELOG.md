@@ -2,6 +2,29 @@
 
 All notable changes to Tune Server.
 
+## v0.7.21 — 2026-04-27
+
+### New: Spotify Connect receiver
+
+Tune Server now appears as a Spotify Connect device on the local network.
+Open the Spotify mobile app, pick **Tune (…)** in the device list, and
+playback is routed into the configured Tune zone (DLNA / AirPlay / local
+soundcard). Spotify Premium is required on the *client* side; no login
+or OAuth on the server (zeroconf-only auth — like a Sonos).
+
+Configure under **Settings → Spotify Connect**: pick the target zone,
+optionally set a custom device name, toggle on/off. One device ⇄ one
+zone for now (multi-zone receiver is on the v0.8 roadmap).
+
+The `librespot` binary is bundled in the official release archives
+(Linux, macOS, Windows). Falls back to a `librespot` on PATH if the
+bundled one is missing — typical for Homebrew (`brew install
+librespot`) or APT installs.
+
+API: `GET/POST /api/v1/spotify-connect/{status,enable,disable}`.
+
+---
+
 ## v0.7.20 — 2026-04-27
 
 ### Fixes
