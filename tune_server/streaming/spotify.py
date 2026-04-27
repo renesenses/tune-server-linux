@@ -51,11 +51,24 @@ class SpotifyService(StreamingService):
         db = kwargs.get("db")
         try:
             import spotipy
+            from tune_server.utils.network import get_local_ip
 
             cache_path = ".spotify_cache"
+            # When the redirect_uri is the mozaiklabs.fr OAuth bouncer
+            # (HTTPS public, the only kind Spotify accepts in 2025+ for
+            # non-loopback hosts), we pass our own LAN URL as `state`.
+            # The bouncer validates that state is a private/loopback host
+            # and 302s the code back to it. spotipy preserves state across
+            # the authorize → callback round trip, so the local callback
+            # route can call complete_auth(code) with no further plumbing.
+            local_callback = (
+                f"http://{get_local_ip()}:{settings.api_port}"
+                f"/api/v1/streaming/spotify/callback"
+            )
             self._auth_manager = spotipy.SpotifyPKCE(
                 client_id=settings.spotify_client_id,
                 redirect_uri=settings.spotify_redirect_uri,
+                state=local_callback,
                 scope=SCOPES,
                 cache_path=cache_path,
                 open_browser=False,
@@ -63,7 +76,7 @@ class SpotifyService(StreamingService):
 
             auth_url = self._auth_manager.get_authorize_url()
             self._verification_url = auth_url
-            logger.info("spotify_auth_started", verification_url=auth_url)
+            logger.info("spotify_auth_started", verification_url=auth_url, state=local_callback)
 
             return False  # not yet authenticated, waiting for callback
 

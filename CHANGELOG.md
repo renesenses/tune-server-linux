@@ -2,6 +2,31 @@
 
 All notable changes to Tune Server.
 
+## v0.7.35 — 2026-04-27
+
+### New: Spotify OAuth via mozaiklabs.fr bouncer
+
+Spotify exige HTTPS pour les redirect URIs publics depuis 2025 (sauf
+`127.0.0.1` strict loopback). Une instance Tune accédée depuis le LAN
+(`http://192.168.1.x:8888`) ne pouvait plus être enregistrée chez
+Spotify.
+
+`SpotifyService.authenticate` met maintenant l'URL Tune locale dans
+le param OAuth `state` (`http://<server_ip>:<port>/api/v1/streaming/
+spotify/callback`) et garde `redirect_uri =
+https://mozaiklabs.fr/spotify-callback`. Le bouncer
+([mozaiklabs PR #2](https://github.com/renesenses/site-mozaiklabs/pull/2))
+valide que le state pointe vers un host privé (loopback / RFC1918) et
+302 le code vers le Tune local. spotipy préserve le state à travers
+authorize → callback, donc complete_auth(code) marche sans plumbing
+supplémentaire.
+
+Setup : `TUNE_SPOTIFY_REDIRECT_URI=https://mozaiklabs.fr/spotify-callback`
++ `TUNE_SPOTIFY_CLIENT_ID=...`. Une seule redirect URI à enregistrer
+dans le Spotify Developer Dashboard.
+
+---
+
 ## v0.7.34 — 2026-04-27
 
 ### Fixes
