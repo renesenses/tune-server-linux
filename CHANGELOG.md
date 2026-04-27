@@ -2,6 +2,21 @@
 
 All notable changes to Tune Server.
 
+## v0.7.22 — 2026-04-27
+
+### Fixes
+
+- **Deezer 30-second preview bug**: full-track playback was silently
+  falling back to the 30-second preview clip on every request. Root
+  cause: the request to `media.deezer.com/v1/get_url` was sending the
+  legacy numeric format ID (`9`, `3`, `1`) instead of the format name
+  string (`FLAC`, `MP3_320`, `MP3_128`) that the API now requires.
+  Numeric IDs return 403 Forbidden silently and the player falls back
+  to the preview URL. Confirmed against the live API across all three
+  qualities.
+
+---
+
 ## v0.7.21 — 2026-04-27
 
 ### New: Spotify Connect receiver
