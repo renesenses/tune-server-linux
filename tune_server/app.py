@@ -39,6 +39,8 @@ COMPONENT_SHUTDOWN_TIMEOUT = 5  # seconds
 
 
 def _configure_logging() -> None:
+    from tune_server.utils.error_buffer import capture_processor
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -46,6 +48,8 @@ def _configure_logging() -> None:
             structlog.processors.StackInfoRenderer(),
             structlog.dev.set_exc_info,
             structlog.processors.TimeStamper(fmt="iso"),
+            # Capture warnings/errors into a ring buffer for /diagnostics
+            capture_processor,
             structlog.dev.ConsoleRenderer()
             if settings.log_format == "console"
             else structlog.processors.JSONRenderer(),

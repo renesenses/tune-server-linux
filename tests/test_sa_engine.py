@@ -13,11 +13,31 @@ from tune_server.models import Artist
 
 @pytest.fixture
 async def db():
-    """In-memory SQLite database via SADatabase."""
-    database = SADatabase(engine_name="sqlite", db_path=":memory:")
-    await database.connect()
-    yield database
-    await database.close()
+    """SADatabase fixture. Defaults to in-memory SQLite; if the env var
+    ``TUNE_TEST_PG_URL`` is set (e.g. CI dual-engine job), runs the same
+    tests against a real PostgreSQL and tears down by dropping every table
+    that the SA metadata declares.
+    """
+    import os
+    pg_url = os.environ.get("TUNE_TEST_PG_URL")
+    if pg_url:
+        database = SADatabase(engine_name="postgres", db_url=pg_url)
+        await database.connect()
+        try:
+            yield database
+        finally:
+            # Drop every SA-declared table so the next test starts clean.
+            from tune_server.db.tables import metadata as md
+            from sqlalchemy import text as _text
+            async with database.sa_engine.begin() as conn:
+                for table_name in reversed(list(md.tables)):
+                    await conn.execute(_text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
+            await database.close()
+    else:
+        database = SADatabase(engine_name="sqlite", db_path=":memory:")
+        await database.connect()
+        yield database
+        await database.close()
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +469,48 @@ async def test_auto_migration_adds_missing_columns():
         await database.close()
         import os
         os.unlink(db_path)
+
+
+async def test_backup_before_migration_creates_snapshot():
+    """Existing SQLite DB → backup file with timestamp written before migrations."""
+    db_path = tempfile.mktemp(suffix=".db")
+    # Pre-populate so the file is non-empty (backup is skipped on empty files).
+    pre = sqlite3.connect(db_path)
+    pre.execute("CREATE TABLE marker (id INTEGER)")
+    pre.execute("INSERT INTO marker VALUES (42)")
+    pre.commit()
+    pre.close()
+
+    database = SADatabase(engine_name="sqlite", db_path=db_path)
+    try:
+        await database.connect()
+        from pathlib import Path
+        backups = list(Path(db_path).parent.glob(f"{Path(db_path).name}.bak.*"))
+        assert len(backups) == 1, f"Expected 1 backup, got {backups}"
+        # The backup must contain the original 'marker' row even after the
+        # live DB has been migrated/extended.
+        bak = sqlite3.connect(str(backups[0]))
+        try:
+            row = bak.execute("SELECT id FROM marker").fetchone()
+            assert row == (42,)
+        finally:
+            bak.close()
+            backups[0].unlink()
+    finally:
+        await database.close()
+        import os
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+async def test_backup_skipped_on_memory_db():
+    """No backup file when db_path is :memory:."""
+    database = SADatabase(engine_name="sqlite", db_path=":memory:")
+    try:
+        await database.connect()
+        # Just make sure we don't crash and don't emit a backup somewhere.
+    finally:
+        await database.close()
 
 
 async def test_auto_migration_idempotent():

@@ -696,38 +696,149 @@ async def get_logs(lines: int = 100):
 
 
 @router.get("/diagnostics")
-async def diagnostics():
-    """Full system diagnostics for the diagnostics view."""
+async def diagnostics(errors_limit: int = Query(50, le=200)):
+    """Full system diagnostics — single JSON for remote debugging.
+
+    Designed for testers: a single ``curl /api/v1/system/diagnostics`` gives
+    me everything I need to triage their issue without ssh/journalctl
+    access — version, schema drift, recent errors, last scan stats,
+    streaming auth state, output health.
+    """
     import platform
     import sys
     import os
 
     from tune_server import __version__
+    from tune_server.utils.error_buffer import recent_errors
 
-    diag = {
+    db_engine = settings.db_engine if hasattr(settings, "db_engine") else "sqlite"
+
+    diag: dict = {
         "version": __version__,
-        "python": sys.version,
+        "python": sys.version.split()[0],
         "platform": platform.platform(),
         "pid": os.getpid(),
         "uptime_seconds": None,
         "memory_mb": None,
         "cpu_count": os.cpu_count(),
-        "db_engine": settings.db_engine if hasattr(settings, "db_engine") else "sqlite",
+        "db": _db_diagnostics(db_engine),
+        "schema_drift": await _schema_drift(),
         "music_dirs": settings.music_dirs,
         "zones_count": len(deps.zone_manager.list_zones()) if deps.zone_manager else 0,
-        "streaming_services": {
-            name: {"enabled": svc.enabled if hasattr(svc, "enabled") else True}
-            for name, svc in deps.streaming_services.items()
-        },
+        "streaming_services": _streaming_diagnostics(),
+        "last_scan": _scan_diagnostics(),
+        "outputs_health": _outputs_diagnostics(),
+        "recent_errors": recent_errors(errors_limit),
     }
 
-    # Uptime
+    # Uptime / memory (best-effort, requires psutil)
     try:
         import psutil
         proc = psutil.Process(os.getpid())
-        diag["uptime_seconds"] = int(proc.create_time())
+        import time
+        diag["uptime_seconds"] = int(time.time() - proc.create_time())
         diag["memory_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
     except ImportError:
         pass
 
     return diag
+
+
+def _db_diagnostics(engine: str) -> dict:
+    """DB metadata + schema-drift report (columns in SA model not in live)."""
+    info: dict = {"engine": engine}
+    try:
+        if engine == "sqlite":
+            db_path = getattr(settings, "db_path", "tune_server.db")
+            info["path"] = db_path
+            try:
+                size = os.path.getsize(db_path)
+                info["size_bytes"] = size
+            except OSError:
+                info["size_bytes"] = None
+        else:
+            # Mask credentials in PG URL
+            url = getattr(settings, "db_url", "") or ""
+            if "@" in url:
+                info["host"] = url.split("@", 1)[1]  # everything after user:pass@
+            info["url_masked"] = True
+    except Exception as e:
+        info["error"] = str(e)
+
+    return info
+
+
+async def _schema_drift() -> list[dict]:
+    """Columns declared in SA metadata but missing from the live DB.
+
+    Always empty after v0.7.17 auto-migration; non-empty means something
+    blocked the migration and the user is going to hit 500s.
+    """
+    drift: list[dict] = []
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        from tune_server.db.tables import metadata as sa_metadata
+        sa_engine = getattr(deps.db, "sa_engine", None)
+        if sa_engine is None:
+            return drift
+
+        def _live(sync_conn):
+            insp = sa_inspect(sync_conn)
+            return {
+                t: {col["name"] for col in insp.get_columns(t)}
+                for t in insp.get_table_names()
+            }
+
+        async with sa_engine.begin() as conn:
+            live_cols = await conn.run_sync(_live)
+
+        for table in sa_metadata.tables.values():
+            if table.name not in live_cols:
+                continue
+            missing = {c.name for c in table.columns} - live_cols[table.name]
+            if missing:
+                drift.append({"table": table.name, "missing_columns": sorted(missing)})
+    except Exception as e:
+        return [{"error": str(e)}]
+    return drift
+
+
+def _streaming_diagnostics() -> dict:
+    """Per-service: enabled, authenticated, last error if any."""
+    result: dict = {}
+    for name, svc in deps.streaming_services.items():
+        entry: dict = {"enabled": True}
+        try:
+            entry["authenticated"] = bool(svc.is_authenticated)
+        except Exception as e:
+            # Don't let one broken service tank the whole endpoint (the bug
+            # we hit on .15 with the suspended Tidal account).
+            entry["authenticated"] = False
+            entry["auth_error"] = str(e)[:200]
+        result[name] = entry
+    return result
+
+
+def _scan_diagnostics() -> dict | None:
+    if deps.scanner is None:
+        return None
+    return {
+        "scanning": deps.scanner.is_scanning,
+        "last_scan_at": getattr(deps.scanner, "last_scan_at", None),
+        "last_scan_stats": getattr(deps.scanner, "last_scan_stats", None),
+    }
+
+
+def _outputs_diagnostics() -> dict:
+    """How many devices were seen recently per discovery channel."""
+    out: dict = {"dlna": 0, "airplay": 0}
+    if deps.discovery_manager is None:
+        return out
+    try:
+        if getattr(deps.discovery_manager, "ssdp", None):
+            out["dlna"] = len(deps.discovery_manager.ssdp.devices)
+        if getattr(deps.discovery_manager, "mdns", None):
+            out["airplay"] = len(deps.discovery_manager.mdns._devices)
+    except Exception as e:
+        out["error"] = str(e)
+    return out
