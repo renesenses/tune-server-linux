@@ -176,13 +176,20 @@ async def play(zone_id: int, request: PlayRequest = None):
             detail="Could not resolve track(s) for playback",
         )
 
+    # If a start_index was supplied, clamp it to a valid range.
+    start = 0
+    if request.start_index is not None and tracks:
+        start = max(0, min(request.start_index, len(tracks) - 1))
+
     # If zone is in a group, play on all group members
     group = deps.group_manager.get_group_for_zone(zone_id) if deps.group_manager else None
     try:
         if group and tracks:
-            await group.play(tracks)
+            # Group play: keep prior single-track behaviour (no per-zone start
+            # offset on group play yet); fall back to slicing.
+            await group.play(tracks[start:] if start else tracks)
         elif tracks:
-            await zone.player.play(tracks=tracks)
+            await zone.player.play(tracks=tracks, start_position=start)
         else:
             # Resume current queue (no specific track requested)
             await zone.player.play()

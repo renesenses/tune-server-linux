@@ -326,6 +326,10 @@ class StreamingPlaylist(BaseModel):
 class PlayRequest(BaseModel):
     track_id: Optional[int] = None
     track_ids: Optional[list[int]] = None
+    # 0-indexed position in track_ids to start playback at. Defaults to 0.
+    # Lets clients send the whole album as a queue but start at the
+    # tapped track (Flutter / SwiftUI / web all rely on this).
+    start_index: Optional[int] = None
     album_id: Optional[int] = None
     playlist_id: Optional[int] = None
     source: Optional[Source] = None

@@ -2,6 +2,27 @@
 
 All notable changes to Tune Server.
 
+## v0.7.20 — 2026-04-27
+
+### Fixes
+- **Playback queue from remote clients**: `POST /zones/{id}/play` now
+  accepts a `start_index` field on `PlayRequest`. Clients can send the
+  full album as `track_ids: [...]` plus `start_index: N` so the queue
+  is loaded with auto-advance and the user can navigate back. Previous
+  behaviour (Flutter / iOS sending one track) made playback stop at
+  end-of-track. Reported by Jacques on Android.
+
+### A pragmatique (clients)
+- Default app mode for new installs is now **remote** on every
+  platform (was: server on iPad, server on Flutter). The Python server
+  becomes the single source of truth for the v0.6+/v0.7.x feature set
+  (Party, DJ, lyrics, EQ, album bios, recommendations…). Standalone
+  stays available in Settings → Advanced with a clear warning.
+- macOS combo install: `scripts/install-macos.sh` (curl-pipe-to-bash)
+  installs the Python server as a launchd LaunchAgent, preserving
+  user data on upgrade. Pairs with the TestFlight Tune.app for a
+  100%-features local setup.
+
 ## v0.7.19 — 2026-04-27
 
 ### Stabilization
