@@ -45,7 +45,15 @@ class _TeeStream:
     (visible in console / launchers) AND a log file next to the running
     binary. On Windows --noconsole the original stdout is /dev/null so the
     file becomes the only place to read logs from.
+
+    Implements the subset of TextIOBase that uvicorn / logging.config /
+    structlog actually probe: isatty, fileno, encoding, errors, closed,
+    writable/readable.
     """
+
+    encoding = "utf-8"
+    errors = None
+    closed = False
 
     def __init__(self, *streams) -> None:
         self._streams = [s for s in streams if s is not None]
@@ -65,6 +73,32 @@ class _TeeStream:
                 s.flush()
             except Exception:
                 pass
+
+    def isatty(self) -> bool:
+        # logging.StreamHandler probes this for color decisions; False is
+        # safe since the file half is never a TTY.
+        return False
+
+    def fileno(self) -> int:
+        # uvicorn's --reload occasionally probes for a file descriptor.
+        # Defer to the first underlying stream that has one.
+        for s in self._streams:
+            try:
+                return s.fileno()
+            except Exception:
+                continue
+        import io
+        raise io.UnsupportedOperation("fileno")
+
+    def writable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        # Don't close the underlying streams — they may be sys.__stdout__.
+        pass
 
 
 def _resolve_log_path() -> "Path | None":
