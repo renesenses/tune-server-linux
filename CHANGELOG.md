@@ -2,6 +2,23 @@
 
 All notable changes to Tune Server.
 
+## v0.7.31 — 2026-04-27
+
+### Fixes (transfer to local target)
+
+- **Local target transfers created an empty playlist**. The transfer
+  pipeline created a row in `playlists` but never wrote any
+  `playlist_tracks` — the original code carried a TODO comment
+  ("track insertion would need source_id → local track mapping") that
+  was never implemented. Now insert matched/approximate tracks at the
+  end of the create-playlist block, in match order.
+- **PostgreSQL installs would have failed silently** on the same path
+  because the helper used SQLite's `last_insert_rowid()` to recover
+  the new playlist id. Replaced with portable `INSERT ... RETURNING
+  id` (works on SQLite ≥3.35 + PostgreSQL).
+
+---
+
 ## v0.7.30 — 2026-04-27
 
 ### Fixes (playlist transfer pipeline)

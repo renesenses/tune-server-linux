@@ -162,15 +162,36 @@ async def execute_transfer(
 
     if not dry_run and db and target_service == "local":
         try:
-            await db.execute(
-                "INSERT INTO playlists (name, description) VALUES (?, ?)",
+            # `RETURNING id` works on both SQLite ≥3.35 and PostgreSQL —
+            # last_insert_rowid() is SQLite-only and was breaking the
+            # path on PG-backed installs.
+            row = await db.fetchone(
+                "INSERT INTO playlists (name, description) VALUES (?, ?) RETURNING id",
                 (playlist_name, f"Transferred from {source_service}: {source_playlist_name}"),
             )
-            await db.commit()
-            row = await db.fetchone("SELECT last_insert_rowid() as id")
             local_playlist_id = row["id"] if row else None
-            # Note: track insertion would need source_id → local track mapping
-            # For now, we store the transfer result with matched IDs
+            # Insert matched/approximate tracks into the new playlist —
+            # target_id holds the local track DB id (search_func returns
+            # rows from the tracks table for target_service == "local").
+            if local_playlist_id is not None:
+                position = 0
+                for tr in track_results:
+                    if tr.get("status") not in ("matched", "approximate"):
+                        continue
+                    raw_target = tr.get("target_id")
+                    if raw_target in (None, "", 0, "0"):
+                        continue
+                    try:
+                        track_id = int(raw_target)
+                    except (TypeError, ValueError):
+                        continue
+                    await db.execute(
+                        "INSERT INTO playlist_tracks (playlist_id, track_id, position) "
+                        "VALUES (?, ?, ?)",
+                        (local_playlist_id, track_id, position),
+                    )
+                    position += 1
+            await db.commit()
         except Exception:
             logger.exception("transfer_create_playlist_error")
 
