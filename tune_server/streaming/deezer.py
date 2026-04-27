@@ -48,6 +48,15 @@ class DeezerService(StreamingService):
         self._license_token: str | None = None
         self._user_id: str | None = None
         self._api_token: str | None = None
+        # Set by app.py once HttpAudioStreamer is up — when present,
+        # get_stream_url returns a URL pointing to our local decrypting
+        # proxy instead of the encrypted Deezer URL (which DLNA renderers
+        # cannot decode).
+        self._proxy_base_url: str | None = None
+
+    def set_proxy_base_url(self, base_url: str | None) -> None:
+        """Configure the local decrypting proxy base, e.g. http://1.2.3.4:8080."""
+        self._proxy_base_url = base_url
 
     @property
     def name(self) -> str:
@@ -403,7 +412,19 @@ class DeezerService(StreamingService):
         if cached:
             return cached
 
-        # Try full track URL if authenticated
+        # When the local decrypting proxy is configured (production setup),
+        # return its URL — the proxy will fetch the (geo-resolved, possibly
+        # fallback) upstream and decrypt before serving. The DLNA renderer
+        # therefore receives plain audio.
+        if self._proxy_base_url and self._arl and self._license_token:
+            ext = "flac" if self._quality == "FLAC" else "mp3"
+            proxy_url = f"{self._proxy_base_url}/deezer/{track_id}.{ext}"
+            self._url_cache.set(track_id, proxy_url)
+            return proxy_url
+
+        # No proxy configured — try the upstream URL directly. Note: the
+        # bytes are Blowfish-encrypted, so this path only works for clients
+        # that decrypt themselves (none of our DLNA targets do).
         if self._arl and self._license_token:
             try:
                 url = await self._get_full_stream_url(track_id)
@@ -424,8 +445,15 @@ class DeezerService(StreamingService):
             logger.exception("deezer_stream_url_error", track_id=track_id)
             return None
 
-    async def _get_full_stream_url(self, track_id: str) -> str | None:
-        """Get full track stream URL via gateway API (requires ARL)."""
+    async def _get_full_stream_url(
+        self, track_id: str, _fallback_depth: int = 0,
+    ) -> str | None:
+        """Get full track stream URL via gateway API (requires ARL).
+
+        On geo-restriction (HTTP 200 + embedded error code 2002), follow
+        the FALLBACK.SNG_ID provided by song.getData and retry once with
+        the alternate (region-licensed) track id.
+        """
         result = await self._gw_api_call("song.getData", {"SNG_ID": track_id})
         if not result:
             return None
@@ -436,11 +464,11 @@ class DeezerService(StreamingService):
 
         # Deezer's media API expects format *names* ("FLAC", "MP3_320",
         # "MP3_128"), not the legacy numeric IDs ("9", "3", "1"). Sending
-        # numeric IDs returns 403 Forbidden silently and the player falls
-        # back to the 30-second preview URL — which is the bug users see.
+        # numeric IDs returns 403 Forbidden silently.
         format_name = self._quality if self._quality in {"FLAC", "MP3_320", "MP3_128"} else "FLAC"
 
         session = await self._ensure_session()
+        rights_denied = False
         try:
             resp = await http_request_with_retry(
                 session, "POST", f"{DEEZER_MEDIA_URL}/get_url",
@@ -458,7 +486,9 @@ class DeezerService(StreamingService):
                 if resp.status != 200:
                     return None
                 data = await resp.json()
-                media = data.get("data", [{}])[0].get("media", [{}])
+                entry = (data.get("data") or [{}])[0]
+                media = entry.get("media", [])
+                errors = entry.get("errors", [])
                 if media:
                     sources = media[0].get("sources", [])
                     if sources:
@@ -466,9 +496,19 @@ class DeezerService(StreamingService):
                         logger.info("deezer_stream_url_resolved",
                                     track_id=track_id, quality=self._quality)
                         return url
+                rights_denied = any(e.get("code") == 2002 for e in errors)
         except Exception:
             logger.exception("deezer_media_url_error", track_id=track_id)
+            return None
 
+        if rights_denied and _fallback_depth < 2:
+            fallback = (result.get("FALLBACK") or {}).get("SNG_ID")
+            if fallback and str(fallback) != str(track_id):
+                logger.info("deezer_track_fallback",
+                            original=track_id, fallback=fallback)
+                return await self._get_full_stream_url(
+                    str(fallback), _fallback_depth=_fallback_depth + 1,
+                )
         return None
 
     # ------------------------------------------------------------------

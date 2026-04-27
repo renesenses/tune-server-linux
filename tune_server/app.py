@@ -158,7 +158,22 @@ class TuneServer:
             )
             self._http_streamer.on_app_created(self._upnp_server.register_routes)
 
+        # Streaming services need to be created BEFORE http_streamer.start()
+        # so the Deezer decrypting proxy can register its route on the
+        # streamer's aiohttp app (which is frozen once start() runs).
+        self._setup_streaming_services()
+        if "deezer" in deps.streaming_services:
+            from tune_server.streaming.deezer_proxy import DeezerProxy
+            self._deezer_proxy = DeezerProxy(deps.streaming_services["deezer"])
+            self._http_streamer.on_app_created(self._deezer_proxy.register_routes)
+
         await self._http_streamer.start()
+
+        # Now that the streamer is up, tell the Deezer service where to
+        # build proxy URLs (used by get_stream_url).
+        if "deezer" in deps.streaming_services:
+            base = f"http://{self._server_ip}:{settings.stream_port}"
+            deps.streaming_services["deezer"].set_proxy_base_url(base)
 
         if self._upnp_server:
             await self._upnp_server.start()
@@ -196,8 +211,9 @@ class TuneServer:
             await self._zone_manager.retry_pending_zones()
         asyncio.create_task(_retry_zones())
 
-        # Streaming services
-        self._setup_streaming_services()
+        # Streaming services already created above (before http_streamer.start
+        # so the Deezer proxy could register routes). Restore auth now that
+        # the DB is available.
         await self._restore_streaming_auth()
         self._build_stream_url_resolver()
 

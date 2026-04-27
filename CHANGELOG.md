@@ -2,6 +2,34 @@
 
 All notable changes to Tune Server.
 
+## v0.7.23 — 2026-04-27
+
+### Fixes
+
+- **Deezer full-track playback now produces audible audio**. v0.7.22
+  fixed the format-name request bug so Deezer started returning the
+  encrypted full-track URL, but those streams are Blowfish-CBC-stripe
+  encrypted — DLNA renderers can't decrypt them, so playback was 30
+  seconds of *silence* instead of 30 seconds of preview.
+
+  We now ship a small decrypting HTTP proxy on the existing audio
+  streamer port (8080). `get_stream_url` returns
+  `http://<server>:8080/deezer/<sng_id>.flac`; the proxy fetches the
+  upstream Deezer URL, derives the per-track Blowfish key from the
+  SNG_ID, decrypts the stripe pattern (every 1st of every 3 2048-byte
+  chunks), and pipes plain FLAC/MP3 to the renderer. Geo-restricted
+  tracks transparently follow the `FALLBACK.SNG_ID` provided by
+  Deezer's gateway.
+
+### New module
+
+- `tune_server.streaming.deezer_decrypt` — Blowfish key derivation +
+  CBC-stripe chunk decryption helpers.
+- `tune_server.streaming.deezer_proxy` — aiohttp route handler
+  (`GET /deezer/{sng_id}.{ext}`) registered on the streamer's app.
+
+---
+
 ## v0.7.22 — 2026-04-27
 
 ### Fixes
