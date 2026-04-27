@@ -56,35 +56,70 @@ REM ---------------------------------------------------------------------------
 start "" /B cmd /c "for /L %%i in (1,1,30) do (curl -s --max-time 1 http://localhost:8888/api/v1/system/health >nul 2>&1 && (start http://localhost:8888 ^&^& exit) || ping -n 2 127.0.0.1 >nul)"
 
 REM ---------------------------------------------------------------------------
-REM Run the server. Logs are written to tune-server.log by the app itself.
-REM Closing this window stops the server (Ctrl+C also works).
+REM Run the server with watchdog. On crash (non-zero exit), auto-restart up
+REM to MAX_ATTEMPTS times with backoff before giving up. A clean exit
+REM (code 0, e.g. user closed window or auto-update handed off) is final.
 REM ---------------------------------------------------------------------------
+set MAX_ATTEMPTS=3
+set ATTEMPT=1
+
 echo Starting Tune Server...
 echo Web UI will open at http://localhost:8888 once ready.
 echo Logs are written to: %cd%\tune-server.log
-echo Close this window to stop the server.
+echo Close this window to stop the server (the watchdog will not restart it).
 echo.
 
+:RUN_LOOP
+echo --- Run attempt !ATTEMPT!/!MAX_ATTEMPTS! ---
 tune-server.exe
-set EXIT_CODE=%errorlevel%
+set EXIT_CODE=!errorlevel!
 
-REM ---------------------------------------------------------------------------
-REM Post-mortem if the server exits unexpectedly.
-REM ---------------------------------------------------------------------------
+REM Auto-update hand-off: if _update_staging exists, _apply_update.bat is
+REM about to swap files in. The watchdog must NOT restart tune-server.exe
+REM under it — that would race the robocopy.
+if exist "_update_staging" (
+    echo.
+    echo Update in progress, watchdog stepping aside.
+    echo The applier will restart Tune Server when the swap is complete.
+    goto :END
+)
+
+if !EXIT_CODE! equ 0 (
+    echo.
+    echo Tune Server exited cleanly. Closing watchdog.
+    goto :END
+)
+
 echo.
 echo ============================================================
-echo  Server exited with code %EXIT_CODE%.
+echo  Tune Server crashed ^(exit code !EXIT_CODE!^), attempt !ATTEMPT!/!MAX_ATTEMPTS!.
 echo ============================================================
+
+if !ATTEMPT! geq !MAX_ATTEMPTS! goto :GIVE_UP
+
+REM Linear backoff: 5s, 10s, 15s
+set /a DELAY=!ATTEMPT!*5
+echo Restarting in !DELAY!s ^(Ctrl+C now to abort^)...
+ping -n !DELAY! 127.0.0.1 >nul
+set /a ATTEMPT+=1
+goto :RUN_LOOP
+
+:GIVE_UP
+echo.
+echo Tune Server has crashed !MAX_ATTEMPTS! times in a row. Watchdog stopping.
 if exist "tune-server.log" (
-    echo Last 30 lines of tune-server.log:
+    echo Last 40 lines of tune-server.log:
     echo ------------------------------------------------------------
-    powershell -NoProfile -Command "Get-Content -Path 'tune-server.log' -Tail 30 -ErrorAction SilentlyContinue"
+    powershell -NoProfile -Command "Get-Content -Path 'tune-server.log' -Tail 40 -ErrorAction SilentlyContinue"
     echo ------------------------------------------------------------
 ) else (
     echo No log file was written ^(server may have failed before logging init^).
 )
 echo.
-echo If this is unexpected, please share tune-server.log with support.
+echo Open the Web UI ^(if reachable^) and click "Telecharger le diagnostic"
+echo to send a support bundle, or attach tune-server.log to your bug report.
 echo.
+
+:END
 pause
 endlocal
