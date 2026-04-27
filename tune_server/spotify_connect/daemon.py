@@ -97,10 +97,10 @@ class LibrespotDaemon:
             text = line.decode(errors="replace").rstrip()
             match = _EVENT_RE.search(text)
             if match and self._on_event:
-                event = match.group("event")
+                evt = match.group("event")
                 track_id = match.group("track_id")
                 try:
-                    await self._on_event(event=event, track_id=track_id, raw=text)
+                    await self._on_event(event=evt, track_id=track_id, raw=text)
                 except Exception as exc:
                     logger.warning("librespot_event_handler_failed", error=str(exc))
             else:

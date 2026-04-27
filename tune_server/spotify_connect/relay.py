@@ -71,8 +71,10 @@ class SpotifyConnectRelay:
         if self._app is not None:
             return
         self._app = web.Application()
+        # aiohttp auto-registers HEAD for every GET route — adding it
+        # explicitly would clash. We only register GET; the auto-HEAD reuses
+        # the same handler but discards the response body.
         self._app.router.add_get(self.stream_url_path, self._handle_stream)
-        self._app.router.add_head(self.stream_url_path, self._handle_head)
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self._host, self._port, reuse_address=True)
@@ -108,12 +110,6 @@ class SpotifyConnectRelay:
                     # subscriber is too slow — drop the chunk for them only
                     continue
                 q.put_nowait(chunk)
-
-    async def _handle_head(self, request: web.Request) -> web.Response:
-        return web.Response(headers={
-            "Content-Type": "audio/wav",
-            "transferMode.dlna.org": "Streaming",
-        })
 
     async def _handle_stream(self, request: web.Request) -> web.StreamResponse:
         response = web.StreamResponse(

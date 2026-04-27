@@ -136,7 +136,7 @@ class SpotifyConnectManager:
 
     async def _handle_event(self, event: str, track_id: str | None, raw: str) -> None:
         evt = (event or "").lower()
-        logger.info("spotify_connect_event", event=evt, track_id=track_id)
+        logger.info("spotify_connect_event", spotify_event=evt, track_id=track_id)
         if evt in _PLAY_EVENTS and not self._zone_playing:
             await self._start_zone()
         elif evt in _STOP_EVENTS:
