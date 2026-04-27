@@ -106,16 +106,20 @@ async def execute_transfer(
                 threshold=match_threshold,
             )
 
+            # Coerce IDs to str — local search returns int (DB row id),
+            # streaming services return str. The TrackMatchResult model
+            # is typed `target_id: str`, so an int causes
+            # ResponseValidationError on the FastAPI return.
             track_result = {
                 "title": track.get("title", ""),
                 "artist_name": track.get("artist_name", ""),
                 "album_title": track.get("album_title", ""),
-                "source_id": track.get("source_id", ""),
+                "source_id": str(track.get("source_id", "") or ""),
                 "status": result.status,
                 "match_method": result.best_match.match_method if result.best_match else "",
                 "confidence": result.best_match.confidence if result.best_match else "",
                 "score": result.best_match.score if result.best_match else 0.0,
-                "target_id": result.best_match.source_id if result.best_match else "",
+                "target_id": str(result.best_match.source_id) if result.best_match else "",
                 "target_title": result.best_match.title if result.best_match else "",
                 "target_artist": result.best_match.artist_name if result.best_match else "",
                 "alternatives": [

@@ -103,15 +103,19 @@ async def transfer_playlist(req: TransferRequest):
             source_name = row["name"]
     elif source_svc:
         try:
-            playlist_tracks = await source_svc.getPlaylistTracks(req.source_playlist_id)
+            # Streaming services expose snake_case `get_playlist_tracks`
+            # returning Pydantic Track models — attribute access, not
+            # dict.get(). The previous camelCase + dict-access mix
+            # crashed every transfer attempt with a streaming source.
+            playlist_tracks = await source_svc.get_playlist_tracks(req.source_playlist_id)
             source_tracks = [
                 {
-                    "title": t.get("title", ""),
-                    "artist_name": t.get("artist_name", ""),
-                    "album_title": t.get("album_title", ""),
-                    "duration_ms": t.get("duration_ms", 0),
-                    "source_id": t.get("source_id", ""),
-                    "isrc": t.get("isrc", ""),
+                    "title": getattr(t, "title", "") or "",
+                    "artist_name": getattr(t, "artist_name", "") or "",
+                    "album_title": getattr(t, "album_title", "") or "",
+                    "duration_ms": getattr(t, "duration_ms", 0) or 0,
+                    "source_id": getattr(t, "source_id", "") or "",
+                    "isrc": getattr(t, "isrc", "") or "",
                 }
                 for t in playlist_tracks
             ]
@@ -119,7 +123,7 @@ async def transfer_playlist(req: TransferRequest):
             raise HTTPException(status_code=502, detail=f"Failed to load source playlist: {e}")
         # Get playlist name
         try:
-            playlists = await source_svc.getUserPlaylists()
+            playlists = await source_svc.get_user_playlists()
             source_name = next(
                 (p.name for p in playlists if p.source_id == req.source_playlist_id),
                 req.source_playlist_id,
@@ -298,7 +302,7 @@ async def backup_playlists(req: BackupRequest):
             if not svc:
                 continue
             try:
-                playlists = await svc.getUserPlaylists()
+                playlists = await svc.get_user_playlists()
             except Exception:
                 continue
 
@@ -306,7 +310,7 @@ async def backup_playlists(req: BackupRequest):
                 tracks_data = []
                 if req.include_tracks:
                     try:
-                        tracks = await svc.getPlaylistTracks(pl.source_id)
+                        tracks = await svc.get_playlist_tracks(pl.source_id)
                         tracks_data = [
                             {"title": t.get("title", ""), "artist_name": t.get("artist_name", ""),
                              "album_title": t.get("album_title", ""), "duration_ms": t.get("duration_ms", 0),
@@ -725,12 +729,12 @@ async def export_playlist_endpoint(req: ExportRequest):
         if not svc:
             raise HTTPException(status_code=400, detail=f"Service '{req.service}' not found")
         try:
-            playlists = await svc.getUserPlaylists()
+            playlists = await svc.get_user_playlists()
             name = next(
                 (p.name for p in playlists if p.source_id == req.playlist_id),
                 "Playlist",
             )
-            raw_tracks = await svc.getPlaylistTracks(req.playlist_id)
+            raw_tracks = await svc.get_playlist_tracks(req.playlist_id)
             tracks = [
                 {"title": t.get("title", ""), "artist_name": t.get("artist_name", ""),
                  "album_title": t.get("album_title", ""), "duration_ms": t.get("duration_ms", 0),

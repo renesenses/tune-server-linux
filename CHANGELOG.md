@@ -2,6 +2,31 @@
 
 All notable changes to Tune Server.
 
+## v0.7.30 — 2026-04-27
+
+### Fixes (playlist transfer pipeline)
+
+Three blockers preventing any playlist transfer from a streaming
+service from completing — caught while testing the new web UI
+PlaylistsHub wizard against `Deezer → Local`.
+
+- **Method name mismatch**: route called `getPlaylistTracks()` /
+  `getUserPlaylists()` (camelCase) but every streaming service exposes
+  `get_playlist_tracks()` / `get_user_playlists()` (snake_case).
+  AttributeError on every transfer with a streaming source.
+- **Pydantic Track vs dict**: same handler then treated each track as
+  a dict (`.get("title")`) but services return Pydantic Track models —
+  attribute access only.
+- **target_id type mismatch**: `TrackMatchResult.target_id: str` but
+  the local search returns the integer DB row id, triggering
+  ResponseValidationError on the response. Coerce to `str()` at the
+  transfer-builder seam.
+
+This is the Soundiiz-style cross-service transfer working end-to-end
+for the first time on the Hub UI.
+
+---
+
 ## v0.7.29 — 2026-04-27
 
 ### Fixes
