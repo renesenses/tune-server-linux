@@ -42,6 +42,37 @@ jobs:
           pip install pyinstaller
           pip install .
 
+      - name: Set up Node 20 (for web client)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Rebuild web client from tune-web-client (always fresh)
+        shell: bash
+        run: |
+          # Don't trust whatever's committed in web/ — clone the matching
+          # tag from tune-web-client and rebuild. This used to drift: a
+          # tarball shipped 6 weeks of stale assets after we forgot to
+          # rebuild before tagging. CI is the only place that should
+          # produce release artifacts; web/ in this repo is now just a
+          # convenience for local dev.
+          VERSION="${{ steps.version.outputs.version }}"
+          rm -rf _web_src
+          git clone --depth 1 https://github.com/renesenses/tune-web-client.git _web_src
+          # Pin the matching tag if it exists; fall back to main otherwise.
+          if (cd _web_src && git fetch origin "v${VERSION}":refs/tags/"v${VERSION}" 2>/dev/null); then
+            (cd _web_src && git checkout "v${VERSION}")
+          else
+            echo "::warning::tune-web-client v${VERSION} tag missing — using main"
+          fi
+          (cd _web_src && npm ci && npm run build)
+          rm -rf web
+          mkdir web
+          cp -R _web_src/dist/. web/
+          rm -rf _web_src
+          echo "Web bundle:"
+          ls -la web/assets | head -8
+
       - name: Set up Rust (for librespot)
         uses: dtolnay/rust-toolchain@stable
 
