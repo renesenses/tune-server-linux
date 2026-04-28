@@ -303,10 +303,14 @@ jobs:
           # .app (caught by `spctl --assess: source=no usable signature`).
           rm -rf "dmg-stage/${APP_DIR}"
           cp -R "${APP_DIR}" "dmg-stage/${APP_DIR}"
+          # Ensure all file ops are flushed before hdiutil; otherwise hdiutil
+          # can fail with "Resource busy" on the freshly-copied .app.
+          sync
+          sleep 2
           hdiutil create \
             -volname "Tune Server ${VERSION}" \
             -srcfolder dmg-stage \
-            -ov -format UDZO \
+            -ov -format UDZO -fs HFS+ \
             "${DMG_NAME}"
 
       - name: Sign DMG (macOS, if cert present)
