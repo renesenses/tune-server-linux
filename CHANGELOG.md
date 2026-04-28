@@ -2,6 +2,73 @@
 
 All notable changes to Tune Server.
 
+## v0.7.39 — 2026-04-28
+
+### Added (macOS first-class app)
+
+- **Native menubar app**. Replaces the Terminal-based launcher in
+  the macOS .dmg. The app runs as a `LSUIElement` (no Dock, no
+  Terminal window) and exposes a 🎵 menu in the system menu bar
+  with: Status, Open Web UI, Show Logs, Restart Server, Quit.
+  The Python tune-server is spawned as a detached subprocess and
+  logs to `~/Library/Logs/Tune Server.log`. Per-user data lives
+  in `~/Library/Application Support/Tune Server/`.
+- **Branded DMG**. Custom background (Mozaik Labs teal/cyan
+  gradient + drag-to-Applications arrow) and the same AppIcon as
+  the SwiftUI Tune client so both Mac surfaces share an identity.
+  Notarized by Apple — first launch needs no right-click.
+- **Combo .pkg installer** (`Tune-Installer-X.Y.Z.pkg`) that
+  installs the SwiftUI native client + the Python server with a
+  LaunchAgent for auto-start. Built via
+  `scripts/build-macos-pkg.sh` in `tune-server-ipados`.
+
+### Fixed
+
+- **Linux installer detected only the source tarball layout**.
+  The release tarball ships a PyInstaller binary; `install.sh`
+  expected `tune_server/` + `pyproject.toml` and silently did
+  nothing, leaving any previously running server in place. Now
+  detects binary vs source mode, stops a running tune-server
+  before swapping files, preserves user data (.env, *.db,
+  artwork_cache), and prints the installed version for
+  verification.
+- **`/library/artists` 500 on first load**. The handler tried to
+  persist a resolved MusicBrainz id even when the same id was
+  already attached to another artist (collision on
+  `artists_musicbrainz_id_key`), which surfaced as
+  `IntegrityError` → 500. Catch the conflict, log a warning,
+  and continue with the resolved id for that request without
+  persisting.
+- **Fresh SQLAlchemy installs crashed when recording a play**
+  with `no such table: playback_history`. The table was only
+  declared in the legacy aiosqlite engine — added the mirror in
+  `db/tables.py` so SA installs (Windows + macOS bundle) get the
+  table on init.
+- **Track order ignored on `/play` from Flutter Android**.
+  `SATrackRepo.get_multiple` returned IN(...) results in SQL
+  engine order, not the order the client sent. `/play` uses
+  `tracks[start_index]` to pick the starting track, so tapping
+  song #5 in an alphabetical list played track #5 in album
+  order instead. Preserve caller order via the same `by_id` dict
+  trick the legacy repo uses.
+
+### Changed
+
+- **`/library/artists` filter (default ON)**. The grid was
+  polluted by hundreds of "credit-only" artists populated from
+  track tags (composers, performers, conductors via
+  PERFORMER/TIPL/TMCL) without their own albums or primary
+  tracks — 2421 entries on a real ~1100-album library. The
+  endpoint now returns only artists with at least one local
+  album or track by default; pass `?include_credits_only=true`
+  to opt back in. Track credits remain on track detail pages.
+- **Windows binary built without `--noconsole`**. The launcher
+  bat reported "exited cleanly" the moment it spawned
+  `tune-server.exe` because Windows did not block on a GUI-
+  subsystem app. Building as a console app makes the bat wait,
+  so users see logs live in the launched cmd window and Ctrl+C
+  stops the server cleanly. (Reported by Jacques.)
+
 ## v0.7.38 — 2026-04-28
 
 ### Fixed (Windows stability)
