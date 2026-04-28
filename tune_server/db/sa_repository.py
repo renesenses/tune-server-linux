@@ -911,11 +911,12 @@ class SAPlaylistRepo:
             position = row[0] if row else 0
 
         await self._db.sa_execute(
-            playlist_tracks.insert(),
-            [
-                {"playlist_id": playlist_id, "track_id": tid, "position": position + i}
-                for i, tid in enumerate(new_ids)
-            ],
+            playlist_tracks.insert().values(
+                [
+                    {"playlist_id": playlist_id, "track_id": tid, "position": position + i}
+                    for i, tid in enumerate(new_ids)
+                ]
+            )
         )
         return new_ids
 
@@ -925,11 +926,12 @@ class SAPlaylistRepo:
         )
         if track_ids:
             await self._db.sa_execute(
-                playlist_tracks.insert(),
-                [
-                    {"playlist_id": playlist_id, "track_id": tid, "position": i}
-                    for i, tid in enumerate(track_ids)
-                ],
+                playlist_tracks.insert().values(
+                    [
+                        {"playlist_id": playlist_id, "track_id": tid, "position": i}
+                        for i, tid in enumerate(track_ids)
+                    ]
+                )
             )
 
     async def remove_track(self, playlist_id: int, track_id: int) -> None:
