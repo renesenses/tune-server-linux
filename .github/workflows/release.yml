@@ -201,14 +201,15 @@ jobs:
 
           # Patch Info.plist: add LSUIElement so the app runs as a menubar
           # accessory (no Dock icon), set version + display name.
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" "${APP_DIR}/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_DIR}/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Tune Server" "${APP_DIR}/Contents/Info.plist" 2>/dev/null \
-            || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Tune Server" "${APP_DIR}/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "${APP_DIR}/Contents/Info.plist" 2>/dev/null \
-            || /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "${APP_DIR}/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 11.0" "${APP_DIR}/Contents/Info.plist" 2>/dev/null \
-            || /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 11.0" "${APP_DIR}/Contents/Info.plist"
+          # PlistBuddy 'Set' fails if the key is missing — try Set first,
+          # fall back to Add. Some keys exist on PyInstaller's template,
+          # others don't.
+          PB() { /usr/libexec/PlistBuddy -c "$1" "${APP_DIR}/Contents/Info.plist" 2>/dev/null; }
+          PB "Set :CFBundleVersion ${VERSION}" || PB "Add :CFBundleVersion string ${VERSION}"
+          PB "Set :CFBundleShortVersionString ${VERSION}" || PB "Add :CFBundleShortVersionString string ${VERSION}"
+          PB "Set :CFBundleDisplayName Tune Server" || PB "Add :CFBundleDisplayName string Tune Server"
+          PB "Set :LSUIElement true" || PB "Add :LSUIElement bool true"
+          PB "Set :LSMinimumSystemVersion 11.0" || PB "Add :LSMinimumSystemVersion string 11.0"
 
           # Stage DMG contents: .app + symlink to /Applications + README
           rm -rf dmg-stage
