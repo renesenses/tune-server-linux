@@ -180,10 +180,12 @@ jobs:
 
           # Build the menubar wrapper as a windowed .app bundle. PyInstaller
           # creates dist/Tune Server.app with the wrapper as CFBundleExecutable.
-          # --windowed = no console window, --osx-bundle-identifier sets the
-          # bundle id used by codesign and notarization.
+          # --windowed = no console window, --icon = our branded AppIcon,
+          # --osx-bundle-identifier sets the bundle id used by codesign and
+          # notarization.
           pyinstaller --windowed \
             --name "Tune Server" \
+            --icon scripts/AppIcon.icns \
             --osx-bundle-identifier fr.mozaiklabs.tune-server \
             --collect-all rumps \
             --hidden-import rumps \
@@ -315,15 +317,35 @@ jobs:
           # .app (caught by `spctl --assess: source=no usable signature`).
           rm -rf "dmg-stage/${APP_DIR}"
           cp -R "${APP_DIR}" "dmg-stage/${APP_DIR}"
-          # Ensure all file ops are flushed before hdiutil; otherwise hdiutil
-          # can fail with "Resource busy" on the freshly-copied .app.
           sync
           sleep 2
-          hdiutil create \
-            -volname "Tune Server ${VERSION}" \
-            -srcfolder dmg-stage \
-            -ov -format UDZO -fs HFS+ \
-            "${DMG_NAME}"
+
+          # Use create-dmg to apply branded background + Finder layout
+          # (icon positions, no toolbar, hidden README extension). Falls
+          # back to plain hdiutil if create-dmg is unavailable (shouldn't
+          # happen on macos-latest after brew install).
+          brew list create-dmg >/dev/null 2>&1 || brew install create-dmg
+
+          create-dmg \
+            --volname "Tune Server ${VERSION}" \
+            --background scripts/dmg_background.png \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "${APP_DIR}" 150 215 \
+            --hide-extension "${APP_DIR}" \
+            --app-drop-link 450 215 \
+            --no-internet-enable \
+            "${DMG_NAME}" \
+            "dmg-stage/" \
+            || {
+              echo "create-dmg failed, falling back to hdiutil"
+              hdiutil create \
+                -volname "Tune Server ${VERSION}" \
+                -srcfolder dmg-stage \
+                -ov -format UDZO -fs HFS+ \
+                "${DMG_NAME}"
+            }
 
       - name: Sign DMG (macOS, if cert present)
         if: matrix.platform == 'macos' && env.MACOS_CERT_P12_BASE64 != ''
