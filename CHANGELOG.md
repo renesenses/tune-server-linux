@@ -2,6 +2,28 @@
 
 All notable changes to Tune Server.
 
+## v0.7.40 — 2026-04-28
+
+### Fixed
+
+- **Adding tracks to a playlist returned 'Server error'**.
+  `SAPlaylistRepo` was missing `add_tracks` (plural),
+  `remove_track`, and `reorder_tracks` — all present on the legacy
+  aiosqlite repo. The route handler called them and crashed with
+  `AttributeError`. Ported the methods to SA, with batch insert
+  via `insert().values([{...}])` and proper position shifting on
+  insert-at-index / track removal. (Reported by Bertrand.)
+- **All untagged recordings collapsed into a single
+  'Unknown Album / Unknown Artist' row** of 1377 tracks. The
+  metadata reader returned the literal strings `'Unknown Artist'`
+  and `'Unknown Album'` as defaults, then `TrackMetadata(...,
+  artist=str(artist), album=str(album))` turned `None` into the
+  string `'None'`. The scanner saw a truthy value and skipped its
+  path-based fallback (parts[-3]/parts[-2]). Now returns `None`,
+  scanner extracts artist + album from the file path, and the
+  library shows real albums (Art Blakey / Feeling Good, etc.).
+  Existing rows on .18 reclassified via a one-shot script.
+
 ## v0.7.39 — 2026-04-28
 
 ### Added (macOS first-class app)
