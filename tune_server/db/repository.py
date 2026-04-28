@@ -109,37 +109,50 @@ class ArtistRepo:
         row = await self._db.fetchone("SELECT * FROM artists WHERE name = ?", (name,))
         return _row_to_artist(row) if row else None
 
-    async def list(self, limit: int = 100, offset: int = 0) -> list[Artist]:
+    _PRINCIPAL_ONLY = (
+        "(EXISTS (SELECT 1 FROM albums WHERE artist_id = artists.id) "
+        "OR EXISTS (SELECT 1 FROM tracks WHERE artist_id = artists.id))"
+    )
+
+    async def list(self, limit: int = 100, offset: int = 0, principal_only: bool = True) -> list[Artist]:
+        where = f"WHERE {self._PRINCIPAL_ONLY}" if principal_only else ""
         rows = await self._db.fetchall(
-            "SELECT * FROM artists ORDER BY sort_name, name LIMIT ? OFFSET ?",
+            f"SELECT * FROM artists {where} ORDER BY sort_name, name LIMIT ? OFFSET ?",
             (limit, offset),
         )
         return [_row_to_artist(r) for r in rows]
 
-    async def count(self) -> int:
-        row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM artists")
+    async def count(self, principal_only: bool = True) -> int:
+        where = f"WHERE {self._PRINCIPAL_ONLY}" if principal_only else ""
+        row = await self._db.fetchone(f"SELECT COUNT(*) as cnt FROM artists {where}")
         return row["cnt"]
 
-    async def list_initial_letters(self) -> list[tuple[str, int]]:
+    async def list_initial_letters(self, principal_only: bool = True) -> list[tuple[str, int]]:
+        where = f"WHERE {self._PRINCIPAL_ONLY}" if principal_only else ""
         rows = await self._db.fetchall(
-            """SELECT
+            f"""SELECT
                  CASE WHEN UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) BETWEEN 'A' AND 'Z'
                       THEN UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) ELSE '#' END AS letter,
                  COUNT(*) AS cnt
-               FROM artists GROUP BY letter ORDER BY letter""",
+               FROM artists {where} GROUP BY letter ORDER BY letter""",
         )
         return [(r["letter"], r["cnt"]) for r in rows]
 
-    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0) -> list[Artist]:
+    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0, principal_only: bool = True) -> list[Artist]:
+        clauses = []
+        params: list = []
         if letter == "#":
-            where = "UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) NOT BETWEEN 'A' AND 'Z'"
-            params: tuple = (limit, offset)
+            clauses.append("UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) NOT BETWEEN 'A' AND 'Z'")
         else:
-            where = "UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) = ?"
-            params = (letter.upper(), limit, offset)
+            clauses.append("UPPER(SUBSTR(COALESCE(sort_name, name), 1, 1)) = ?")
+            params.append(letter.upper())
+        if principal_only:
+            clauses.append(self._PRINCIPAL_ONLY)
+        where = " WHERE " + " AND ".join(clauses)
+        params.extend([limit, offset])
         rows = await self._db.fetchall(
-            f"SELECT * FROM artists WHERE {where} ORDER BY sort_name, name LIMIT ? OFFSET ?",
-            params,
+            f"SELECT * FROM artists{where} ORDER BY sort_name, name LIMIT ? OFFSET ?",
+            tuple(params),
         )
         return [_row_to_artist(r) for r in rows]
 
