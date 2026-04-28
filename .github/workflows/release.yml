@@ -79,7 +79,9 @@ jobs:
       - name: Build binary with PyInstaller (Windows)
         if: matrix.platform == 'windows'
         run: |
-          pyinstaller --name tune-server --onedir --noconsole --add-data "web;web" --collect-all tune_server --noconfirm tune_server/__main__.py
+          # Console subsystem (no --noconsole) so start-tune-server.bat can wait
+          # on the process and the user sees logs live in the launched cmd window.
+          pyinstaller --name tune-server --onedir --add-data "web;web" --collect-all tune_server --noconfirm tune_server/__main__.py
 
       - name: Bundle librespot binary (Unix)
         if: matrix.platform != 'windows'
