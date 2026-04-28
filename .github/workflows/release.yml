@@ -298,6 +298,11 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          # Refresh the staged copy AFTER signing — the earlier copy in the
+          # build step was unsigned. Without this, the DMG ships an unsigned
+          # .app (caught by `spctl --assess: source=no usable signature`).
+          rm -rf "dmg-stage/${APP_DIR}"
+          cp -R "${APP_DIR}" "dmg-stage/${APP_DIR}"
           hdiutil create \
             -volname "Tune Server ${VERSION}" \
             -srcfolder dmg-stage \
