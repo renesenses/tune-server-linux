@@ -129,13 +129,90 @@ jobs:
           cd dist && tar czf "../tune-server-${VERSION}-linux.tar.gz" tune-server/
           cd .. && sha256sum "tune-server-${VERSION}-linux.tar.gz" | awk '{print $1}' > "tune-server-${VERSION}-linux.tar.gz.sha256"
 
-      - name: Package (macOS)
+      - name: Package tarball (macOS)
         if: matrix.platform == 'macos'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           cp install.sh README.md CHANGELOG.md dist/tune-server/
           cd dist && tar czf "../tune-server-${VERSION}-macos.tar.gz" tune-server/
           cd .. && shasum -a 256 "tune-server-${VERSION}-macos.tar.gz" | awk '{print $1}' > "tune-server-${VERSION}-macos.tar.gz.sha256"
+
+      - name: Build .app bundle and DMG (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          APP_NAME="Tune Server"
+          APP_DIR="${APP_NAME}.app"
+
+          # Build .app bundle wrapping the PyInstaller --onedir output.
+          # Launcher opens Terminal.app so the user sees the server's logs.
+          rm -rf "${APP_DIR}"
+          mkdir -p "${APP_DIR}/Contents/MacOS"
+          mkdir -p "${APP_DIR}/Contents/Resources"
+
+          # Copy PyInstaller output (binary + _internal + web + librespot) inside MacOS/runtime
+          cp -R dist/tune-server "${APP_DIR}/Contents/MacOS/runtime"
+
+          # Launcher script — visible Terminal window with friendly intro
+          cat > "${APP_DIR}/Contents/MacOS/Tune Server" <<'LAUNCHER'
+          #!/bin/bash
+          DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+          BIN="$DIR/runtime/tune-server"
+          osascript <<EOF
+          tell application "Terminal"
+            activate
+            do script "clear; echo '🎵 Tune Server'; echo '─────────────────────────────'; echo 'Web UI: http://localhost:8888'; echo 'Press Ctrl+C to stop the server.'; echo; '$BIN'"
+          end tell
+          EOF
+          LAUNCHER
+          chmod +x "${APP_DIR}/Contents/MacOS/Tune Server"
+
+          # Info.plist
+          cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Tune Server</string>
+            <key>CFBundleDisplayName</key><string>Tune Server</string>
+            <key>CFBundleIdentifier</key><string>fr.mozaiklabs.tune-server</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleExecutable</key><string>Tune Server</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # Stage DMG contents: .app + symlink to /Applications
+          rm -rf dmg-stage
+          mkdir dmg-stage
+          cp -R "${APP_DIR}" dmg-stage/
+          ln -s /Applications dmg-stage/Applications
+
+          # Optional: include a README so users know what to do
+          cat > dmg-stage/"README.txt" <<EOF
+          Tune Server ${VERSION}
+
+          To install:
+            1. Drag "Tune Server" to the Applications folder.
+            2. Open it from Launchpad or /Applications.
+            3. A Terminal window will open and the server starts on http://localhost:8888
+
+          To uninstall: drag the app to the Trash.
+          EOF
+
+          # Create compressed DMG
+          DMG_NAME="tune-server-${VERSION}-macos.dmg"
+          hdiutil create \
+            -volname "Tune Server ${VERSION}" \
+            -srcfolder dmg-stage \
+            -ov -format UDZO \
+            "${DMG_NAME}"
+
+          shasum -a 256 "${DMG_NAME}" | awk '{print $1}' > "${DMG_NAME}.sha256"
 
       - name: Package (Windows)
         if: matrix.platform == 'windows'
@@ -155,6 +232,8 @@ jobs:
             tune-server-*.tar.gz.sha256
             tune-server-*.zip
             tune-server-*.zip.sha256
+            tune-server-*.dmg
+            tune-server-*.dmg.sha256
           retention-days: 30
 
   release:
@@ -192,6 +271,8 @@ jobs:
             artifacts/tune-server-*.tar.gz.sha256
             artifacts/tune-server-*.zip
             artifacts/tune-server-*.zip.sha256
+            artifacts/tune-server-*.dmg
+            artifacts/tune-server-*.dmg.sha256
 
       - name: Wait for GitHub release assets to be fully available
         if: success()
@@ -227,11 +308,12 @@ jobs:
 
           LINUX_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-linux.tar.gz" 2>/dev/null || echo 0)
           MACOS_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-macos.tar.gz" 2>/dev/null || echo 0)
+          MACOS_DMG_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-macos.dmg" 2>/dev/null || echo 0)
           WINDOWS_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-windows.zip" 2>/dev/null || echo 0)
 
           # Build GitHub-style webhook payload
           PAYLOAD=$(cat <<EOF
-          {"action":"published","repository":{"name":"tune-server-linux","full_name":"renesenses/tune-server-linux"},"release":{"tag_name":"v${VERSION}","name":"v${VERSION}","html_url":"${BASE_URL}","assets":[{"name":"tune-server-${VERSION}-linux.tar.gz","size":${LINUX_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-linux.tar.gz"},{"name":"tune-server-${VERSION}-macos.tar.gz","size":${MACOS_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-macos.tar.gz"},{"name":"tune-server-${VERSION}-windows.zip","size":${WINDOWS_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-windows.zip"}]}}
+          {"action":"published","repository":{"name":"tune-server-linux","full_name":"renesenses/tune-server-linux"},"release":{"tag_name":"v${VERSION}","name":"v${VERSION}","html_url":"${BASE_URL}","assets":[{"name":"tune-server-${VERSION}-linux.tar.gz","size":${LINUX_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-linux.tar.gz"},{"name":"tune-server-${VERSION}-macos.tar.gz","size":${MACOS_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-macos.tar.gz"},{"name":"tune-server-${VERSION}-macos.dmg","size":${MACOS_DMG_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-macos.dmg"},{"name":"tune-server-${VERSION}-windows.zip","size":${WINDOWS_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-windows.zip"}]}}
           EOF
           )
           PAYLOAD=$(echo "$PAYLOAD" | tr -d '\n' | sed 's/  */ /g')
