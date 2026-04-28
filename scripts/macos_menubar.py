@@ -71,8 +71,21 @@ class TuneServerApp(rumps.App):
                 message=f"Binaire introuvable :\n{bin_path}",
             )
             return
+
+        # Server writes its DB + caches in cwd. /Applications is read-only,
+        # so use a per-user data directory under Application Support.
+        data_dir = Path.home() / "Library" / "Application Support" / "Tune Server"
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        env = dict(os.environ)
+        env["TUNE_VERSION"] = VERSION
+        # Keep TUNE_DB_PATH in sync with cwd so the server's default DB lookup
+        # also lands in the writable directory.
+        env.setdefault("TUNE_DB_PATH", str(data_dir / "tune_server.db"))
+        env.setdefault("TUNE_ARTWORK_CACHE_DIR", str(data_dir / "artwork_cache"))
+
         self.log_file.write(
-            f"\n=== Tune Server v{VERSION} starting at {datetime.now().isoformat()} ===\n"
+            f"\n=== Tune Server v{VERSION} starting at {datetime.now().isoformat()} (data: {data_dir}) ===\n"
         )
         self.log_file.flush()
         try:
@@ -80,7 +93,8 @@ class TuneServerApp(rumps.App):
                 [str(bin_path)],
                 stdout=self.log_file,
                 stderr=subprocess.STDOUT,
-                cwd=str(bin_path.parent),
+                cwd=str(data_dir),
+                env=env,
                 start_new_session=True,
             )
         except Exception as exc:
