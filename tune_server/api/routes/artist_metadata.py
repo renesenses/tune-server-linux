@@ -5,6 +5,7 @@ from __future__ import annotations
 import aiohttp
 import structlog
 from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 
 from tune_server.api.deps import deps
 from tune_server.config import settings
@@ -30,8 +31,18 @@ async def _resolve_mbid(artist_id: int) -> str:
     mbid = await _search_musicbrainz_id(artist.name)
     if mbid:
         artist.musicbrainz_id = mbid
-        await deps.artist_repo.update(artist)
-        logger.info("artist_mbid_resolved", artist_id=artist_id, name=artist.name, mbid=mbid)
+        try:
+            await deps.artist_repo.update(artist)
+            logger.info("artist_mbid_resolved", artist_id=artist_id, name=artist.name, mbid=mbid)
+        except IntegrityError:
+            # MBID already attached to another artist (e.g. duplicate-name
+            # collision in MB search). Use the mbid for this request but
+            # don't persist — the next call will re-search.
+            logger.info(
+                "artist_mbid_conflict",
+                artist_id=artist_id, name=artist.name, mbid=mbid,
+                hint="another artist already has this MBID; not persisting",
+            )
         return mbid
 
     raise HTTPException(
