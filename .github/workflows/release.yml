@@ -248,8 +248,11 @@ jobs:
           for bin in "${APP_DIR}/Contents/MacOS/runtime/tune-server" "${APP_DIR}/Contents/MacOS/runtime/librespot"; do
             [ -f "$bin" ] && codesign --force --timestamp --options runtime --sign "${IDENTITY}" "$bin" || true
           done
-          # Finally sign the .app itself (deep)
-          codesign --force --deep --timestamp --options runtime --sign "${IDENTITY}" "${APP_DIR}"
+          # Finally sign the .app itself.
+          # NOT --deep: PyInstaller dist-info dirs aren't signable bundles
+          # and codesign --deep refuses them. Mach-Os are signed individually
+          # above; the final pass just attaches a signature to the .app.
+          codesign --force --timestamp --options runtime --sign "${IDENTITY}" "${APP_DIR}"
           codesign --verify --verbose=2 "${APP_DIR}"
 
       - name: Build DMG (macOS)
