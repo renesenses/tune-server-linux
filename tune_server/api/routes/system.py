@@ -635,13 +635,15 @@ async def check_update():
 
 @router.post("/update/install")
 async def install_update():
-    """Download + install the latest update.
+    """Trigger an async download + install of the latest update.
 
-    On Windows the new files are staged and a helper .bat is spawned to
-    swap them in once tune-server.exe exits — the response says
-    `windows_swap_pending: true` so the client can warn that the server
-    will restart on its own. On Linux/macOS the install is in-place and
-    a manual or supervised restart is needed.
+    Returns immediately. The download runs in a background task; the
+    client polls /update/status to know when the swap+restart is about
+    to happen. Without this, the request blocks for the full download
+    (30+ s for a ~100 MB Windows zip), browsers give up with
+    'Failed to fetch', and the user sees an error even though the
+    install actually succeeded server-side. (Reported by Jacques on
+    Windows.)
     """
     import platform
     if not deps.update_checker:
@@ -653,28 +655,52 @@ async def install_update():
         )
     if not deps.update_checker.update_available:
         raise HTTPException(status_code=400, detail="No update available")
-    success = await deps.update_checker.download_and_install()
-    if not success:
-        raise HTTPException(status_code=500, detail="Update installation failed")
+
+    # Mark started so the status endpoint can report progress.
+    from datetime import datetime as _dt
+    deps.update_checker._install_state = {
+        "phase": "downloading",
+        "version": deps.update_checker.latest_version,
+        "started_at": _dt.utcnow().isoformat(),
+    }
 
     is_windows = platform.system().lower() == "windows"
-    if is_windows:
-        # Spawn helper + trigger orderly shutdown so the swap can run.
-        deps.update_checker._spawn_windows_apply_helper()
 
-        async def _shutdown_after_response():
+    async def _run_install_in_background():
+        success = await deps.update_checker.download_and_install()
+        if not success:
+            deps.update_checker._install_state["phase"] = "failed"
+            return
+        if is_windows:
+            deps.update_checker._spawn_windows_apply_helper()
+            deps.update_checker._install_state["phase"] = "restarting"
             await asyncio.sleep(2)
             import os, signal
             os.kill(os.getpid(), signal.SIGTERM)
+        else:
+            deps.update_checker._install_state["phase"] = "installed_restart_required"
 
-        asyncio.create_task(_shutdown_after_response())
+    asyncio.create_task(_run_install_in_background())
 
     return {
-        "status": "installed",
+        "status": "started",
         "version": deps.update_checker.latest_version,
-        "restart_required": True,
         "windows_swap_pending": is_windows,
+        "poll_url": "/api/v1/system/update/status",
     }
+
+
+@router.get("/update/status")
+async def update_status():
+    """Poll the in-progress install state. Returns phase ∈
+    {idle, downloading, restarting, installed_restart_required, failed}.
+    """
+    if not deps.update_checker:
+        return {"phase": "idle"}
+    state = getattr(deps.update_checker, "_install_state", None)
+    if not state:
+        return {"phase": "idle"}
+    return state
 
 
 @router.post("/restart")

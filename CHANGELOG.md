@@ -2,6 +2,26 @@
 
 All notable changes to Tune Server.
 
+## v0.7.42 — 2026-04-28
+
+### Fixed
+
+- **'Failed to fetch' on Settings → Installer la mise à jour
+  (Windows)**. The /update/install handler awaited the full
+  download (~30+ s for a 130 MB Windows zip) before returning,
+  and Chrome dropped the request as 'Failed to fetch' even when
+  the install succeeded. Now returns immediately with
+  `{status: 'started', poll_url: ...}`; download runs in a
+  background task. The web client polls `/update/status` until
+  the server restarts on the new version, then reloads.
+  (Reported by Jacques on Windows.)
+
+### Added
+
+- **`/system/update/status`** endpoint exposes the install phase
+  (`idle | downloading | restarting | installed_restart_required
+  | failed`) so a future native client can mirror progress.
+
 ## v0.7.41 — 2026-04-28
 
 ### Fixed
