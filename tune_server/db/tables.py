@@ -727,3 +727,26 @@ zone_audio_profiles = sa.Table(
     sa.UniqueConstraint("zone_id", "name"),
 )
 
+# ---------------------------------------------------------------------------
+# playback_history — recorded by the EventBus on every track play. Was only
+# created by the legacy aiosqlite engine; missing on fresh SA installs which
+# crashed with 'no such table' on first record. Mirror the engine.py schema.
+# ---------------------------------------------------------------------------
+playback_history = sa.Table(
+    "playback_history",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("user_id", sa.Integer),
+    sa.Column("track_id", sa.Integer, sa.ForeignKey("tracks.id", ondelete="SET NULL")),
+    sa.Column("zone_id", sa.Integer),
+    sa.Column("track_title", sa.Text),
+    sa.Column("artist_name", sa.Text),
+    sa.Column("album_title", sa.Text),
+    sa.Column("cover_path", sa.Text),
+    sa.Column("duration_ms", sa.Integer),
+    sa.Column("listened_ms", sa.Integer),
+    sa.Column("source", sa.Text),
+    sa.Column("played_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Index("idx_playback_history_played", sa.text("played_at DESC")),
+)
+
