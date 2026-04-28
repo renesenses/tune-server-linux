@@ -2,6 +2,37 @@
 
 All notable changes to Tune Server.
 
+## v0.7.44 — 2026-04-28
+
+### Fixed (Linux installer, binary mode)
+
+- **systemd service crashed with 203/EXEC on first start**.
+  `tune-server.service` ships with the source-mode ExecStart
+  (`/opt/tune-server/.venv/bin/python -m tune_server`) for git
+  checkouts; binary tarball installs have no .venv, so systemd
+  refused to start the service. install.sh now rewrites ExecStart
+  to point at the PyInstaller binary when MODE=binary, and bumps
+  Restart from `on-failure` to `always` so /system/restart
+  (clean SIGTERM) actually relaunches.
+- **Stale `TUNE_WEB_DIR=/opt/tune-server/web` in old `.env`
+  files left the UI blank** after upgrading from a source install
+  to the binary tarball. The bundle's web assets live at
+  `_internal/web/` and the server auto-detects them; the leftover
+  override pointed at a path that no longer exists. install.sh
+  now strips any TUNE_WEB_DIR line from .env in binary mode.
+
+Both bugs reported by Matteo on Ubuntu after upgrading from a
+source install to the v0.7.38 tarball.
+
+### Release process (CI)
+
+- **Web client is now rebuilt from `tune-web-client` in CI** for
+  every tag. The previous flow packaged whatever was committed in
+  `web/` at tag time, which silently shipped stale UI when the
+  tagger forgot to `npm run build && cp dist/* web/` first
+  (Matteo's tarball had assets 6 weeks older than the backend).
+  `web/` in this repo is now a local-dev cache only.
+
 ## v0.7.43 — 2026-04-28
 
 ### Fixed

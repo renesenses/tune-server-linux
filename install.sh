@@ -118,6 +118,18 @@ if [[ ! -f "$INSTALL_DIR/.env" ]]; then
     fi
 fi
 
+# Drop any TUNE_WEB_DIR override left over from older installs.
+# In binary mode the bundle keeps its assets at _internal/web/ and the
+# server auto-detects that path. A stale TUNE_WEB_DIR=/opt/tune-server/web
+# (the old layout) makes the UI 404 because that folder doesn't exist
+# in PyInstaller bundles. (Reported by Matteo on Ubuntu after upgrading.)
+if [[ "$MODE" == "binary" && -f "$INSTALL_DIR/.env" ]]; then
+    if grep -qE '^TUNE_WEB_DIR=' "$INSTALL_DIR/.env"; then
+        sed -i.bak '/^TUNE_WEB_DIR=/d' "$INSTALL_DIR/.env"
+        echo "==> Removed stale TUNE_WEB_DIR from .env (binary mode auto-detects)"
+    fi
+fi
+
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 
 echo "==> Installation complete: ${INSTALL_DIR}"
@@ -137,6 +149,21 @@ if [[ "$ENABLE_SYSTEMD" == true ]]; then
     echo "==> Installing systemd service..."
     if [[ -f "$SCRIPT_DIR/tune-server.service" ]]; then
         cp "$SCRIPT_DIR/tune-server.service" /etc/systemd/system/
+    fi
+    # Patch ExecStart for the install mode. The tune-server.service file
+    # ships with the source-mode command (.venv/bin/python -m tune_server)
+    # because that's still the shape for git-checkout dev installs. In
+    # binary mode the .venv doesn't exist — systemd would fail with
+    # 203/EXEC every first start. Rewrite ExecStart to point at the
+    # PyInstaller binary. (Reported by Matteo on Ubuntu.)
+    if [[ "$MODE" == "binary" ]]; then
+        sed -i.bak 's|^ExecStart=.*$|ExecStart=/opt/tune-server/tune-server|' \
+            /etc/systemd/system/tune-server.service
+        # Restart=always (not on-failure) so /system/restart actually relaunches
+        # the process. /system/restart sends SIGTERM, which is a clean exit
+        # — on-failure wouldn't catch it.
+        sed -i.bak 's|^Restart=on-failure$|Restart=always|' \
+            /etc/systemd/system/tune-server.service
     fi
     systemctl daemon-reload
     systemctl enable tune-server
