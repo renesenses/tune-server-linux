@@ -553,7 +553,13 @@ class SATrackRepo:
             .where(tracks.c.id.in_(track_ids))
         )
         rows = await self._db.sa_fetchall(stmt)
-        return [_row_to_track(r) for r in rows]
+        # Preserve caller's ordering — SQL IN() doesn't guarantee order, but
+        # /play uses tracks[start_index] so the request order must round-trip.
+        # Otherwise tapping track #5 of an alphabetical Flutter list plays
+        # track #5 in album order instead. (Bug reported by Jacques.)
+        by_id = {r["id"]: r for r in rows}
+        ordered = [by_id[tid] for tid in track_ids if tid in by_id]
+        return [_row_to_track(r) for r in ordered]
 
     async def create(self, track: Track) -> int:
         result = await self._db.sa_execute(
