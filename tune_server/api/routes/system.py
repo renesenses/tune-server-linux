@@ -621,9 +621,16 @@ async def check_update():
     if not deps.update_checker:
         raise HTTPException(status_code=503, detail="Update checker not available")
     info = await deps.update_checker.check_for_update()
-    if info:
-        return info
-    return {"current_version": deps.update_checker.current_version, "latest_version": None, "update_available": False}
+    source_install = deps.update_checker.is_source_install
+    payload = info or {
+        "current_version": deps.update_checker.current_version,
+        "latest_version": None,
+        "update_available": False,
+    }
+    payload["installable"] = not source_install
+    if source_install:
+        payload["install_hint"] = "Source install detected. Run `git pull && pip install -e .` then restart."
+    return payload
 
 
 @router.post("/update/install")
@@ -639,6 +646,11 @@ async def install_update():
     import platform
     if not deps.update_checker:
         raise HTTPException(status_code=503, detail="Update checker not available")
+    if deps.update_checker.is_source_install:
+        raise HTTPException(
+            status_code=409,
+            detail="Source install detected. Run `git pull && pip install -e .` then restart the service.",
+        )
     if not deps.update_checker.update_available:
         raise HTTPException(status_code=400, detail="No update available")
     success = await deps.update_checker.download_and_install()

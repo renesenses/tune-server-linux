@@ -121,6 +121,22 @@ class UpdateChecker:
     def latest_version(self) -> str | None:
         return self._latest_version
 
+    @property
+    def is_source_install(self) -> bool:
+        """True when running from a git clone + venv (e.g. .18 dev/prod box).
+
+        The release tarballs ship a PyInstaller bundle (`_internal/`,
+        `tune-server` binary, `librespot`, `install.sh`, …) and
+        unpacking that on top of a source checkout pollutes the repo and
+        leaves the venv's installed `tune-server` package out of sync.
+        Detect the case so we can refuse the in-app installer with a
+        clear message instead of silently breaking the install.
+        """
+        if getattr(sys, "frozen", False):
+            return False
+        cwd = Path.cwd()
+        return (cwd / "pyproject.toml").is_file() and (cwd / ".git").exists()
+
     def start(self) -> None:
         """Start periodic update checking."""
         self._check_task = asyncio.ensure_future(self._check_loop())
@@ -257,6 +273,10 @@ class UpdateChecker:
     async def download_and_install(self) -> bool:
         """Download the update and install it. Returns True on success."""
         if not self._download_url or not self._asset_name:
+            return False
+
+        if self.is_source_install:
+            logger.warning("update_refused_source_install", version=self._latest_version)
             return False
 
         logger.info("update_downloading", version=self._latest_version, asset=self._asset_name)
