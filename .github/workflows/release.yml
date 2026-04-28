@@ -165,99 +165,80 @@ jobs:
           echo "Available signing identities (search list):"
           security find-identity -v -p codesigning
 
-      - name: Build .app bundle and DMG (macOS)
+      - name: Build menubar wrapper .app + DMG staging (macOS)
         if: matrix.platform == 'macos'
+        env:
+          TUNE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${TUNE_VERSION}"
           APP_NAME="Tune Server"
           APP_DIR="${APP_NAME}.app"
+          rm -rf "${APP_DIR}" dist/Tune\ Server.app
 
-          # Build .app bundle wrapping the PyInstaller --onedir output.
-          # Launcher opens Terminal.app so the user sees the server's logs.
-          rm -rf "${APP_DIR}"
-          mkdir -p "${APP_DIR}/Contents/MacOS"
-          mkdir -p "${APP_DIR}/Contents/Resources"
+          # rumps + pyobjc are macOS-only deps for the menubar wrapper
+          pip install rumps
 
-          # Place PyInstaller runtime in Contents/Resources/ (Apple convention
-          # for embedded data/runtimes). Contents/MacOS/ stays slim — only
-          # the launcher script — so codesign doesn't choke on .py files.
+          # Build the menubar wrapper as a windowed .app bundle. PyInstaller
+          # creates dist/Tune Server.app with the wrapper as CFBundleExecutable.
+          # --windowed = no console window, --osx-bundle-identifier sets the
+          # bundle id used by codesign and notarization.
+          pyinstaller --windowed \
+            --name "Tune Server" \
+            --osx-bundle-identifier fr.mozaiklabs.tune-server \
+            --collect-all rumps \
+            --hidden-import rumps \
+            --noconfirm \
+            scripts/macos_menubar.py
+
+          # Move the produced .app to the workflow root for downstream steps.
+          mv "dist/${APP_DIR}" "${APP_DIR}"
+
+          # Embed the tune-server runtime as a sibling subdirectory in
+          # Resources/. The wrapper subprocess.Popen()s it. Apple only
+          # signs/notarizes the wrapper's process tree; the embedded
+          # runtime is signed separately later in the Sign step.
           cp -R dist/tune-server "${APP_DIR}/Contents/Resources/runtime"
 
-          # Inner script that prints intro + execs the server. Runs IN
-          # Terminal.app (opened via `open -a Terminal`). Using `open` instead
-          # of osascript avoids the macOS TCC prompt asking permission for
-          # bash to control Terminal.
-          cat > "${APP_DIR}/Contents/Resources/run.sh" <<'INNER'
-          #!/bin/bash
-          DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-          clear
-          echo '🎵 Tune Server'
-          echo '─────────────────────────────'
-          echo 'Web UI: http://localhost:8888'
-          echo 'Press Ctrl+C to stop the server.'
-          echo
-          exec "$DIR/runtime/tune-server"
-          INNER
-          chmod +x "${APP_DIR}/Contents/Resources/run.sh"
+          # Patch Info.plist: add LSUIElement so the app runs as a menubar
+          # accessory (no Dock icon), set version + display name.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" "${APP_DIR}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_DIR}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Tune Server" "${APP_DIR}/Contents/Info.plist" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Tune Server" "${APP_DIR}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "${APP_DIR}/Contents/Info.plist" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "${APP_DIR}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 11.0" "${APP_DIR}/Contents/Info.plist" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 11.0" "${APP_DIR}/Contents/Info.plist"
 
-          # Outer launcher — invoked by Finder when the user opens the .app.
-          # `open -a Terminal SCRIPT` opens Terminal.app with SCRIPT as the
-          # initial command. No TCC automation permission needed.
-          cat > "${APP_DIR}/Contents/MacOS/Tune Server" <<'LAUNCHER'
-          #!/bin/bash
-          DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-          open -a Terminal "$DIR/../Resources/run.sh"
-          LAUNCHER
-          chmod +x "${APP_DIR}/Contents/MacOS/Tune Server"
-
-          # Info.plist
-          cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleName</key><string>Tune Server</string>
-            <key>CFBundleDisplayName</key><string>Tune Server</string>
-            <key>CFBundleIdentifier</key><string>fr.mozaiklabs.tune-server</string>
-            <key>CFBundleVersion</key><string>${VERSION}</string>
-            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
-            <key>CFBundleExecutable</key><string>Tune Server</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>LSMinimumSystemVersion</key><string>11.0</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          PLIST
-
-          # Stage DMG contents: .app + symlink to /Applications
+          # Stage DMG contents: .app + symlink to /Applications + README
           rm -rf dmg-stage
           mkdir dmg-stage
-          cp -R "${APP_DIR}" dmg-stage/
           ln -s /Applications dmg-stage/Applications
 
-          # Optional: include a README so users know what to do
           cat > dmg-stage/"README.txt" <<EOF
           Tune Server ${VERSION}
 
-          To install:
-            1. Drag "Tune Server" to the Applications folder.
-            2. Open it from /Applications. macOS may show a warning
-               "Apple cannot check this app for malicious software."
-               This is normal until notarization is fully wired up.
-               → Right-click the app, choose "Open", then click
-                 "Open" in the confirmation dialog. macOS remembers
-                 the choice for future launches.
-            3. A Terminal window opens and the server starts on
-               http://localhost:8888
+          Glissez "Tune Server" dans le dossier Applications, puis lancez-le
+          depuis Launchpad ou /Applications.
 
-          To uninstall: drag the app to the Trash.
+          Au lancement :
+            • Une icône 🎵 apparaît dans la barre des menus (en haut à droite)
+            • Le serveur démarre en arrière-plan sur http://localhost:8888
+            • Pas de fenêtre Terminal, pas d'icône Dock
+
+          Le menu permet d'ouvrir l'interface web, voir les logs, redémarrer
+          ou quitter le serveur.
+
+          Premier lancement : si macOS bloque "Apple ne peut vérifier", faire
+          clic droit sur l'app puis Ouvrir → Ouvrir dans la fenêtre de
+          confirmation. macOS retient le choix.
+
+          Pour désinstaller : glisser l'app vers la Corbeille.
           EOF
 
-          # Create compressed DMG
           DMG_NAME="tune-server-${VERSION}-macos.dmg"
           echo "DMG_NAME=${DMG_NAME}" >> "$GITHUB_ENV"
           echo "APP_DIR=${APP_DIR}" >> "$GITHUB_ENV"
-          # DMG creation moved after optional signing step
 
       - name: Sign .app (macOS, if cert present)
         if: matrix.platform == 'macos' && env.MACOS_CERT_P12_BASE64 != ''
