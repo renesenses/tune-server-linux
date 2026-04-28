@@ -867,6 +867,101 @@ class SAPlaylistRepo:
         )
         return True
 
+    async def add_tracks(self, playlist_id: int, track_ids: list[int], position: int | None = None) -> list[int]:
+        """Add several tracks to a playlist, skipping any already present.
+
+        Returns the list of track_ids actually inserted (deduplicated against
+        the playlist + the incoming list itself, caller order preserved).
+        """
+        if not track_ids:
+            return []
+
+        existing_rows = await self._db.sa_fetchall(
+            sa.select(playlist_tracks.c.track_id).where(
+                playlist_tracks.c.playlist_id == playlist_id
+            )
+        )
+        existing = {r[0] for r in existing_rows}
+        seen_in_batch: set[int] = set()
+        new_ids: list[int] = []
+        for tid in track_ids:
+            if tid in existing or tid in seen_in_batch:
+                continue
+            seen_in_batch.add(tid)
+            new_ids.append(tid)
+        if not new_ids:
+            return []
+
+        if position is not None:
+            await self._db.sa_execute(
+                playlist_tracks.update()
+                .where(
+                    sa.and_(
+                        playlist_tracks.c.playlist_id == playlist_id,
+                        playlist_tracks.c.position >= position,
+                    )
+                )
+                .values(position=playlist_tracks.c.position + len(new_ids))
+            )
+        else:
+            row = await self._db.sa_fetchone(
+                sa.select(sa.func.coalesce(sa.func.max(playlist_tracks.c.position), -1) + 1)
+                .where(playlist_tracks.c.playlist_id == playlist_id)
+            )
+            position = row[0] if row else 0
+
+        await self._db.sa_execute(
+            playlist_tracks.insert(),
+            [
+                {"playlist_id": playlist_id, "track_id": tid, "position": position + i}
+                for i, tid in enumerate(new_ids)
+            ],
+        )
+        return new_ids
+
+    async def reorder_tracks(self, playlist_id: int, track_ids: list[int]) -> None:
+        await self._db.sa_execute(
+            playlist_tracks.delete().where(playlist_tracks.c.playlist_id == playlist_id)
+        )
+        if track_ids:
+            await self._db.sa_execute(
+                playlist_tracks.insert(),
+                [
+                    {"playlist_id": playlist_id, "track_id": tid, "position": i}
+                    for i, tid in enumerate(track_ids)
+                ],
+            )
+
+    async def remove_track(self, playlist_id: int, track_id: int) -> None:
+        row = await self._db.sa_fetchone(
+            sa.select(playlist_tracks.c.position).where(
+                sa.and_(
+                    playlist_tracks.c.playlist_id == playlist_id,
+                    playlist_tracks.c.track_id == track_id,
+                )
+            )
+        )
+        if not row:
+            return
+        await self._db.sa_execute(
+            playlist_tracks.delete().where(
+                sa.and_(
+                    playlist_tracks.c.playlist_id == playlist_id,
+                    playlist_tracks.c.track_id == track_id,
+                )
+            )
+        )
+        await self._db.sa_execute(
+            playlist_tracks.update()
+            .where(
+                sa.and_(
+                    playlist_tracks.c.playlist_id == playlist_id,
+                    playlist_tracks.c.position > row[0],
+                )
+            )
+            .values(position=playlist_tracks.c.position - 1)
+        )
+
     async def remove_track(self, playlist_id: int, position: int) -> None:
         await self._db.sa_execute(
             playlist_tracks.delete().where(
