@@ -2,6 +2,25 @@
 
 All notable changes to Tune Server.
 
+## v0.7.41 — 2026-04-28
+
+### Fixed
+
+- **'Network error: server unreachable' on Library page load**.
+  HeartButton fired one /favorites/check fetch per row → 30k+
+  parallel requests on a large library → Chrome refused with
+  ERR_INSUFFICIENT_RESOURCES → toast 'server unreachable' even
+  though the server was fine. Replaced the per-button fetch with
+  three Sets (track / album / artist) populated once per profile
+  via /profiles/{id}/favorites; toggles update the sets
+  optimistically. (Reported by Jacques on Windows.)
+
+### Added
+
+- **scripts/tune-update.bat (Windows)** now queries the GitHub
+  Releases API to install the latest tag, so the same script
+  stays valid across patch releases.
+
 ## v0.7.40 — 2026-04-28
 
 ### Fixed
