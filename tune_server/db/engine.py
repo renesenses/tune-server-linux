@@ -70,6 +70,10 @@ class SQLiteDatabase:
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
         await self._db.execute("PRAGMA synchronous=NORMAL")
+        # Wait up to 5s if another connection holds the write lock — Windows
+        # is especially sensitive: scanner + API + websocket can hit the DB
+        # at the same time and SQLITE_BUSY surfaces as a 500.
+        await self._db.execute("PRAGMA busy_timeout=5000")
 
         await self._init_schema()
         logger.info("database_connected", path=self._db_path, engine="sqlite")
@@ -81,7 +85,11 @@ class SQLiteDatabase:
             logger.info("database_closed")
 
     async def execute(self, sql: str, params: tuple = ()) -> ExecuteResult:
-        cursor = await self.connection.execute(sql, params)
+        try:
+            cursor = await self.connection.execute(sql, params)
+        except aiosqlite.Error as e:
+            logger.error("sqlite_execute_failed", error=str(e), sql=sql[:200])
+            raise
         lastrowid = cursor.lastrowid
         rowcount = cursor.rowcount
         # RETURNING clause produces rows that must be consumed before commit
@@ -92,14 +100,26 @@ class SQLiteDatabase:
         return ExecuteResult(lastrowid=lastrowid, rowcount=rowcount)
 
     async def executemany(self, sql: str, params_seq: list[tuple]) -> None:
-        await self.connection.executemany(sql, params_seq)
+        try:
+            await self.connection.executemany(sql, params_seq)
+        except aiosqlite.Error as e:
+            logger.error("sqlite_executemany_failed", error=str(e), sql=sql[:200], rows=len(params_seq))
+            raise
 
     async def fetchone(self, sql: str, params: tuple = ()) -> aiosqlite.Row | None:
-        cursor = await self.connection.execute(sql, params)
+        try:
+            cursor = await self.connection.execute(sql, params)
+        except aiosqlite.Error as e:
+            logger.error("sqlite_fetchone_failed", error=str(e), sql=sql[:200])
+            raise
         return await cursor.fetchone()
 
     async def fetchall(self, sql: str, params: tuple = ()) -> list[aiosqlite.Row]:
-        cursor = await self.connection.execute(sql, params)
+        try:
+            cursor = await self.connection.execute(sql, params)
+        except aiosqlite.Error as e:
+            logger.error("sqlite_fetchall_failed", error=str(e), sql=sql[:200])
+            raise
         return await cursor.fetchall()
 
     async def commit(self) -> None:

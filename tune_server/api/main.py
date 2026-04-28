@@ -36,6 +36,26 @@ def create_api_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Catch-all exception handler so unhandled errors don't disappear into
+    # a generic 500. We log the path + repr(exception) so Windows testers'
+    # crashes are visible in tune-server.log.
+    import structlog as _sl
+    _api_log = _sl.get_logger()
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request, exc):
+        _api_log.error(
+            "api_unhandled_exception",
+            path=request.url.path,
+            method=request.method,
+            error_type=type(exc).__name__,
+            error=str(exc)[:500],
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"{type(exc).__name__}: {str(exc)[:200]}"},
+        )
+
     # API key middleware (if configured)
     if settings.api_key:
         @app.middleware("http")
