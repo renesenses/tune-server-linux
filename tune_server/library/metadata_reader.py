@@ -223,8 +223,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
         # Extract metadata based on file type
         if isinstance(audio, FLAC):
             title = _get_first(tags, ["title"], path.stem)
-            artist = _get_first(tags, ["artist"], "Unknown Artist")
-            album = _get_first(tags, ["album"], "Unknown Album")
+            artist = _get_first(tags, ["artist"]) or None
+            album = _get_first(tags, ["album"]) or None
             album_artist = _get_first(tags, ["albumartist", "album_artist"]) or None
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
@@ -236,8 +236,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
 
         elif isinstance(audio, MP3):
             title = _get_first(tags, ["TIT2"], path.stem)
-            artist = _get_first(tags, ["TPE1"], "Unknown Artist")
-            album = _get_first(tags, ["TALB"], "Unknown Album")
+            artist = _get_first(tags, ["TPE1"]) or None
+            album = _get_first(tags, ["TALB"]) or None
             album_artist = _get_first(tags, ["TPE2"]) or None
             track_num = _parse_int(_get_first(tags, ["TRCK"]))
             disc_num = _parse_int(_get_first(tags, ["TPOS"]), 1)
@@ -249,8 +249,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
 
         elif isinstance(audio, MP4):
             title = _get_first(tags, ["\xa9nam"], path.stem)
-            artist = _get_first(tags, ["\xa9ART"], "Unknown Artist")
-            album = _get_first(tags, ["\xa9alb"], "Unknown Album")
+            artist = _get_first(tags, ["\xa9ART"]) or None
+            album = _get_first(tags, ["\xa9alb"]) or None
             album_artist = _get_first(tags, ["aART"]) or None
             trkn = tags.get("trkn", [(0, 0)])[0]
             track_num = trkn[0] if isinstance(trkn, tuple) else _parse_int(str(trkn))
@@ -264,8 +264,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
 
         elif isinstance(audio, OggVorbis):
             title = _get_first(tags, ["title"], path.stem)
-            artist = _get_first(tags, ["artist"], "Unknown Artist")
-            album = _get_first(tags, ["album"], "Unknown Album")
+            artist = _get_first(tags, ["artist"]) or None
+            album = _get_first(tags, ["album"]) or None
             album_artist = _get_first(tags, ["albumartist"]) or None
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
@@ -278,8 +278,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
         elif DSF and isinstance(audio, DSF):
             # DSD files (DSF/DFF) — sample_rate is the DSD rate (2822400, 5644800, etc.)
             title = _get_first(tags, ["TIT2"], path.stem) if tags else path.stem
-            artist = _get_first(tags, ["TPE1"], "Unknown Artist") if tags else "Unknown Artist"
-            album = _get_first(tags, ["TALB"], "Unknown Album") if tags else "Unknown Album"
+            artist = (_get_first(tags, ["TPE1"]) or None) if tags else None
+            album = (_get_first(tags, ["TALB"]) or None) if tags else None
             album_artist = (_get_first(tags, ["TPE2"]) or None) if tags else None
             track_num = _parse_int(_get_first(tags, ["TRCK"])) if tags else 0
             disc_num = _parse_int(_get_first(tags, ["TPOS"]), 1) if tags else 1
@@ -292,8 +292,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
         else:
             # Generic fallback
             title = _get_first(tags, ["title", "TIT2", "\xa9nam"], path.stem)
-            artist = _get_first(tags, ["artist", "TPE1", "\xa9ART"], "Unknown Artist")
-            album = _get_first(tags, ["album", "TALB", "\xa9alb"], "Unknown Album")
+            artist = _get_first(tags, ["artist", "TPE1", "\xa9ART"]) or None
+            album = _get_first(tags, ["album", "TALB", "\xa9alb"]) or None
             album_artist = _get_first(tags, ["albumartist", "TPE2", "aART"]) or None
             track_num = _parse_int(_get_first(tags, ["tracknumber", "TRCK"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber", "TPOS"]), 1)
@@ -337,9 +337,9 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             bpm_value = None
 
         return TrackMetadata(
-            title=str(title),
-            artist=str(artist),
-            album=str(album),
+            title=str(title) if title else "",
+            artist=str(artist) if artist else None,
+            album=str(album) if album else None,
             album_artist=str(album_artist) if album_artist else None,
             track_number=track_num,
             disc_number=disc_num,
