@@ -51,9 +51,11 @@ if not errorlevel 1 (
 
 REM ---------------------------------------------------------------------------
 REM Browser auto-open: poll /api/v1/system/health, open browser when ready.
-REM Runs in a sibling cmd so it doesn't block the server in this window.
+REM Runs in a sibling helper script so we don't have to escape && / || / ()
+REM through a `cmd /c "..."` quoted string — that escaping breaks on French
+REM Windows locales with the cryptic 'may était inattendu' error.
 REM ---------------------------------------------------------------------------
-start "" /B cmd /c "for /L %%i in (1,1,30) do (curl -s --max-time 1 http://localhost:8888/api/v1/system/health >nul 2>&1 && (start http://localhost:8888 ^&^& exit) || ping -n 2 127.0.0.1 >nul)"
+start "" /B "%~dp0_open_browser_when_ready.bat"
 
 REM ---------------------------------------------------------------------------
 REM Run the server with watchdog. On crash (non-zero exit), auto-restart up

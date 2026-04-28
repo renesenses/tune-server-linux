@@ -122,6 +122,7 @@ jobs:
           Copy-Item "$($binDir.FullName)/ffprobe.exe" "dist/tune-server/ffprobe.exe"
           # Ship the versioned launcher (pre-flight checks + crash UX)
           Copy-Item "scripts/start-tune-server.bat" "dist/tune-server/start-tune-server.bat"
+          Copy-Item "scripts/_open_browser_when_ready.bat" "dist/tune-server/_open_browser_when_ready.bat"
 
       - name: Package (Linux)
         if: matrix.platform == 'linux'

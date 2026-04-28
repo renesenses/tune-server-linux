@@ -2,6 +2,20 @@
 
 All notable changes to Tune Server.
 
+## v0.7.43 — 2026-04-28
+
+### Fixed
+
+- **start-tune-server.bat crashed on French Windows with
+  'may était inattendu'**. The browser-auto-open helper was
+  inlined as a single `start "" /B cmd /c "for /L ... && ... ||
+  ..."` line. The doubled escapes (`^&^&`, `^||`) parsed
+  inconsistently across locales — fine on en-US, broken on fr-FR
+  — and the launcher exited before tune-server.exe even started.
+  Moved the polling+open logic to a sibling script
+  `_open_browser_when_ready.bat`. No more escape gymnastics.
+  (Reported by Jacques after his first .bat-based update bootstrap.)
+
 ## v0.7.42 — 2026-04-28
 
 ### Fixed
