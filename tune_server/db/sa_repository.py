@@ -157,36 +157,53 @@ class SAArtistRepo:
         )
         return _row_to_artist(row) if row else None
 
-    async def list(self, limit: int = 100, offset: int = 0) -> list[Artist]:
+    @staticmethod
+    def _principal_only_clause():
+        """Filter: artist must own ≥1 album or be the primary artist on ≥1 track.
+
+        Excludes 'credit-only' artists — composers/performers/conductors
+        populated from track_credits without their own albums or tracks.
+        Without this, the Artists grid is polluted by hundreds of
+        collaborators (e.g. a Bach cantata's track credits create dozens
+        of vocalist entries that have no other content in the library).
+        """
+        return sa.or_(
+            sa.select(albums.c.id).where(albums.c.artist_id == artists.c.id).exists(),
+            sa.select(tracks.c.id).where(tracks.c.artist_id == artists.c.id).exists(),
+        )
+
+    async def list(self, limit: int = 100, offset: int = 0, principal_only: bool = True) -> list[Artist]:
+        stmt = sa.select(artists)
+        if principal_only:
+            stmt = stmt.where(self._principal_only_clause())
         rows = await self._db.sa_fetchall(
-            sa.select(artists)
-            .order_by(artists.c.sort_name, artists.c.name)
-            .limit(limit).offset(offset)
+            stmt.order_by(artists.c.sort_name, artists.c.name)
+                .limit(limit).offset(offset)
         )
         return [_row_to_artist(r) for r in rows]
 
-    async def count(self) -> int:
-        row = await self._db.sa_fetchone(
-            sa.select(sa.func.count()).select_from(artists)
-        )
+    async def count(self, principal_only: bool = True) -> int:
+        stmt = sa.select(sa.func.count()).select_from(artists)
+        if principal_only:
+            stmt = stmt.where(self._principal_only_clause())
+        row = await self._db.sa_fetchone(stmt)
         return row[0] if row else 0
 
-    async def list_initial_letters(self) -> list[tuple[str, int]]:
+    async def list_initial_letters(self, principal_only: bool = True) -> list[tuple[str, int]]:
         letter = sa.case(
             (sa.func.upper(sa.func.substr(sa.func.coalesce(artists.c.sort_name, artists.c.name), 1, 1))
              .between("A", "Z"),
              sa.func.upper(sa.func.substr(sa.func.coalesce(artists.c.sort_name, artists.c.name), 1, 1))),
             else_="#",
         ).label("letter")
-        stmt = (
-            sa.select(letter, sa.func.count().label("cnt"))
-            .group_by(letter)
-            .order_by(letter)
-        )
+        stmt = sa.select(letter, sa.func.count().label("cnt"))
+        if principal_only:
+            stmt = stmt.where(self._principal_only_clause())
+        stmt = stmt.group_by(letter).order_by(letter)
         rows = await self._db.sa_fetchall(stmt)
         return [(r["letter"], r["cnt"]) for r in rows]
 
-    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0) -> list[Artist]:
+    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0, principal_only: bool = True) -> list[Artist]:
         first_char = sa.func.upper(sa.func.substr(
             sa.func.coalesce(artists.c.sort_name, artists.c.name), 1, 1
         ))
@@ -194,6 +211,8 @@ class SAArtistRepo:
             where = ~first_char.between("A", "Z")
         else:
             where = first_char == letter.upper()
+        if principal_only:
+            where = sa.and_(where, self._principal_only_clause())
         rows = await self._db.sa_fetchall(
             sa.select(artists).where(where)
             .order_by(artists.c.sort_name, artists.c.name)

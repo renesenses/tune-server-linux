@@ -215,8 +215,18 @@ async def get_album_rating(album_id: int, profile_id: int | None = None):
 
 
 @router.get("/artists", response_model=list[Artist])
-async def list_artists(limit: int = Query(100, le=5000), offset: int = Query(0, ge=0)):
-    return await deps.artist_repo.list(limit=limit, offset=offset)
+async def list_artists(
+    limit: int = Query(100, le=5000),
+    offset: int = Query(0, ge=0),
+    include_credits_only: bool = Query(
+        False,
+        description="Include credit-only artists (composers/performers populated from track tags but with no own album/track).",
+    ),
+):
+    return await deps.artist_repo.list(
+        limit=limit, offset=offset,
+        principal_only=not include_credits_only,
+    )
 
 
 @router.post("/artists", response_model=Artist, status_code=201)
