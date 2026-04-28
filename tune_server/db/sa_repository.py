@@ -172,7 +172,7 @@ class SAArtistRepo:
             sa.select(tracks.c.id).where(tracks.c.artist_id == artists.c.id).exists(),
         )
 
-    async def list(self, limit: int = 100, offset: int = 0, principal_only: bool = True) -> list[Artist]:
+    async def list(self, limit: int = 100, offset: int = 0, principal_only: bool = False) -> list[Artist]:
         stmt = sa.select(artists)
         if principal_only:
             stmt = stmt.where(self._principal_only_clause())
@@ -182,14 +182,14 @@ class SAArtistRepo:
         )
         return [_row_to_artist(r) for r in rows]
 
-    async def count(self, principal_only: bool = True) -> int:
+    async def count(self, principal_only: bool = False) -> int:
         stmt = sa.select(sa.func.count()).select_from(artists)
         if principal_only:
             stmt = stmt.where(self._principal_only_clause())
         row = await self._db.sa_fetchone(stmt)
         return row[0] if row else 0
 
-    async def list_initial_letters(self, principal_only: bool = True) -> list[tuple[str, int]]:
+    async def list_initial_letters(self, principal_only: bool = False) -> list[tuple[str, int]]:
         letter = sa.case(
             (sa.func.upper(sa.func.substr(sa.func.coalesce(artists.c.sort_name, artists.c.name), 1, 1))
              .between("A", "Z"),
@@ -203,7 +203,7 @@ class SAArtistRepo:
         rows = await self._db.sa_fetchall(stmt)
         return [(r["letter"], r["cnt"]) for r in rows]
 
-    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0, principal_only: bool = True) -> list[Artist]:
+    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0, principal_only: bool = False) -> list[Artist]:
         first_char = sa.func.upper(sa.func.substr(
             sa.func.coalesce(artists.c.sort_name, artists.c.name), 1, 1
         ))

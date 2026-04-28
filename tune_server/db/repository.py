@@ -114,7 +114,7 @@ class ArtistRepo:
         "OR EXISTS (SELECT 1 FROM tracks WHERE artist_id = artists.id))"
     )
 
-    async def list(self, limit: int = 100, offset: int = 0, principal_only: bool = True) -> list[Artist]:
+    async def list(self, limit: int = 100, offset: int = 0, principal_only: bool = False) -> list[Artist]:
         where = f"WHERE {self._PRINCIPAL_ONLY}" if principal_only else ""
         rows = await self._db.fetchall(
             f"SELECT * FROM artists {where} ORDER BY sort_name, name LIMIT ? OFFSET ?",
@@ -122,12 +122,12 @@ class ArtistRepo:
         )
         return [_row_to_artist(r) for r in rows]
 
-    async def count(self, principal_only: bool = True) -> int:
+    async def count(self, principal_only: bool = False) -> int:
         where = f"WHERE {self._PRINCIPAL_ONLY}" if principal_only else ""
         row = await self._db.fetchone(f"SELECT COUNT(*) as cnt FROM artists {where}")
         return row["cnt"]
 
-    async def list_initial_letters(self, principal_only: bool = True) -> list[tuple[str, int]]:
+    async def list_initial_letters(self, principal_only: bool = False) -> list[tuple[str, int]]:
         where = f"WHERE {self._PRINCIPAL_ONLY}" if principal_only else ""
         rows = await self._db.fetchall(
             f"""SELECT
@@ -138,7 +138,7 @@ class ArtistRepo:
         )
         return [(r["letter"], r["cnt"]) for r in rows]
 
-    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0, principal_only: bool = True) -> list[Artist]:
+    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0, principal_only: bool = False) -> list[Artist]:
         clauses = []
         params: list = []
         if letter == "#":
