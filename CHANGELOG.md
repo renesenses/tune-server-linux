@@ -2,6 +2,33 @@
 
 All notable changes to Tune Server.
 
+## v0.7.38 — 2026-04-28
+
+### Fixed (Windows stability)
+
+- **SQLite 500 errors under load**. The aiosqlite engine (used on
+  Windows) was missing `PRAGMA busy_timeout`, so concurrent scanner +
+  API + websocket access surfaced as `SQLITE_BUSY` → unhandled
+  exception → opaque 500. Added `busy_timeout=5000` to match the
+  SQLAlchemy engine.
+- **Opaque 500 responses**. Added a global FastAPI exception handler
+  that logs the failing path/method/error class and returns the
+  exception class + truncated message in the response body, so
+  testers can copy the exact text into a bug report instead of
+  pasting "Internal Server Error".
+- **SQLite query failures were silent in logs**. Wrapped engine
+  execute / executemany / fetchone / fetchall to log the failing
+  SQL on `aiosqlite.Error`.
+
+### Fixed (auto-update)
+
+- **Auto-update refused on source installs**. Release tarballs ship
+  a PyInstaller bundle; unpacking it on top of a git checkout
+  pollutes the repo and leaves the venv's `tune-server` package out
+  of sync. Detect source installs (non-frozen + `pyproject.toml` +
+  `.git`) and refuse the install with a clear hint to run
+  `git pull && pip install -e .` instead.
+
 ## v0.7.37 — 2026-04-27
 
 ### Fixes & UX (Spotify)
