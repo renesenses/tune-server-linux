@@ -139,7 +139,10 @@ CREATE TABLE IF NOT EXISTS zones (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     queue_json TEXT,
     muted BOOLEAN DEFAULT FALSE,
-    online BOOLEAN DEFAULT TRUE
+    online BOOLEAN DEFAULT TRUE,
+    -- Snapcast (v0.8.0) — populated when output_type = 'snapcast'.
+    snapcast_stream_name TEXT,
+    snapcast_client_ids TEXT  -- JSON-encoded list of snapclient UUIDs
 );
 
 CREATE TABLE IF NOT EXISTS play_queue (

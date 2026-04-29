@@ -88,6 +88,8 @@ class SnapcastManager:
         self._restart_pending: Optional[asyncio.Task] = None
         self._rpc_session: Optional[aiohttp.ClientSession] = None
         self._rpc_id: int = 0
+        self._zc: Any = None
+        self._zc_info: Any = None
 
     @property
     def is_supported(self) -> bool:
@@ -118,6 +120,7 @@ class SnapcastManager:
         # `list_clients()`.
         self._rpc_session = aiohttp.ClientSession()
         await self._refresh_clients()
+        await self._publish_mdns()
         logger.info(
             "snapcast_manager_started",
             binary=str(self.binary_path),
@@ -129,6 +132,7 @@ class SnapcastManager:
         if self._restart_pending is not None:
             self._restart_pending.cancel()
             self._restart_pending = None
+        await self._unpublish_mdns()
         if self._rpc_session is not None:
             await self._rpc_session.close()
             self._rpc_session = None
@@ -140,6 +144,51 @@ class SnapcastManager:
                 self._proc.kill()
                 await self._proc.wait()
         self._proc = None
+
+    # --- mDNS publish -------------------------------------------------
+
+    async def _publish_mdns(self) -> None:
+        """Advertise this snapserver over `_snapcast._tcp.local.` so
+        snapclients on the LAN can auto-discover us. Best-effort —
+        zeroconf failures don't block the manager from working
+        (clients can always be pointed manually at host:1704)."""
+        try:
+            from zeroconf.asyncio import AsyncServiceInfo, AsyncZeroconf
+        except ImportError:
+            logger.debug("snapcast_mdns_skip_no_zeroconf")
+            return
+        try:
+            import socket
+            hostname = socket.gethostname()
+            ip = socket.gethostbyname(hostname)
+            self._zc = AsyncZeroconf()
+            self._zc_info = AsyncServiceInfo(
+                type_="_snapcast._tcp.local.",
+                name=f"Tune Snapcast on {hostname}._snapcast._tcp.local.",
+                addresses=[socket.inet_aton(ip)],
+                port=SNAPSERVER_DEFAULT_AUDIO_PORT,
+                properties={"jsonrpc_port": str(self._http_port)},
+                server=f"{hostname}.local.",
+            )
+            await self._zc.async_register_service(self._zc_info)
+            logger.info(
+                "snapcast_mdns_published",
+                host=hostname, ip=ip, port=SNAPSERVER_DEFAULT_AUDIO_PORT,
+            )
+        except Exception as exc:
+            logger.debug("snapcast_mdns_publish_failed", error=repr(exc))
+
+    async def _unpublish_mdns(self) -> None:
+        if self._zc is None:
+            return
+        try:
+            if self._zc_info is not None:
+                await self._zc.async_unregister_service(self._zc_info)
+            await self._zc.async_close()
+        except Exception:
+            pass
+        self._zc = None
+        self._zc_info = None
 
     # --- config + process lifecycle -----------------------------------
 

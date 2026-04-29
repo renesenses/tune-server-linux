@@ -247,6 +247,14 @@ zones = sa.Table(
     sa.Column("queue_json", sa.Text),
     sa.Column("muted", sa.Boolean, server_default=sa.text("FALSE")),
     sa.Column("online", sa.Boolean, server_default=sa.text("TRUE")),
+    # Snapcast (v0.8.0) — populated only when `output_type = 'snapcast'`.
+    # `snapcast_stream_name` is the snapserver stream this zone owns
+    # (typ. "tune-zone-{id}"), `snapcast_client_ids` is a JSON array of
+    # snapclient UUIDs bound to this zone (multiple = stereo pair or
+    # multi-speaker single zone). Both NULL on legacy zones — SA
+    # reflection adds the columns on first start.
+    sa.Column("snapcast_stream_name", sa.Text),
+    sa.Column("snapcast_client_ids", sa.Text),  # JSON-encoded list[str]
 )
 
 # ---------------------------------------------------------------------------

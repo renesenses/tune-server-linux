@@ -113,7 +113,10 @@ CREATE TABLE IF NOT EXISTS zones (
     sync_delay_ms INTEGER DEFAULT 0,
     stereo_pair_id TEXT,
     stereo_channel TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Snapcast (v0.8.0) — populated when output_type = 'snapcast'.
+    snapcast_stream_name TEXT,
+    snapcast_client_ids TEXT  -- JSON-encoded list of snapclient UUIDs
 );
 
 CREATE TABLE IF NOT EXISTS play_queue (

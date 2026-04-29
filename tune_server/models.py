@@ -163,6 +163,12 @@ class Zone(BaseModel):
     signal_path: SignalPath | None = None
     stereo_pair_id: str | None = None
     stereo_channel: str | None = None  # "left" or "right"
+    # Snapcast (v0.8.0) — set only when output_type == OutputType.SNAPCAST.
+    # `snapcast_stream_name` is the snapserver stream this zone owns
+    # ("tune-zone-{id}"); `snapcast_client_ids` is the list of snapclient
+    # UUIDs bound to it (multiple = multi-speaker single zone).
+    snapcast_stream_name: str | None = None
+    snapcast_client_ids: list[str] = Field(default_factory=list)
 
 
 class ZoneGroupModel(BaseModel):
