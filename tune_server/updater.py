@@ -266,8 +266,8 @@ class UpdateChecker:
 
             return info
 
-        except Exception:
-            logger.debug("update_check_error")
+        except Exception as exc:
+            logger.warning("update_check_error", error=repr(exc), error_type=type(exc).__name__)
             return None
 
     async def download_and_install(self) -> bool:

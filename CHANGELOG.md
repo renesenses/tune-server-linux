@@ -2,6 +2,28 @@
 
 All notable changes to Tune Server.
 
+## v0.7.45 — 2026-04-29
+
+### Fixed (PyInstaller bundle TLS)
+
+- **Update check (and every other HTTPS call from `aiohttp`) failed
+  silently in PyInstaller bundles** because the bundle's Python
+  couldn't locate the OS CA store. The result on macOS DMG: a
+  v0.7.43 install would forever say "à jour" even when v0.7.44 was
+  available. `tune_server/__main__.py` now points `SSL_CERT_FILE`
+  and `REQUESTS_CA_BUNDLE` at the bundled `certifi` cert bundle on
+  every frozen launch, before any TLS happens. Also raised the
+  silent `update_check_error` from `logger.debug` to
+  `logger.warning` so future failures show up at the default INFO
+  level instead of needing DEBUG.
+
+### Added (UX)
+
+- **Red "MAJ" badge next to the Settings nav item** when an update
+  is available — both in the desktop sidebar and the mobile "more"
+  drawer. The web client polls `/system/update/check` at startup
+  and every 30 min.
+
 ## v0.7.44 — 2026-04-28
 
 ### Fixed (Linux installer, binary mode)

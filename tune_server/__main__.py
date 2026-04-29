@@ -7,6 +7,28 @@ import sys
 from pathlib import Path
 
 
+def _ensure_ssl_certs() -> None:
+    """Point SSL stack at the bundled certifi CA store.
+
+    Inside a PyInstaller bundle, aiohttp's default SSL context can't
+    find OS-level CA roots and silently fails every HTTPS request
+    (update check, MusicBrainz, Last.fm, Tidal, etc.). Setting
+    SSL_CERT_FILE / REQUESTS_CA_BUNDLE before any TLS happens routes
+    every library through certifi's bundled bundle. (Diagnosed on
+    macOS DMG v0.7.43: /update/check returned null with no log
+    visible at INFO level.)
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        import certifi
+        ca = certifi.where()
+        os.environ.setdefault("SSL_CERT_FILE", ca)
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", ca)
+    except Exception:
+        pass
+
+
 def _ensure_data_dir() -> None:
     """Ensure user data directory exists and chdir to it.
 
@@ -67,6 +89,7 @@ def _fix_noconsole_streams() -> None:
 
 def main() -> None:
     _fix_noconsole_streams()
+    _ensure_ssl_certs()
     _ensure_data_dir()
 
     # Handle subcommands
