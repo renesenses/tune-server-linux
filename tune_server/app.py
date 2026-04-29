@@ -435,6 +435,15 @@ class TuneServer:
         if self._sonos_manager is not None:
             await self._sonos_manager.start()
 
+        # v0.8.0 multi-room: hand the runtime managers to GroupManager so
+        # CompositeGroup can drive native sync (SoCo / Snapcast) when a
+        # ZoneGroup is formed. Safe to call even when one or both
+        # managers are None — GroupManager guards the lookups.
+        self._group_manager.set_runtime_managers(
+            snapcast_manager=self._snapcast_manager,
+            sonos_manager=self._sonos_manager,
+        )
+
         # Filesystem watcher
         if settings.watch_filesystem:
             self._watcher = FileSystemWatcher(
