@@ -202,6 +202,7 @@ class TuneServer:
         self._mount_manager = None
         self._ws_manager = None
         self._snapcast_manager = None  # set in start() when snapcast is enabled
+        self._sonos_manager = None     # set in start() — SoCo native grouping
         self._scan_task: asyncio.Task | None = None
         self._server_ip = get_local_ip()
 
@@ -275,6 +276,13 @@ class TuneServer:
             runtime_dir=snapcast_runtime,
             binary=snapcast_binary,
         ) if settings.snapcast_enabled else None
+
+        # Sonos manager — SoCo wrapper. is_supported = True iff the soco
+        # package is importable; the manager itself is cross-platform.
+        # No config gating yet — Sonos discovery is a no-op when there
+        # are no S2 speakers on the LAN.
+        from tune_server.zones.sonos_manager import SonosManager
+        self._sonos_manager = SonosManager()
 
         # HTTP audio streamer for DLNA
         self._http_streamer = HttpAudioStreamer(
@@ -396,6 +404,7 @@ class TuneServer:
         )
         deps.spotify_connect = self._spotify_connect
         deps.snapcast_manager = self._snapcast_manager
+        deps.sonos_manager = self._sonos_manager
         if settings.spotify_connect_enabled and settings.spotify_connect_zone_id is not None:
             try:
                 await self._spotify_connect.enable(
@@ -419,6 +428,12 @@ class TuneServer:
         # Start Snapcast manager (no-op on unsupported platforms / missing binary).
         if self._snapcast_manager is not None:
             await self._snapcast_manager.start()
+
+        # Start Sonos manager (no-op when soco isn't installed or no
+        # speakers on the LAN). Discovery happens here once at boot —
+        # the REST endpoint `POST /sonos/discover` re-scans on demand.
+        if self._sonos_manager is not None:
+            await self._sonos_manager.start()
 
         # Filesystem watcher
         if settings.watch_filesystem:
@@ -590,6 +605,21 @@ class TuneServer:
                 OutputType.SNAPCAST, create_snapcast_output,
             )
 
+        # Sonos factory — device_id here is the speaker UID (RINCON_xxx).
+        # Native Sonos grouping is the SonosManager's job; this output
+        # just controls one coordinator/speaker. No platform gating —
+        # SoCo is pure Python.
+        if self._sonos_manager is not None and self._sonos_manager.is_supported:
+            async def create_sonos_output(device_id: str | None):
+                from tune_server.outputs.sonos import SonosOutput
+                if not device_id:
+                    logger.warning("sonos_factory_missing_device_id")
+                    return None
+                return SonosOutput(self._sonos_manager, speaker_uid=device_id)
+            self._zone_manager.register_output_factory(
+                OutputType.SONOS, create_sonos_output,
+            )
+
     def _setup_playback_history(self, history_repo) -> None:
         """Record each played track in playback_history via EventBus."""
         async def _on_track_changed(event: Event):
@@ -754,6 +784,9 @@ class TuneServer:
 
         if self._snapcast_manager is not None:
             await self._safe_stop("snapcast", self._snapcast_manager.stop())
+
+        if self._sonos_manager is not None:
+            await self._safe_stop("sonos", self._sonos_manager.stop())
 
         if self._ws_manager:
             await self._safe_stop("ws_manager", self._ws_manager.stop())

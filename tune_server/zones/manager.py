@@ -325,6 +325,10 @@ class ZoneManager:
             logger.warning("snapcast_factory_unavailable_on_this_host")
             return None
 
+        if output_type == OutputType.SONOS:
+            logger.warning("sonos_factory_unavailable (soco missing or no speakers)")
+            return None
+
         logger.warning("no_output_factory", type=output_type)
         return None
 

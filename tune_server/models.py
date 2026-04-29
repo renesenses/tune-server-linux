@@ -51,6 +51,11 @@ class OutputType(str, Enum):
     # network sync across endpoints (PCs, phones, RPi). Linux+macOS server
     # only — Windows host falls back to DLNA/AirPlay (factory hidden).
     SNAPCAST = "snapcast"
+    # Sonos: native S2 grouping via SoCo, sample-accurate sync inside the
+    # Sonos household. Cross-platform server. Pair-bridge to Snapcast via
+    # CompositeGroup with one calibrated inter-techno offset
+    # (see tune_server.zones.composite_group, v0.8.0).
+    SONOS = "sonos"
 
 
 # --- Domain models ---

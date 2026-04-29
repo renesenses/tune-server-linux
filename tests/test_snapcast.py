@@ -270,3 +270,143 @@ async def test_output_close_releases_fifo(tmp_path):
     out._fifo_fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
     await out.close()
     assert out._fifo_fd is None
+
+
+# ---------------------------------------------------------------------------
+# REST: /snapcast/clients/{id}/assign — POST + DELETE
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_assign_endpoint_persists_and_calls_rpc():
+    """POST /snapcast/clients/{id}/assign should append the UUID to
+    Zone.snapcast_client_ids and route the snapcast group via JSON-RPC."""
+    from tune_server.api.deps import deps
+    from tune_server.api.routes.snapcast import (
+        AssignClientRequest, assign_client,
+    )
+
+    mgr = MagicMock()
+    mgr.is_supported = True
+    mgr.set_clients_for_stream = AsyncMock()
+
+    zone_repo = MagicMock()
+    zone_repo.get = AsyncMock(return_value={
+        "id": 7, "name": "Living Room", "output_type": "snapcast",
+        "snapcast_client_ids": None,  # legacy: no clients yet
+        "snapcast_stream_name": None,
+    })
+    zone_repo.update = AsyncMock()
+
+    original_mgr = deps.snapcast_manager
+    original_repo = deps.zone_repo
+    deps.snapcast_manager = mgr
+    deps.zone_repo = zone_repo
+    try:
+        result = await assign_client(
+            client_id="uuid-A", body=AssignClientRequest(zone_id=7),
+        )
+    finally:
+        deps.snapcast_manager = original_mgr
+        deps.zone_repo = original_repo
+
+    assert result["client_ids"] == ["uuid-A"]
+    assert result["stream_name"] == "tune-zone-7"
+    zone_repo.update.assert_awaited_once()
+    update_kwargs = zone_repo.update.await_args.kwargs
+    import json as _json
+    assert _json.loads(update_kwargs["snapcast_client_ids"]) == ["uuid-A"]
+    mgr.set_clients_for_stream.assert_awaited_once_with("tune-zone-7", ["uuid-A"])
+
+
+@pytest.mark.asyncio
+async def test_assign_endpoint_appends_to_existing_clients():
+    """Assigning a second client should append, not replace."""
+    from tune_server.api.deps import deps
+    from tune_server.api.routes.snapcast import (
+        AssignClientRequest, assign_client,
+    )
+
+    mgr = MagicMock()
+    mgr.is_supported = True
+    mgr.set_clients_for_stream = AsyncMock()
+
+    zone_repo = MagicMock()
+    zone_repo.get = AsyncMock(return_value={
+        "id": 7, "output_type": "snapcast",
+        "snapcast_client_ids": '["uuid-A"]',
+        "snapcast_stream_name": "tune-zone-7",
+    })
+    zone_repo.update = AsyncMock()
+
+    original_mgr, original_repo = deps.snapcast_manager, deps.zone_repo
+    deps.snapcast_manager, deps.zone_repo = mgr, zone_repo
+    try:
+        result = await assign_client(
+            client_id="uuid-B", body=AssignClientRequest(zone_id=7),
+        )
+    finally:
+        deps.snapcast_manager, deps.zone_repo = original_mgr, original_repo
+
+    assert result["client_ids"] == ["uuid-A", "uuid-B"]
+
+
+@pytest.mark.asyncio
+async def test_assign_endpoint_rejects_non_snapcast_zone():
+    from fastapi import HTTPException
+    from tune_server.api.deps import deps
+    from tune_server.api.routes.snapcast import (
+        AssignClientRequest, assign_client,
+    )
+
+    mgr = MagicMock()
+    mgr.is_supported = True
+
+    zone_repo = MagicMock()
+    zone_repo.get = AsyncMock(return_value={
+        "id": 7, "output_type": "dlna",  # wrong type
+    })
+
+    original_mgr, original_repo = deps.snapcast_manager, deps.zone_repo
+    deps.snapcast_manager, deps.zone_repo = mgr, zone_repo
+    try:
+        with pytest.raises(HTTPException) as ei:
+            await assign_client(
+                client_id="uuid-X", body=AssignClientRequest(zone_id=7),
+            )
+        assert ei.value.status_code == 400
+        assert "not_snapcast" in ei.value.detail
+    finally:
+        deps.snapcast_manager, deps.zone_repo = original_mgr, original_repo
+
+
+@pytest.mark.asyncio
+async def test_unassign_endpoint_removes_client():
+    from tune_server.api.deps import deps
+    from tune_server.api.routes.snapcast import (
+        AssignClientRequest, unassign_client,
+    )
+
+    mgr = MagicMock()
+    mgr.is_supported = True
+    mgr.set_clients_for_stream = AsyncMock()
+
+    zone_repo = MagicMock()
+    zone_repo.get = AsyncMock(return_value={
+        "id": 7, "output_type": "snapcast",
+        "snapcast_client_ids": '["uuid-A", "uuid-B"]',
+        "snapcast_stream_name": "tune-zone-7",
+    })
+    zone_repo.update = AsyncMock()
+
+    original_mgr, original_repo = deps.snapcast_manager, deps.zone_repo
+    deps.snapcast_manager, deps.zone_repo = mgr, zone_repo
+    try:
+        result = await unassign_client(
+            client_id="uuid-A", body=AssignClientRequest(zone_id=7),
+        )
+    finally:
+        deps.snapcast_manager, deps.zone_repo = original_mgr, original_repo
+
+    assert result["client_ids"] == ["uuid-B"]
+    mgr.set_clients_for_stream.assert_awaited_once_with("tune-zone-7", ["uuid-B"])

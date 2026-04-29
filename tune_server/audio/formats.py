@@ -47,6 +47,17 @@ SNAPCAST_CAPABILITIES = AudioCapabilities(
     supports_gapless=False,  # ~500 ms gap on stream restart, see SnapcastManager
 )
 
+# Sonos: native S2 speakers accept FLAC/MP3/AAC over HTTP and pull from
+# the URL we hand them. Sample-accurate native group sync, no gapless on
+# stream change (Sonos buffers ~200 ms — short cross-fade is fine for
+# music). Driven via SoCo's RinconAVTransport.
+SONOS_CAPABILITIES = AudioCapabilities(
+    formats={AudioFormat.FLAC, AudioFormat.MP3, AudioFormat.AAC, AudioFormat.WAV},
+    max_sample_rate=48000,  # S2 native ceiling
+    max_bit_depth=24,
+    supports_gapless=False,  # SetAVTransportURI on next track suffices
+)
+
 
 def format_from_extension(ext: str) -> AudioFormat | None:
     ext = ext.lower().lstrip(".")

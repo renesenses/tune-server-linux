@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from tune_server.zones.group import GroupManager
     from tune_server.zones.manager import ZoneManager
     from tune_server.zones.snapcast_manager import SnapcastManager
+    from tune_server.zones.sonos_manager import SonosManager
 
 
 class AppDeps:
@@ -39,6 +40,7 @@ class AppDeps:
         self.artist_enrichment: ArtistEnrichmentClient | None = None
         self.spotify_connect: SpotifyConnectManager | None = None
         self.snapcast_manager: SnapcastManager | None = None
+        self.sonos_manager: SonosManager | None = None
 
         # Repos (set after DB init)
         self.track_repo: TrackRepo | None = None
