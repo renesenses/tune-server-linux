@@ -375,6 +375,19 @@ class TuneServer:
             self._event_bus, zone_manager=self._zone_manager,
         )
         deps.spotify_connect = self._spotify_connect
+
+        # v0.8.0 — seed default Smart Collections on first start. Idempotent
+        # (skip names that already exist), so it's safe to call on every
+        # boot. Users who delete a default keep it deleted across restarts.
+        try:
+            from tune_server.library.smart_collection import (
+                SmartCollectionRepo, seed_default_collections,
+            )
+            inserted = await seed_default_collections(SmartCollectionRepo(self._db))
+            if inserted > 0:
+                logger.info("smart_collections_seeded", count=inserted)
+        except Exception:
+            logger.exception("smart_collections_seed_failed")
         if settings.spotify_connect_enabled and settings.spotify_connect_zone_id is not None:
             try:
                 await self._spotify_connect.enable(

@@ -759,3 +759,33 @@ playback_history = sa.Table(
     sa.Index("idx_playback_history_source_played", sa.text("source, played_at DESC")),
 )
 
+
+
+# ---------------------------------------------------------------------------
+# smart_collections — auto-rule-based album collections (v0.8.0 POC).
+# Sister of `smart_playlists` but at album scope: a Smart Collection is
+# a saved set of rules over the `albums` table (+ join-driven rules
+# over `track_credits` for "engineered by Rudy Van Gelder" etc.).
+# Rules stored as JSON text — same shape as smart_playlists.rules so
+# the front-end builder UI can be reused. No materialisation table:
+# membership is recomputed per GET via SQL compiled from rules,
+# cached in-process for 30 s and invalidated on `library.scan_completed`
+# / `playback.track_completed` events.
+# ---------------------------------------------------------------------------
+smart_collections = sa.Table(
+    "smart_collections",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text),
+    sa.Column("icon", sa.Text, server_default="folder"),
+    sa.Column("color", sa.Text, server_default="#6366f1"),
+    sa.Column("rules", sa.Text, nullable=False),  # JSON: list[Rule]
+    sa.Column("match_mode", sa.Text, server_default="all"),  # 'all' | 'any'
+    sa.Column("sort_by", sa.Text, server_default="added_at"),
+    sa.Column("sort_order", sa.Text, server_default="desc"),
+    sa.Column("max_albums", sa.Integer, server_default="500"),
+    sa.Column("auto_refresh", sa.Integer, server_default="1"),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
+)

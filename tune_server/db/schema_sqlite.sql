@@ -357,3 +357,22 @@ CREATE TABLE IF NOT EXISTS zone_audio_profiles (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(zone_id, name)
 );
+
+-- v0.8.0: Smart Collections — auto-rule-based album collections.
+-- Rules stored as JSON text. Membership is computed lazily, never
+-- materialised — see tune_server.library.smart_collection.
+CREATE TABLE IF NOT EXISTS smart_collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    icon TEXT DEFAULT 'folder',
+    color TEXT DEFAULT '#6366f1',
+    rules TEXT NOT NULL,
+    match_mode TEXT DEFAULT 'all',
+    sort_by TEXT DEFAULT 'added_at',
+    sort_order TEXT DEFAULT 'desc',
+    max_albums INTEGER DEFAULT 500,
+    auto_refresh INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
