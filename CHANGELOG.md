@@ -2,6 +2,23 @@
 
 All notable changes to Tune Server.
 
+## v0.7.49 — 2026-04-29
+
+### Fixed (Gatekeeper half-circle on .app)
+
+- **CI now notarizes + staples the `.app` bundle individually**
+  before wrapping it in the DMG. Previously only the DMG was
+  notarized — when users drag-installed Tune Server.app to
+  /Applications, the inner bundle had no offline-verifiable
+  ticket, Gatekeeper had to phone home on every launch, and
+  Finder showed a half-circle "verification pending" badge until
+  the online check completed (often persisting through a
+  reboot). New step uses `ditto -c -k` to zip the .app, submits
+  to notarytool, then `xcrun stapler staple` on the .app
+  directory itself. The DMG-level staple is kept as a belt-and-
+  suspenders bonus. Reported repeatedly by JP + bertrand on
+  v0.7.46 and v0.7.47 installs.
+
 ## v0.7.48 — 2026-04-29
 
 ### Added (macOS menubar update notice)

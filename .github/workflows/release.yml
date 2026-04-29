@@ -355,6 +355,40 @@ jobs:
           echo "--- Verifying .app bundle signature ---"
           codesign --verify --verbose=2 "${APP_DIR}"
 
+      - name: Notarize + staple .app bundle (macOS)
+        if: matrix.platform == 'macos' && env.AC_API_KEY_BASE64 != ''
+        # Notarizing only the DMG isn't enough — when users drag the
+        # .app to /Applications, the inner bundle has no stapled ticket
+        # and Gatekeeper has to phone home to verify on every launch.
+        # When that online check is slow or flaky, Finder shows a
+        # half-circle "verification pending" badge on the .app even
+        # though it runs fine. Notarize + staple the .app *before*
+        # wrapping it in the DMG so the bundle ships with its own
+        # offline-verifiable ticket.
+        continue-on-error: true
+        env:
+          AC_API_KEY_BASE64: ${{ secrets.AC_API_KEY_BASE64 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$AC_API_KEY_BASE64" | base64 -d > "/tmp/AuthKey_${AC_API_KEY_ID}.p8"
+
+          APP_ZIP="${APP_DIR}.zip"
+          /usr/bin/ditto -c -k --keepParent "${APP_DIR}" "${APP_ZIP}"
+
+          echo "Submitting .app bundle to Apple notary service..."
+          xcrun notarytool submit "${APP_ZIP}" \
+            --key "/tmp/AuthKey_${AC_API_KEY_ID}.p8" \
+            --key-id "${AC_API_KEY_ID}" \
+            --issuer "${AC_API_ISSUER_ID}" \
+            --wait --timeout 30m
+
+          echo "Stapling notarization ticket to .app..."
+          xcrun stapler staple "${APP_DIR}"
+          xcrun stapler validate "${APP_DIR}"
+          rm -f "${APP_ZIP}" "/tmp/AuthKey_${AC_API_KEY_ID}.p8"
+
       - name: Build DMG (macOS)
         if: matrix.platform == 'macos'
         run: |
