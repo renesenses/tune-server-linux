@@ -2,7 +2,7 @@
 
 A free, open-source multi-room music server for audiophiles. Manage your local library and streaming services (Tidal, Qobuz, YouTube Music) from a single interface. Stream to any DLNA/UPnP renderer, AirPlay device, or local soundcard.
 
-Available on **Linux**, **macOS** (Homebrew), **Windows**, **iPadOS/iOS** (native Swift), and **Flutter** (cross-platform).
+Available on **Linux**, **macOS** (signed `.dmg`), **Windows**, **iPadOS/iOS** (native Swift), and **Flutter** (cross-platform).
 
 ## Features
 
@@ -101,7 +101,7 @@ graph TD
 | Platform | Install | Notes |
 |----------|---------|-------|
 | **Linux** (Debian/Ubuntu) | `.deb` package, install script, pip, Docker | Primary platform |
-| **macOS** (ARM + Intel) | `brew install renesenses/tune/tune-server` | Homebrew tap |
+| **macOS** (ARM + Intel) | Drag `Tune Server.app` from the signed + notarized `.dmg` | Menubar wrapper, no Terminal |
 | **Windows** | Download `.exe` from GitHub Releases | Standalone PyInstaller bundle |
 | **iPadOS / iOS** | Native SwiftUI app (TestFlight) | Embedded server or Remote mode |
 | **Flutter** | iOS + Android | Cross-platform client |
@@ -144,15 +144,19 @@ TUNE_UPNP_SERVER_NAME="Tune Server"
 
 ## Installation
 
-### Option 1: Homebrew (macOS)
+### Option 1: macOS DMG (recommended for macOS)
 
-```bash
-brew tap renesenses/tune
-brew install tune-server
-brew services start tune-server
-```
+Download the signed and notarized `.dmg` from
+[mozaiklabs.fr/download](https://mozaiklabs.fr/download) or the
+[GitHub Releases](https://github.com/renesenses/tune-server-linux/releases) page.
 
-Open `http://localhost:8888`. Data is stored in `$(brew --prefix)/var/tune-server/`.
+1. Open the `.dmg` (double-click).
+2. Drag **Tune Server.app** to the **Applications** folder.
+3. Launch it from Launchpad — the 🎵 icon appears in the menu bar.
+4. Click **Ouvrir l'interface web** from the 🎵 menu (or open `http://localhost:8888`).
+
+The bundle ships its own Python runtime, FFmpeg, and the web client — no system
+dependencies. Data lives in `~/Library/Application Support/Tune Server/`.
 
 ### Option 2: Debian package (recommended for Linux production)
 
