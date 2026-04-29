@@ -31,6 +31,13 @@ class ZoneGroup:
         self._followers = list(followers)
         self._event_bus = event_bus
         self._last_play_time: float = 0
+        # v0.8.0 multi-room: composite + delay_repo set by GroupManager
+        # via `set_composite(...)` after the typed-group join. play()
+        # uses them to honor per-tech start offsets when the group
+        # mixes Snapcast/Sonos with other techs.
+        self._composite = None  # CompositeGroup | None
+        self._delay_repo = None  # GroupDelayRepo | None
+        self._manager_bag: dict = {}
 
     @property
     def group_id(self) -> str:
@@ -52,8 +59,33 @@ class ZoneGroup:
     def zone_ids(self) -> list[int]:
         return [z.zone_id for z in self.all_zones]
 
+    def set_composite(self, composite, delay_repo, manager_bag: dict) -> None:
+        """Attach the v0.8.0 CompositeGroup + GroupDelayRepo to this
+        group so play() can honor per-tech start offsets. Called by
+        GroupManager._activate_composite once the typed groups are
+        joined natively."""
+        self._composite = composite
+        self._delay_repo = delay_repo
+        self._manager_bag = manager_bag or {}
+
     async def play(self, tracks: list[Track], start_position: int = 0) -> None:
-        """Play on all zones in the group, waiting for DLNA to actually start."""
+        """Play on all zones in the group.
+
+        Three regimes since v0.8.0:
+          1. Mixed-techno composite group (Snapcast + Sonos + maybe
+             others): use CompositeGroup.start_playback() to compute
+             per-technology start offsets and schedule each tech's
+             zones with the right delay.
+          2. Network zones present (DLNA/AirPlay) but no composite:
+             keep the legacy "wait for renderer connection + cached
+             latency buffer" path.
+          3. All-local: kick everyone off immediately.
+        """
+        # Path 1: composite-aware multi-tech start.
+        if self._composite is not None and not self._composite.is_homogeneous:
+            await self._play_with_composite_offsets(tracks, start_position)
+            return
+
         network_zones = [z for z in self.all_zones if z.output_type in (OutputType.DLNA, OutputType.AIRPLAY)]
         local_zones = [z for z in self.all_zones if z not in network_zones]
 
@@ -100,6 +132,79 @@ class ZoneGroup:
             await zone.player.play(tracks=tracks, start_position=start_position)
 
         self._last_play_time = asyncio.get_running_loop().time()
+
+    async def _play_with_composite_offsets(
+        self, tracks: list[Track], start_position: int = 0,
+    ) -> None:
+        """Mixed-techno start path. Asks CompositeGroup for the
+        per-technology start offsets (calibrated via group_delays in
+        DB), then walks technologies in offset order — earliest first,
+        each subsequent tech sleeping the *delta* from the previous
+        offset (not the absolute, otherwise sleeps would stack
+        cumulatively).
+
+        Concrete example: two pairs are calibrated such that
+        Snapcast=0 ms and Sonos=120 ms. We start the Snapcast bucket
+        immediately, sleep 120 ms, then start the Sonos bucket. Sonos
+        speakers come out 120 ms after the Snapcast clients — which
+        is exactly the offset the user calibrated to compensate for
+        Sonos's slower buffer fill.
+        """
+        if self._composite is None or self._delay_repo is None:
+            # Defensive — set_composite() should have populated both.
+            for zone in self.all_zones:
+                await zone.player.play(tracks=tracks, start_position=start_position)
+            self._last_play_time = asyncio.get_running_loop().time()
+            return
+
+        zone_views = [
+            GroupManager._zone_view(z) for z in self.all_zones
+        ]
+        zones_by_id = {v.id: v for v in zone_views}
+        try:
+            offsets = await self._composite.start_playback(
+                manager_bag=self._manager_bag,
+                zones_by_id=zones_by_id,
+                delay_repo=self._delay_repo,
+            )
+        except Exception:
+            logger.exception(
+                "composite_start_playback_failed_falling_back",
+                group_id=self._group_id,
+            )
+            for zone in self.all_zones:
+                await zone.player.play(tracks=tracks, start_position=start_position)
+            self._last_play_time = asyncio.get_running_loop().time()
+            return
+
+        # Bucket zones by output_type, then walk in ascending offset.
+        zones_by_tech: dict = {}
+        for zone in self.all_zones:
+            zones_by_tech.setdefault(zone.output_type, []).append(zone)
+
+        ordered = sorted(offsets.items(), key=lambda kv: kv[1])
+        previous_offset_ms = 0
+        for tech, offset_ms in ordered:
+            delta_ms = max(0, offset_ms - previous_offset_ms)
+            if delta_ms > 0:
+                await asyncio.sleep(delta_ms / 1000.0)
+            for zone in zones_by_tech.get(tech, []):
+                try:
+                    await zone.player.play(
+                        tracks=tracks, start_position=start_position,
+                    )
+                except Exception:
+                    logger.exception(
+                        "composite_tech_play_failed",
+                        zone_id=zone.zone_id, tech=tech.value,
+                    )
+            previous_offset_ms = offset_ms
+        self._last_play_time = asyncio.get_running_loop().time()
+        logger.info(
+            "composite_play_started",
+            group_id=self._group_id,
+            offsets={t.value: ms for t, ms in offsets.items()},
+        )
 
     @staticmethod
     async def _measure_and_cache_latency(dlna_output) -> None:
@@ -178,13 +283,19 @@ class GroupManager:
         # never drags soco / snapserver-related deps in.
         self._snapcast_manager = None
         self._sonos_manager = None
+        self._db = None  # populated by set_runtime_managers; needed
+        # for GroupDelayRepo lookups during composite play().
         self._composite_groups: dict[str, "CompositeGroup"] = {}  # type: ignore[name-defined]
 
-    def set_runtime_managers(self, snapcast_manager=None, sonos_manager=None) -> None:
-        """Inject the typed-tech managers after construction. Safe to
-        call multiple times — subsequent calls overwrite."""
+    def set_runtime_managers(
+        self, snapcast_manager=None, sonos_manager=None, db=None,
+    ) -> None:
+        """Inject the typed-tech managers (and the DB handle for
+        GroupDelayRepo) after construction. Safe to call multiple
+        times — subsequent calls overwrite."""
         self._snapcast_manager = snapcast_manager
         self._sonos_manager = sonos_manager
+        self._db = db
 
     def get_group(self, group_id: str) -> ZoneGroup | None:
         return self._groups.get(group_id)
@@ -309,6 +420,13 @@ class GroupManager:
         for typed in composite.typed_groups:
             await typed.join(manager_bag, zones_by_id)
         self._composite_groups[group.group_id] = composite
+        # Attach to the ZoneGroup so play() can call
+        # CompositeGroup.start_playback() with the right delay_repo.
+        delay_repo = None
+        if self._db is not None:
+            from tune_server.zones.composite_group import GroupDelayRepo
+            delay_repo = GroupDelayRepo(self._db)
+        group.set_composite(composite, delay_repo, manager_bag)
         logger.info(
             "composite_group_activated",
             group_id=group.group_id,
