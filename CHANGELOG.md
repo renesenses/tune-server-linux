@@ -2,6 +2,17 @@
 
 All notable changes to Tune Server.
 
+## v0.7.47 — 2026-04-29
+
+### Added (macOS menubar)
+
+- **"Ouvrir Tune (app native)" menu entry** in the 🎵 menubar
+  wrapper, shown only when `/Applications/Tune.app` is installed
+  (i.e. on combo .pkg installs that ship both the SwiftUI client
+  and the Python server). Lets users launch the native client
+  without leaving the menubar. DMG-only installs hide the entry
+  to avoid a dead-end click.
+
 ## v0.7.46 — 2026-04-29
 
 ### Fixed (macOS .app bundle codesign integrity)

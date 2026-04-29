@@ -65,17 +65,29 @@ class TuneServerApp(rumps.App):
 
         self.status_item = rumps.MenuItem("Status: démarrage…")
         self.version_item = rumps.MenuItem(f"Tune Server v{VERSION}")
-        self.menu = [
+        # Native SwiftUI client — only meaningful when /Applications/Tune.app
+        # is also installed (the case for combo .pkg installs). For
+        # DMG-only installs (server alone) the entry would be a dead end,
+        # so we hide it and tell users it's a no-op.
+        self._tune_app_path = Path("/Applications/Tune.app")
+        menu_items: list = [
             self.version_item,
             self.status_item,
             None,
             rumps.MenuItem("Ouvrir l'interface web", callback=self.open_web_ui),
+        ]
+        if self._tune_app_path.is_dir():
+            menu_items.append(
+                rumps.MenuItem("Ouvrir Tune (app native)", callback=self.open_tune_app)
+            )
+        menu_items += [
             rumps.MenuItem("Voir les logs", callback=self.show_logs),
             None,
             rumps.MenuItem("Redémarrer le serveur", callback=self.restart_server),
             None,
             rumps.MenuItem("Quitter", callback=self.quit_app),
         ]
+        self.menu = menu_items
         self.version_item.set_callback(None)  # static
         self.status_item.set_callback(None)
 
@@ -157,6 +169,9 @@ class TuneServerApp(rumps.App):
 
     def open_web_ui(self, _sender) -> None:
         webbrowser.open("http://localhost:8888")
+
+    def open_tune_app(self, _sender) -> None:
+        subprocess.Popen(["/usr/bin/open", str(self._tune_app_path)])
 
     def show_logs(self, _sender) -> None:
         subprocess.Popen(["/usr/bin/open", "-a", "Console", str(_log_path())])
