@@ -214,3 +214,44 @@ async def list_groups():
             group_manufacturer=group_manufacturer,
         ))
     return result
+
+
+# v0.8.0 multi-room: per-pair inter-techno delays, calibrated once and
+# stored in `group_delays`. Replaces the per-zone `sync_delay_ms` of
+# legacy ZoneGroups (deprecated, removed in v0.9.0).
+
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+
+
+class GroupDelayRequest(_BaseModel):
+    tech_a: str
+    tech_b: str
+    delay_ms: int
+
+
+@router.get("/group-delays")
+async def list_group_delays() -> list[dict]:
+    """List all calibrated inter-technology delays."""
+    if deps.db is None:
+        raise HTTPException(status_code=503, detail="db_unavailable")
+    from tune_server.zones.composite_group import GroupDelayRepo
+    repo = GroupDelayRepo(deps.db)
+    return await repo.list_all()
+
+
+@router.put("/group-delays")
+async def set_group_delay(body: GroupDelayRequest) -> dict:
+    """Set the calibrated delay between two technologies.
+
+    The pair is canonicalised alphabetically, so PUTting (a, b) and
+    (b, a) hits the same row. delay_ms > 0 means the alphabetically
+    second technology is the late one (CompositeGroup will delay
+    starts on the early tech to compensate)."""
+    if deps.db is None:
+        raise HTTPException(status_code=503, detail="db_unavailable")
+    from tune_server.zones.composite_group import GroupDelayRepo
+    repo = GroupDelayRepo(deps.db)
+    await repo.set_delay_ms(body.tech_a, body.tech_b, body.delay_ms)
+    return {
+        "tech_a": body.tech_a, "tech_b": body.tech_b, "delay_ms": body.delay_ms,
+    }

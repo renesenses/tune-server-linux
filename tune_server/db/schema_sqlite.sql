@@ -127,6 +127,17 @@ CREATE TABLE IF NOT EXISTS play_queue (
     is_current INTEGER DEFAULT 0
 );
 
+-- v0.8.0 multi-room: one calibrated inter-techno offset per pair,
+-- canonical alphabetical ordering on (tech_a, tech_b).
+CREATE TABLE IF NOT EXISTS group_delays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tech_a TEXT NOT NULL,
+    tech_b TEXT NOT NULL,
+    delay_ms INTEGER NOT NULL DEFAULT 0,
+    calibrated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(tech_a, tech_b)
+);
+
 CREATE INDEX IF NOT EXISTS idx_play_queue_zone ON play_queue(zone_id, position);
 
 CREATE TABLE IF NOT EXISTS streaming_auth (

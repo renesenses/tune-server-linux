@@ -257,6 +257,26 @@ zones = sa.Table(
     sa.Column("snapcast_client_ids", sa.Text),  # JSON-encoded list[str]
 )
 
+
+# ---------------------------------------------------------------------------
+# group_delays — per techno-pair offset applied once at composite-group
+# playback start. Replaces per-zone `sync_delay_ms` which was calibrated
+# per-device, per-track (fragile, drifted). v0.8.0 multi-room refactor:
+# native sync inside each technology, single calibrated offset between
+# pairs of technologies. (a, b) and (b, a) are stored as one row with
+# canonical alphabetical ordering on tech_a < tech_b.
+# ---------------------------------------------------------------------------
+group_delays = sa.Table(
+    "group_delays",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("tech_a", sa.Text, nullable=False),  # OutputType value, e.g. "snapcast"
+    sa.Column("tech_b", sa.Text, nullable=False),  # OutputType value, e.g. "sonos"
+    sa.Column("delay_ms", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("calibrated_at", sa.DateTime, server_default=sa.func.now()),
+    sa.UniqueConstraint("tech_a", "tech_b", name="uq_group_delays_pair"),
+)
+
 # ---------------------------------------------------------------------------
 # play_queue
 # ---------------------------------------------------------------------------
