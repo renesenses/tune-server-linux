@@ -2,6 +2,22 @@
 
 All notable changes to Tune Server.
 
+## v0.7.46 — 2026-04-29
+
+### Fixed (macOS .app bundle codesign integrity)
+
+- **Server wrote `tune-server.log` inside the .app bundle on every
+  launch**, polluting `Contents/Resources/runtime/` and invalidating
+  the codesign seal. Gatekeeper then flagged the app as "unverified"
+  and Finder showed a half-circle "downloading/pending" badge on
+  Tune Server.app even though the app ran fine. `_resolve_log_path`
+  in `tune_server/app.py` now detects when the binary lives inside
+  a `.app/Contents/` path and routes the log to
+  `~/Library/Logs/Tune Server/tune-server.log` instead — which is
+  the macOS convention anyway. Existing v0.7.45 installs need a
+  fresh DMG drag-install to restore the seal (the in-app updater
+  can't fix this since it edits files in place).
+
 ## v0.7.45 — 2026-04-29
 
 ### Fixed (PyInstaller bundle TLS)

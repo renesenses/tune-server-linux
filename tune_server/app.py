@@ -107,8 +107,19 @@ def _resolve_log_path() -> "Path | None":
     from pathlib import Path
     candidates: list[Path] = []
     if getattr(sys, "frozen", False):
-        # PyInstaller bundle: log next to the running .exe / binary
-        candidates.append(Path(sys.executable).resolve().parent / "tune-server.log")
+        exe_dir = Path(sys.executable).resolve().parent
+        # macOS .app bundles: writing inside the bundle pollutes
+        # Contents/Resources/runtime/ and invalidates the codesign seal —
+        # Gatekeeper then shows a "unverified" half-circle badge on the
+        # app in Finder even though the app still runs. Route logs to
+        # ~/Library/Logs/Tune Server/ instead, which is the macOS
+        # convention anyway.
+        if sys.platform == "darwin" and ".app/Contents/" in str(exe_dir):
+            candidates.append(Path.home() / "Library" / "Logs" / "Tune Server" / "tune-server.log")
+        else:
+            # PyInstaller bundle (Windows .exe / Linux binary): log next
+            # to the running binary.
+            candidates.append(exe_dir / "tune-server.log")
     candidates.append(Path.home() / ".tune" / "tune-server.log")
     candidates.append(Path("tune-server.log"))
     for p in candidates:
