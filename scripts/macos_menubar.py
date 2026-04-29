@@ -131,6 +131,18 @@ class TuneServerApp(rumps.App):
 
         env = dict(os.environ)
         env["TUNE_VERSION"] = VERSION
+        # If the combo build bundled snapserver under
+        # Contents/Resources/snapcast/, point the server at it so users
+        # don't need `brew install snapcast` for v0.8.0 multi-room. The
+        # SnapcastManager auto-detects when this env var is unset on
+        # standalone DMG installs (snapserver path stays = brew/PATH).
+        # sys.executable = .../Tune Server.app/Contents/MacOS/Tune Server
+        # → bundle root = .../Tune Server.app/Contents
+        # → snapserver lives at Contents/Resources/snapcast/snapserver
+        bundle_root = Path(sys.executable).resolve().parent.parent
+        bundled_snapserver = bundle_root / "Resources" / "snapcast" / "snapserver"
+        if bundled_snapserver.is_file():
+            env.setdefault("TUNE_SNAPCAST_BINARY", str(bundled_snapserver))
         # Keep TUNE_DB_PATH in sync with cwd so the server's default DB lookup
         # also lands in the writable directory.
         env.setdefault("TUNE_DB_PATH", str(data_dir / "tune_server.db"))
