@@ -2,6 +2,19 @@
 
 All notable changes to Tune Server.
 
+## v0.7.48 — 2026-04-29
+
+### Added (macOS menubar update notice)
+
+- **🎵 menubar surfaces "Mise à jour disponible"** when the bundled
+  server's `/update/check` reports a newer release. The icon picks
+  up a 🔴 prefix, a clickable "⬆ Mise à jour disponible : v0.7.X"
+  entry appears at the top of the menu, and the click opens the
+  matching GitHub release page (the in-app updater can't safely
+  swap a signed `.app` in place — see v0.7.46). Initial check 45 s
+  after launch, then every 30 min. Same UX rhythm as the web
+  client's MAJ badge.
+
 ## v0.7.47 — 2026-04-29
 
 ### Added (macOS menubar)

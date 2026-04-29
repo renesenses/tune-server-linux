@@ -6,10 +6,12 @@ the menu bar. No dock icon (LSUIElement=true). Logs go to
 """
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
 import sys
+import urllib.request
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +67,16 @@ class TuneServerApp(rumps.App):
 
         self.status_item = rumps.MenuItem("Status: démarrage…")
         self.version_item = rumps.MenuItem(f"Tune Server v{VERSION}")
+        # Update banner — visible/hidden depending on /system/update/check.
+        # Inserted between status and "Ouvrir l'interface web" so it sits
+        # at the top where users will notice it without scrolling. Hidden
+        # by default; populated by _refresh_update_status.
+        self.update_item = rumps.MenuItem(
+            "Mise à jour disponible…",
+            callback=self.install_update,
+        )
+        self.update_item.hidden = True
+        self._latest_version: str | None = None
         # Native SwiftUI client — only meaningful when /Applications/Tune.app
         # is also installed (the case for combo .pkg installs). For
         # DMG-only installs (server alone) the entry would be a dead end,
@@ -73,6 +85,7 @@ class TuneServerApp(rumps.App):
         menu_items: list = [
             self.version_item,
             self.status_item,
+            self.update_item,
             None,
             rumps.MenuItem("Ouvrir l'interface web", callback=self.open_web_ui),
         ]
@@ -92,6 +105,13 @@ class TuneServerApp(rumps.App):
         self.status_item.set_callback(None)
 
         self._start_server()
+
+        # First update check after 45s — gives the bundled server enough
+        # time to boot, hit GitHub, and cache the result before we poll
+        # /update/check. Without this we'd wait the full 30 min before
+        # the badge appears on a fresh launch when an update is pending.
+        self._initial_check_timer = rumps.Timer(self._initial_update_check, 45)
+        self._initial_check_timer.start()
 
     # ─── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -165,6 +185,40 @@ class TuneServerApp(rumps.App):
             code = self.server_proc.returncode
             self.status_item.title = f"Status: arrêté (code {code})"
 
+    # Poll the running server's /update/check every 30 min. Mirrors what
+    # the web client does — same banner, same source of truth. The icon
+    # gets a 🔴 prefix when an update is available so users see it
+    # without opening the menu.
+    def _initial_update_check(self, _sender) -> None:
+        # One-shot — stop the timer so it doesn't keep firing.
+        self._initial_check_timer.stop()
+        self._refresh_update_status(_sender)
+
+    @rumps.timer(1800)
+    def _refresh_update_status(self, _sender) -> None:
+        if self.server_proc is None or self.server_proc.poll() is not None:
+            return
+        try:
+            req = urllib.request.Request(
+                "http://localhost:8888/api/v1/system/update/check",
+                headers={"Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return
+        if data.get("update_available") and data.get("latest_version"):
+            self._latest_version = data["latest_version"]
+            self.update_item.title = (
+                f"⬆ Mise à jour disponible : v{self._latest_version}"
+            )
+            self.update_item.hidden = False
+            self.title = "🔴 🎵"
+        else:
+            self._latest_version = None
+            self.update_item.hidden = True
+            self.title = "🎵"
+
     # ─── Menu actions ───────────────────────────────────────────────────────
 
     def open_web_ui(self, _sender) -> None:
@@ -172,6 +226,18 @@ class TuneServerApp(rumps.App):
 
     def open_tune_app(self, _sender) -> None:
         subprocess.Popen(["/usr/bin/open", str(self._tune_app_path)])
+
+    def install_update(self, _sender) -> None:
+        if not self._latest_version:
+            return
+        # Fall back to opening the GitHub releases page in a browser —
+        # the in-app updater rewrites files inside the .app bundle which
+        # invalidates the codesign seal (see CHANGELOG v0.7.46), so for
+        # DMG installs the safe path is "download the new DMG and drag-
+        # install". Same advice the Settings page surfaces in the web UI.
+        webbrowser.open(
+            f"https://github.com/renesenses/tune-server-linux/releases/tag/v{self._latest_version}"
+        )
 
     def show_logs(self, _sender) -> None:
         subprocess.Popen(["/usr/bin/open", "-a", "Console", str(_log_path())])
