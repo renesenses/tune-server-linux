@@ -62,13 +62,63 @@ class SnapcastOutput(OutputTarget):
         return self._fifo_path.exists()
 
     async def start(self, stream_info: AudioStreamInfo, track: Optional[Track] = None) -> None:
-        # Skeleton: open FIFO non-blocking for write, sync clients to
-        # snapcast group via JSON-RPC. Real implementation lands in #45
-        # follow-up.
-        raise NotImplementedError("SnapcastOutput.start — v0.8.0 task #45")
+        # Open the per-zone FIFO non-blocking for write. NONBLOCK is
+        # critical: without it, opening blocks until a reader is
+        # connected — and snapserver only opens its read side when a
+        # client subscribes to the stream. The write end keeps blocking
+        # behaviour for the actual writes (we want backpressure when
+        # the buffer is full, just not on open).
+        if self._fifo_fd is None:
+            try:
+                self._fifo_fd = os.open(
+                    self._fifo_path, os.O_WRONLY | os.O_NONBLOCK,
+                )
+            except OSError as exc:
+                # ENXIO = no reader yet (snapserver not running, or no
+                # client subscribed). Reopen lazily on first write.
+                logger.debug(
+                    "snapcast_fifo_open_deferred",
+                    fifo=str(self._fifo_path), errno=exc.errno,
+                )
+                self._fifo_fd = None
+        # Make sure the snapcast group for this stream contains our
+        # bound clients (when there are any). No clients = stream stays
+        # idle on the snapcast side, audio is consumed and discarded by
+        # snapserver, no big deal.
+        if self._client_ids:
+            await self._manager.set_clients_for_stream(
+                self._stream_name, self._client_ids,
+            )
 
     async def write(self, data: bytes) -> None:
-        raise NotImplementedError("SnapcastOutput.write — v0.8.0 task #45")
+        if self._fifo_fd is None:
+            # Try to open lazily — a snapclient may have subscribed
+            # since `start()`.
+            try:
+                self._fifo_fd = os.open(
+                    self._fifo_path, os.O_WRONLY | os.O_NONBLOCK,
+                )
+            except OSError:
+                # Still no reader. Drop the buffer silently — better
+                # than crashing the pipeline. Snapcast users see ~1 s
+                # of silence then audio kicks in once a client
+                # subscribes.
+                return
+        try:
+            os.write(self._fifo_fd, data)
+        except BrokenPipeError:
+            # Reader went away (snapclient disconnect). Close and let
+            # the next write retry the open.
+            try:
+                os.close(self._fifo_fd)
+            except OSError:
+                pass
+            self._fifo_fd = None
+        except BlockingIOError:
+            # Snapserver buffer full — drop. Snapcast already buffers
+            # ~1 s on the client side; dropping a chunk here is less
+            # bad than blocking the whole pipeline.
+            logger.debug("snapcast_fifo_full_drop", stream=self._stream_name)
 
     async def flush(self) -> None:
         return None
@@ -82,17 +132,18 @@ class SnapcastOutput(OutputTarget):
         return None
 
     async def stop(self) -> None:
-        raise NotImplementedError("SnapcastOutput.stop — v0.8.0 task #45")
-
-    async def set_volume(self, volume: float) -> None:
-        # JSON-RPC: per-client `Client.SetVolume`, or the snapcast group
-        # if multiple clients. Volume is 0-100 in snapcast.
-        raise NotImplementedError("SnapcastOutput.set_volume — v0.8.0 task #45")
-
-    async def close(self) -> None:
         if self._fifo_fd is not None:
             try:
                 os.close(self._fifo_fd)
             except OSError:
                 pass
             self._fifo_fd = None
+
+    async def set_volume(self, volume: float) -> None:
+        # Tune passes 0.0-1.0; snapcast is 0-100.
+        v = max(0, min(100, int(volume * 100)))
+        for client_id in self._client_ids:
+            await self._manager.set_client_volume(client_id, v)
+
+    async def close(self) -> None:
+        await self.stop()

@@ -201,6 +201,7 @@ class TuneServer:
         self._http_streamer: HttpAudioStreamer | None = None
         self._mount_manager = None
         self._ws_manager = None
+        self._snapcast_manager = None  # set in start() when snapcast is enabled
         self._scan_task: asyncio.Task | None = None
         self._server_ip = get_local_ip()
 
