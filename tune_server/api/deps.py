@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from tune_server.updater import UpdateChecker
     from tune_server.zones.group import GroupManager
     from tune_server.zones.manager import ZoneManager
+    from tune_server.zones.snapcast_manager import SnapcastManager
 
 
 class AppDeps:
@@ -37,6 +38,7 @@ class AppDeps:
         self.update_checker: UpdateChecker | None = None
         self.artist_enrichment: ArtistEnrichmentClient | None = None
         self.spotify_connect: SpotifyConnectManager | None = None
+        self.snapcast_manager: SnapcastManager | None = None
 
         # Repos (set after DB init)
         self.track_repo: TrackRepo | None = None

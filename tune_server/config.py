@@ -212,6 +212,15 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "console"  # console or json
 
+    # Snapcast multi-room sync — see tune_server.zones.snapcast_manager.
+    # Server gating: Linux + macOS only. snapserver_binary auto-discovered
+    # via shutil.which("snapserver"); override only when running from a
+    # non-PATH bundle (combo DMG ships its own under Contents/Resources/).
+    snapcast_enabled: bool = True
+    snapcast_runtime_dir: str = ""  # default = settings.data_dir / "snapcast"
+    snapcast_binary: str = ""       # default = shutil.which("snapserver")
+    snapcast_default_pcm: str = "cd"  # "cd" (44.1/16) or "hires_96_24"
+
 
 settings = Settings()
 

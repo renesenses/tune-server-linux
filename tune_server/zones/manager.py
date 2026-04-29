@@ -316,6 +316,15 @@ class ZoneManager:
         if output_type == OutputType.LOCAL:
             return LocalOutput(device_name=device_id)
 
+        # OutputType.SNAPCAST is wired through `_output_factory` from
+        # `app.py` — only reachable when SnapcastManager is enabled
+        # (Linux/macOS host, snapserver binary present). On Windows the
+        # factory isn't registered and we land here with a clear log
+        # so the API can refuse gracefully.
+        if output_type == OutputType.SNAPCAST:
+            logger.warning("snapcast_factory_unavailable_on_this_host")
+            return None
+
         logger.warning("no_output_factory", type=output_type)
         return None
 

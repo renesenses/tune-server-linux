@@ -47,6 +47,10 @@ class OutputType(str, Enum):
     LOCAL = "local"
     DLNA = "dlna"
     AIRPLAY = "airplay"
+    # Snapcast: server-side FIFO + JSON-RPC controlled snapserver, ~50 ms
+    # network sync across endpoints (PCs, phones, RPi). Linux+macOS server
+    # only — Windows host falls back to DLNA/AirPlay (factory hidden).
+    SNAPCAST = "snapcast"
 
 
 # --- Domain models ---
