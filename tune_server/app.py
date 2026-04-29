@@ -256,25 +256,6 @@ class TuneServer:
         # Sync engine
         self._sync_engine = SyncEngine(self._group_manager)
 
-        # Snapcast manager — Linux/macOS only, no-op when snapserver
-        # binary is missing. Owned here so the OutputType.SNAPCAST
-        # factory below can reference it. v0.8.0 milestone.
-        from tune_server.zones.snapcast_manager import SnapcastManager
-        snapcast_runtime = (
-            Path(settings.snapcast_runtime_dir)
-            if settings.snapcast_runtime_dir
-            else (Path(settings.data_dir) if hasattr(settings, "data_dir") else Path.cwd()) / "snapcast"
-        )
-        snapcast_runtime.mkdir(parents=True, exist_ok=True)
-        snapcast_binary = (
-            Path(settings.snapcast_binary)
-            if settings.snapcast_binary else None
-        )
-        self._snapcast_manager = SnapcastManager(
-            runtime_dir=snapcast_runtime,
-            binary=snapcast_binary,
-        ) if settings.snapcast_enabled else None
-
         # HTTP audio streamer for DLNA
         self._http_streamer = HttpAudioStreamer(
             host=settings.stream_host,
@@ -394,7 +375,6 @@ class TuneServer:
             self._event_bus, zone_manager=self._zone_manager,
         )
         deps.spotify_connect = self._spotify_connect
-        deps.snapcast_manager = self._snapcast_manager
         if settings.spotify_connect_enabled and settings.spotify_connect_zone_id is not None:
             try:
                 await self._spotify_connect.enable(
@@ -414,10 +394,6 @@ class TuneServer:
 
         # Start sync engine
         await self._sync_engine.start()
-
-        # Start Snapcast manager (no-op on unsupported platforms / missing binary).
-        if self._snapcast_manager is not None:
-            await self._snapcast_manager.start()
 
         # Filesystem watcher
         if settings.watch_filesystem:
@@ -560,34 +536,6 @@ class TuneServer:
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
         self._zone_manager.register_output_factory(OutputType.AIRPLAY, create_airplay_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
-
-        # Snapcast — gated to Linux/macOS, manager owns the snapserver
-        # subprocess + JSON-RPC. The factory only registers when the
-        # manager actually started (binary present); on Windows or
-        # when snapserver is missing we leave OutputType.SNAPCAST
-        # unhandled and `manager._create_output` returns None with a
-        # clear log so the API can refuse gracefully. v0.8.0 milestone.
-        if (
-            settings.snapcast_enabled
-            and self._snapcast_manager is not None
-            and self._snapcast_manager.is_supported
-            and self._snapcast_manager.binary_path is not None
-        ):
-            async def create_snapcast_output(device_id: str | None):
-                # device_id here is the zone_id (str). v0.8.0 task #45
-                # will plumb this through register_stream + return a
-                # SnapcastOutput bound to the per-zone FIFO.
-                from tune_server.outputs.snapcast import SnapcastOutput
-                logger.info("snapcast_factory_called_skeleton", device_id=device_id)
-                stream_name, fifo = await self._snapcast_manager.register_stream(
-                    int(device_id) if device_id and device_id.isdigit() else 0,
-                    sample_rate=44100, bit_depth=16,
-                )
-                return SnapcastOutput(self._snapcast_manager, stream_name, fifo)
-
-            self._zone_manager.register_output_factory(
-                OutputType.SNAPCAST, create_snapcast_output,
-            )
 
     def _setup_playback_history(self, history_repo) -> None:
         """Record each played track in playback_history via EventBus."""
@@ -750,9 +698,6 @@ class TuneServer:
 
         if self._sync_engine:
             await self._safe_stop("sync_engine", self._sync_engine.stop())
-
-        if self._snapcast_manager is not None:
-            await self._safe_stop("snapcast", self._snapcast_manager.stop())
 
         if self._ws_manager:
             await self._safe_stop("ws_manager", self._ws_manager.stop())

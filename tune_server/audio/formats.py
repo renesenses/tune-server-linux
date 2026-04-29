@@ -35,18 +35,6 @@ LOCAL_CAPABILITIES = AudioCapabilities(
     supports_gapless=True,
 )
 
-# Snapcast wants raw PCM s16le on its FIFO source. We decode to that
-# format and let snapserver's own FLAC compression handle the wire
-# bandwidth. 88.2/96 kHz only kicks in when the user opts into the
-# `hires_96_24` profile and the source is high-res. DSD is impossible
-# (snapcast playout is fundamentally clock-aligned PCM).
-SNAPCAST_CAPABILITIES = AudioCapabilities(
-    formats={AudioFormat.WAV},
-    max_sample_rate=96000,
-    max_bit_depth=24,
-    supports_gapless=False,  # ~500 ms gap on stream restart, see SnapcastManager
-)
-
 
 def format_from_extension(ext: str) -> AudioFormat | None:
     ext = ext.lower().lstrip(".")
