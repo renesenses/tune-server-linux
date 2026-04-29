@@ -527,6 +527,16 @@ class SQLiteDatabase:
         await self.connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_playback_history_played ON playback_history(played_at DESC)"
         )
+        # Composite indexes for dashboard queries (each WHERE = played_at +
+        # one filter dimension). Without these, big libraries fall back to
+        # full scans on every period change.
+        for stmt in (
+            "CREATE INDEX IF NOT EXISTS idx_playback_history_user_played ON playback_history(user_id, played_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_playback_history_zone_played ON playback_history(zone_id, played_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_playback_history_artist_played ON playback_history(artist_name, played_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_playback_history_source_played ON playback_history(source, played_at DESC)",
+        ):
+            await self.connection.execute(stmt)
         await self.commit()
 
         # Zone audio profiles (room correction / per-zone EQ)

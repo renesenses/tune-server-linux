@@ -748,5 +748,14 @@ playback_history = sa.Table(
     sa.Column("source", sa.Text),
     sa.Column("played_at", sa.DateTime, server_default=sa.func.now()),
     sa.Index("idx_playback_history_played", sa.text("played_at DESC")),
+    # Composite indexes for the dashboard endpoint — every WHERE clause
+    # filters by `played_at > cutoff` plus optionally one of these
+    # dimensions. Without composite indexes the filtered queries fall
+    # back to a full scan on libraries with 50k+ rows. SA reflection
+    # adds them on next start.
+    sa.Index("idx_playback_history_user_played", sa.text("user_id, played_at DESC")),
+    sa.Index("idx_playback_history_zone_played", sa.text("zone_id, played_at DESC")),
+    sa.Index("idx_playback_history_artist_played", sa.text("artist_name, played_at DESC")),
+    sa.Index("idx_playback_history_source_played", sa.text("source, played_at DESC")),
 )
 

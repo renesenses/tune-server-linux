@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -339,100 +340,239 @@ async def top_artists(limit: int = Query(20, le=100)):
     return await deps.history_repo.top_artists(limit)
 
 
-@router.get("/history/dashboard")
-async def history_dashboard():
-    """Advanced listening statistics."""
-    if not deps.history_repo:
-        return {
-            "period": "30 days", "total_plays": 0, "total_listening_ms": 0,
-            "daily": [], "genres": [], "hourly": [],
-            "new_artists_discovered": 0, "sources": [],
-        }
+_DASHBOARD_CACHE: dict[tuple, tuple[float, dict]] = {}
 
-    # Compute cutoffs in Python — avoids DB-specific INTERVAL syntax (SQLite vs PostgreSQL).
-    # Naive UTC: matches `TIMESTAMP WITHOUT TIME ZONE` columns expected by asyncpg.
+
+def _cache_ttl_for(period: str) -> int:
+    # Today changes by the minute; older periods barely move from one
+    # request to the next. Cache aggressively to keep the dashboard
+    # cheap for big-library setups.
+    return {"today": 60, "7d": 300, "30d": 300, "all": 3600}.get(period, 300)
+
+
+def _cutoff_for(period: str, now: datetime) -> datetime | None:
+    if period == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "7d":
+        return now - timedelta(days=7)
+    if period == "30d":
+        return now - timedelta(days=30)
+    return None  # "all" — no cutoff
+
+
+@router.get("/history/dashboard")
+async def history_dashboard(
+    period: str = "30d",
+    zone_id: int | None = None,
+    profile_id: int | None = None,
+    top_n: int = 10,
+):
+    """Listening dashboard — totals, top artists/albums/tracks, trend,
+    hourly, by-zone, by-source, completion ratio. All scoped by period
+    (today / 7d / 30d / all) and optionally filtered to a zone or
+    profile.
+    """
+    if period not in ("today", "7d", "30d", "all"):
+        period = "30d"
+    top_n = max(1, min(top_n, 50))
+
+    cache_key = (period, zone_id, profile_id, top_n)
+    now_mono = time.monotonic()
+    cached = _DASHBOARD_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] < _cache_ttl_for(period):
+        return cached[1]
+
+    if not deps.history_repo:
+        empty = {
+            "period": period, "totals": {"plays": 0, "listening_ms": 0,
+                "unique_tracks": 0, "unique_artists": 0},
+            "top_artists": [], "top_albums": [], "top_tracks": [],
+            "trend": [], "hourly": [], "by_zone": [], "by_source": [],
+            "completion": {"completed": 0, "skipped": 0,
+                "avg_listened_ms": 0, "avg_track_duration_ms": 0},
+        }
+        return empty
+
     now = datetime.now(tz=timezone.utc).replace(tzinfo=None)
-    cutoff_30d = now - timedelta(days=30)
-    cutoff_14d = now - timedelta(days=14)
+    cutoff = _cutoff_for(period, now)
     is_postgres = settings.db_engine == "postgres"
     hour_expr = "EXTRACT(HOUR FROM played_at)::INTEGER" if is_postgres \
         else "CAST(strftime('%H', played_at) AS INTEGER)"
 
-    # Total listening time (last 30 days)
-    total_row = await deps.db.fetchone(
-        """SELECT COUNT(*) as plays, COALESCE(SUM(listened_ms), 0) as total_ms
-           FROM playback_history
-           WHERE played_at > ?""",
-        (cutoff_30d,),
+    # Build the shared WHERE clause once. Each query appends its own
+    # GROUP BY / ORDER BY but reuses these conditions and parameters so
+    # the composite indexes (user_id, played_at) etc. all match.
+    where_parts: list[str] = []
+    params: list = []
+    if cutoff is not None:
+        where_parts.append("played_at > ?")
+        params.append(cutoff)
+    if zone_id is not None:
+        where_parts.append("zone_id = ?")
+        params.append(zone_id)
+    if profile_id is not None:
+        where_parts.append("(user_id IS NULL OR user_id = ?)")
+        params.append(profile_id)
+    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    async def q_totals():
+        return await deps.db.fetchone(
+            f"""SELECT COUNT(*) as plays,
+                       COALESCE(SUM(listened_ms), 0) as total_ms,
+                       COUNT(DISTINCT track_id) as unique_tracks,
+                       COUNT(DISTINCT artist_name) as unique_artists
+                FROM playback_history {where_clause}""",
+            tuple(params),
+        )
+
+    async def q_top_artists():
+        return await deps.db.fetchall(
+            f"""SELECT artist_name, COUNT(*) as plays,
+                       COALESCE(SUM(listened_ms), 0) as listening_ms
+                FROM playback_history {where_clause}
+                  {'AND' if where_parts else 'WHERE'} artist_name IS NOT NULL
+                GROUP BY artist_name
+                ORDER BY plays DESC
+                LIMIT ?""",
+            tuple(params) + (top_n,),
+        )
+
+    async def q_top_albums():
+        return await deps.db.fetchall(
+            f"""SELECT album_title, artist_name,
+                       MAX(cover_path) as cover_path,
+                       COUNT(*) as plays
+                FROM playback_history {where_clause}
+                  {'AND' if where_parts else 'WHERE'} album_title IS NOT NULL
+                GROUP BY album_title, artist_name
+                ORDER BY plays DESC
+                LIMIT ?""",
+            tuple(params) + (top_n,),
+        )
+
+    async def q_top_tracks():
+        return await deps.db.fetchall(
+            f"""SELECT track_id, track_title, artist_name,
+                       COUNT(*) as plays,
+                       COALESCE(SUM(listened_ms), 0) as listening_ms
+                FROM playback_history {where_clause}
+                  {'AND' if where_parts else 'WHERE'} track_title IS NOT NULL
+                GROUP BY track_id, track_title, artist_name
+                ORDER BY plays DESC
+                LIMIT ?""",
+            tuple(params) + (top_n,),
+        )
+
+    async def q_trend():
+        return await deps.db.fetchall(
+            f"""SELECT DATE(played_at) as day, COUNT(*) as plays,
+                       COALESCE(SUM(listened_ms), 0) as ms
+                FROM playback_history {where_clause}
+                GROUP BY DATE(played_at)
+                ORDER BY day""",
+            tuple(params),
+        )
+
+    async def q_hourly():
+        return await deps.db.fetchall(
+            f"""SELECT {hour_expr} as hour, COUNT(*) as plays
+                FROM playback_history {where_clause}
+                GROUP BY hour
+                ORDER BY hour""",
+            tuple(params),
+        )
+
+    async def q_by_zone():
+        return await deps.db.fetchall(
+            f"""SELECT zone_id, COUNT(*) as plays,
+                       COALESCE(SUM(listened_ms), 0) as listening_ms
+                FROM playback_history {where_clause}
+                GROUP BY zone_id
+                ORDER BY plays DESC""",
+            tuple(params),
+        )
+
+    async def q_by_source():
+        return await deps.db.fetchall(
+            f"""SELECT source, COUNT(*) as plays,
+                       COALESCE(SUM(listened_ms), 0) as listening_ms
+                FROM playback_history {where_clause}
+                GROUP BY source
+                ORDER BY plays DESC""",
+            tuple(params),
+        )
+
+    async def q_completion():
+        # Completed = listened_ms >= 0.85 * duration_ms. Both NULL/0
+        # fields fall through to "skipped" so the bucket totals add up
+        # to the row count.
+        return await deps.db.fetchone(
+            f"""SELECT
+                  SUM(CASE WHEN duration_ms > 0 AND listened_ms >= duration_ms * 0.85 THEN 1 ELSE 0 END) as completed,
+                  SUM(CASE WHEN duration_ms > 0 AND listened_ms < duration_ms * 0.85 THEN 1 ELSE 0 END) as skipped,
+                  COALESCE(AVG(listened_ms), 0) as avg_listened_ms,
+                  COALESCE(AVG(duration_ms), 0) as avg_track_duration_ms
+                FROM playback_history {where_clause}""",
+            tuple(params),
+        )
+
+    # Fan out — total wall time = max query, not sum.
+    (totals_row, top_artists, top_albums, top_tracks, trend, hourly,
+     by_zone, by_source, completion_row) = await asyncio.gather(
+        q_totals(), q_top_artists(), q_top_albums(), q_top_tracks(),
+        q_trend(), q_hourly(), q_by_zone(), q_by_source(), q_completion(),
     )
 
-    # Plays per day (last 14 days)
-    daily_rows = await deps.db.fetchall(
-        """SELECT DATE(played_at) as day, COUNT(*) as plays, COALESCE(SUM(listened_ms), 0) as ms
-           FROM playback_history
-           WHERE played_at > ?
-           GROUP BY DATE(played_at)
-           ORDER BY day""",
-        (cutoff_14d,),
-    )
+    # Zone names — cheap lookup once.
+    zone_names: dict[int, str] = {}
+    if deps.zone_manager and by_zone:
+        try:
+            for z in await deps.zone_manager.list_zones():
+                zone_names[z.id] = z.name
+        except Exception:
+            pass
 
-    # Genre distribution (join through tracks -> albums for genre)
-    genre_rows = await deps.db.fetchall(
-        """SELECT a.genre, COUNT(*) as plays
-           FROM playback_history ph
-           JOIN tracks t ON ph.track_id = t.id
-           JOIN albums a ON t.album_id = a.id
-           WHERE ph.played_at > ? AND a.genre IS NOT NULL
-           GROUP BY a.genre
-           ORDER BY plays DESC
-           LIMIT 10""",
-        (cutoff_30d,),
-    )
+    range_from = cutoff.isoformat() if cutoff else None
 
-    # Listening by hour of day
-    hourly_rows = await deps.db.fetchall(
-        f"""SELECT {hour_expr} as hour, COUNT(*) as plays
-           FROM playback_history
-           WHERE played_at > ?
-           GROUP BY hour
-           ORDER BY hour""",
-        (cutoff_30d,),
-    )
-
-    # New artists discovered (first listen in last 30 days)
-    new_artists_row = await deps.db.fetchone(
-        """SELECT COUNT(DISTINCT ph.artist_name)
-           FROM playback_history ph
-           WHERE ph.played_at > ?
-           AND ph.artist_name IS NOT NULL
-           AND ph.artist_name NOT IN (
-               SELECT DISTINCT ph2.artist_name FROM playback_history ph2
-               WHERE ph2.played_at <= ?
-               AND ph2.artist_name IS NOT NULL
-           )""",
-        (cutoff_30d, cutoff_30d),
-    )
-
-    # Source distribution (local vs streaming)
-    source_rows = await deps.db.fetchall(
-        """SELECT source, COUNT(*) as plays
-           FROM playback_history
-           WHERE played_at > ?
-           GROUP BY source
-           ORDER BY plays DESC""",
-        (cutoff_30d,),
-    )
-
-    return {
-        "period": "30 days",
-        "total_plays": total_row["plays"] if total_row else 0,
-        "total_listening_ms": total_row["total_ms"] if total_row else 0,
-        "daily": [{"day": r["day"], "plays": r["plays"], "listening_ms": r["ms"]} for r in daily_rows],
-        "genres": [{"genre": r["genre"], "plays": r["plays"]} for r in genre_rows],
-        "hourly": [{"hour": r["hour"], "plays": r["plays"]} for r in hourly_rows],
-        "new_artists_discovered": list(new_artists_row.values())[0] if new_artists_row else 0,
-        "sources": [{"source": r["source"], "plays": r["plays"]} for r in source_rows],
+    response = {
+        "period": period,
+        "range": {"from": range_from, "to": now.isoformat()},
+        "totals": {
+            "plays": totals_row["plays"] if totals_row else 0,
+            "listening_ms": totals_row["total_ms"] if totals_row else 0,
+            "unique_tracks": totals_row["unique_tracks"] if totals_row else 0,
+            "unique_artists": totals_row["unique_artists"] if totals_row else 0,
+        },
+        "top_artists": [
+            {"artist_name": r["artist_name"], "plays": r["plays"],
+             "listening_ms": r["listening_ms"]} for r in top_artists],
+        "top_albums": [
+            {"album_title": r["album_title"], "artist_name": r["artist_name"],
+             "cover_path": r["cover_path"], "plays": r["plays"]} for r in top_albums],
+        "top_tracks": [
+            {"track_id": r["track_id"], "title": r["track_title"],
+             "artist_name": r["artist_name"], "plays": r["plays"],
+             "listening_ms": r["listening_ms"]} for r in top_tracks],
+        "trend": [{"day": r["day"], "plays": r["plays"],
+                   "listening_ms": r["ms"]} for r in trend],
+        "hourly": [{"hour": r["hour"], "plays": r["plays"]} for r in hourly],
+        "by_zone": [
+            {"zone_id": r["zone_id"],
+             "zone_name": zone_names.get(r["zone_id"]),
+             "plays": r["plays"], "listening_ms": r["listening_ms"]}
+            for r in by_zone],
+        "by_source": [
+            {"source": r["source"], "plays": r["plays"],
+             "listening_ms": r["listening_ms"]} for r in by_source],
+        "completion": {
+            "completed": int(completion_row["completed"] or 0) if completion_row else 0,
+            "skipped": int(completion_row["skipped"] or 0) if completion_row else 0,
+            "avg_listened_ms": int(completion_row["avg_listened_ms"] or 0) if completion_row else 0,
+            "avg_track_duration_ms": int(completion_row["avg_track_duration_ms"] or 0) if completion_row else 0,
+        },
     }
+    _DASHBOARD_CACHE[cache_key] = (now_mono, response)
+    return response
 
 
 @router.get("/recommendations")

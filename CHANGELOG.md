@@ -2,6 +2,41 @@
 
 All notable changes to Tune Server.
 
+## v0.7.50 — 2026-04-29
+
+### Added (listening dashboard + multi-platform update notices)
+
+- **Listening dashboard endpoint** (`GET /library/history/dashboard`)
+  extended with `period`, `zone_id`, `profile_id`, `top_n` query
+  params. New aggregations: `top_artists`, `top_albums`,
+  `top_tracks`, `trend` (per-day), `hourly` (per-hour heatmap),
+  `by_zone`, `by_source`, `completion` (≥ 0.85 of duration_ms
+  heuristic). Queries fan out via `asyncio.gather` so wall time =
+  max query, not sum. In-process TTL cache keyed on
+  `(period, zone_id, profile_id, top_n)`: 60 s for `today`, 5 min
+  for `7d` / `30d`, 1 h for `all`.
+- **Composite indexes on `playback_history`**: `(user_id,
+  played_at)`, `(zone_id, played_at)`, `(artist_name, played_at)`,
+  `(source, played_at)`. Without these, libraries with 50k+ rows
+  fall back to full scans on every dashboard load. Declared in
+  `tables.py` (SA reflection picks them up) and mirrored in
+  `engine.py` for the legacy aiosqlite engine.
+- **Web client**: new `DashboardView.svelte` rendering the new
+  fields. Sidebar nav entry + BottomTabBar more-drawer entry.
+  i18n keys for FR + EN day one.
+- **Now Playing credits polish**: stable role ordering (composer →
+  lyricist → arranger → conductor → performer → producer → mixer
+  → engineer), de-dup on `(artist_id || artist_name, role,
+  instrument)` to absorb MusicBrainz multi-source duplicates,
+  clickable artist chips that jump to the artist page in
+  LibraryView, and an empty state with an "Enrich from
+  MusicBrainz" CTA wired to `POST /library/tracks/{id}/credits/enrich`.
+  `formatRole` now reads from i18n keys (was hardcoded French).
+- **Flutter SettingsView**: update banner that hits the
+  tune-server-flutter GitHub releases API (the Flutter build is an
+  embedded server, so the server's `/update/check` would query
+  itself — separate path). One-tap deep-links to the release page.
+
 ## v0.7.49 — 2026-04-29
 
 ### Fixed (Gatekeeper half-circle on .app)
