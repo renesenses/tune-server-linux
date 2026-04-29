@@ -17,9 +17,6 @@ from pathlib import Path
 import rumps
 
 
-VERSION = os.environ.get("TUNE_VERSION", "0.7.38")
-
-
 def _runtime_binary() -> Path:
     """Locate the tune-server binary inside the .app bundle.
 
@@ -29,6 +26,29 @@ def _runtime_binary() -> Path:
     """
     here = Path(sys.executable).resolve().parent  # Contents/MacOS
     return here.parent / "Resources" / "runtime" / "tune-server"
+
+
+def _read_bundled_version() -> str:
+    """Pull the runtime's version from its PyInstaller dist-info.
+
+    The wrapper used to fall back to a hardcoded '0.7.38' when no
+    TUNE_VERSION env var was set, so every menubar always claimed
+    0.7.38 regardless of what was actually shipping. Read it from the
+    runtime's _internal/tune_server-X.Y.Z.dist-info/ folder name
+    instead — that's regenerated every PyInstaller build, so it's
+    always co-temporal with the binary it labels.
+    """
+    runtime_dir = _runtime_binary().parent
+    internal = runtime_dir / "_internal"
+    if internal.is_dir():
+        for entry in internal.iterdir():
+            name = entry.name
+            if name.startswith("tune_server-") and name.endswith(".dist-info"):
+                return name[len("tune_server-"):-len(".dist-info")]
+    return os.environ.get("TUNE_VERSION", "unknown")
+
+
+VERSION = _read_bundled_version()
 
 
 def _log_path() -> Path:

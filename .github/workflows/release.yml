@@ -49,6 +49,12 @@ jobs:
 
       - name: Rebuild web client from tune-web-client (always fresh)
         shell: bash
+        env:
+          # tune-web-client is private — needs a token. The default
+          # GITHUB_TOKEN can only access the current repo, so we expect
+          # a fine-grained PAT in WEB_CLIENT_PAT (org-scoped, read-only
+          # contents).
+          WEB_CLIENT_PAT: ${{ secrets.WEB_CLIENT_PAT }}
         run: |
           # Don't trust whatever's committed in web/ — clone the matching
           # tag from tune-web-client and rebuild. This used to drift: a
@@ -58,10 +64,19 @@ jobs:
           # convenience for local dev.
           VERSION="${{ steps.version.outputs.version }}"
           rm -rf _web_src
-          git clone --depth 1 https://github.com/renesenses/tune-web-client.git _web_src
+
+          if [ -n "${WEB_CLIENT_PAT}" ]; then
+            CLONE_URL="https://x-access-token:${WEB_CLIENT_PAT}@github.com/renesenses/tune-web-client.git"
+          else
+            CLONE_URL="https://github.com/renesenses/tune-web-client.git"
+          fi
+          if ! git clone --depth 1 "${CLONE_URL}" _web_src 2>/dev/null; then
+            echo "::warning::Could not clone tune-web-client — using whatever is in web/"
+            exit 0
+          fi
           # Pin the matching tag if it exists; fall back to main otherwise.
-          if (cd _web_src && git fetch origin "v${VERSION}":refs/tags/"v${VERSION}" 2>/dev/null); then
-            (cd _web_src && git checkout "v${VERSION}")
+          if (cd _web_src && git fetch --depth 1 origin "v${VERSION}" 2>/dev/null); then
+            (cd _web_src && git checkout FETCH_HEAD)
           else
             echo "::warning::tune-web-client v${VERSION} tag missing — using main"
           fi
