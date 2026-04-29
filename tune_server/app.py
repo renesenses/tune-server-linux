@@ -28,7 +28,7 @@ from tune_server.library.scanner import LibraryScanner
 from tune_server.library.watcher import FileSystemWatcher
 from tune_server.outputs.http_streamer import HttpAudioStreamer
 from tune_server.utils.audio_utils import check_ffmpeg
-from tune_server.utils.network import get_local_ip
+from tune_server.utils.network import get_local_ip, pick_free_port
 from tune_server.zones.group import GroupManager
 from tune_server.zones.manager import ZoneManager
 from tune_server.zones.sync import SyncEngine
@@ -256,7 +256,11 @@ class TuneServer:
         # Sync engine
         self._sync_engine = SyncEngine(self._group_manager)
 
-        # HTTP audio streamer for DLNA
+        # HTTP audio streamer for DLNA. Pre-bind a free port so we don't
+        # crash when 8080 is taken (Plex, Jenkins, dev servers…). Mutate
+        # settings.stream_port so downstream URL builders + UPnP see the
+        # chosen port.
+        settings.stream_port = pick_free_port(settings.stream_host, settings.stream_port)
         self._http_streamer = HttpAudioStreamer(
             host=settings.stream_host,
             port=settings.stream_port,

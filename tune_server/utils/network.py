@@ -13,6 +13,30 @@ logger = structlog.get_logger()
 _IS_WINDOWS = platform.system() == "Windows"
 
 
+def pick_free_port(host: str, preferred: int, max_tries: int = 10) -> int:
+    """Return preferred port if free, else next free port within range.
+
+    Logs a warning when falling back so users notice another process is
+    holding the default. Raises OSError if no port in [preferred,
+    preferred+max_tries) is free.
+    """
+    for offset in range(max_tries):
+        port = preferred + offset
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+            s.close()
+            if offset > 0:
+                logger.warning("port_fallback", preferred=preferred, chosen=port)
+            return port
+        except OSError:
+            continue
+    raise OSError(
+        f"No free port in {preferred}..{preferred + max_tries - 1} on {host}"
+    )
+
+
 def subprocess_hide_window() -> dict:
     """Return kwargs to hide console windows on Windows (PyInstaller --noconsole).
 
