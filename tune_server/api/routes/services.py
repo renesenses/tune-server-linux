@@ -31,6 +31,8 @@ SERVICE_CATALOG: dict[str, dict] = {
         "name": "MusicBrainz",
         "kind": "no_auth",
         "purpose": "Années + crédits + couvertures (ID releases).",
+        "pricing": "free",
+        "pricing_note": "100 % gratuit, base de données ouverte.",
         "fields": [],
         "help_url": "https://musicbrainz.org/",
         "help_steps": [
@@ -42,6 +44,8 @@ SERVICE_CATALOG: dict[str, dict] = {
         "name": "Discogs",
         "kind": "personal_token",
         "purpose": "Années + couvertures + crédits pour pressages obscurs.",
+        "pricing": "free",
+        "pricing_note": "Compte + token personnel gratuits ; API gratuite avec quota (60 req/min authentifié).",
         "fields": [
             {"key": "token", "label": "Personal Access Token", "type": "password"},
         ],
@@ -57,6 +61,8 @@ SERVICE_CATALOG: dict[str, dict] = {
         "name": "Last.fm",
         "kind": "api_key",
         "purpose": "Genres + scrobbling.",
+        "pricing": "free",
+        "pricing_note": "API gratuite pour usage non commercial. Scrobbling = lecture suivie sur Last.fm — gratuit aussi.",
         "fields": [
             {"key": "api_key", "label": "API Key", "type": "text"},
             {"key": "api_secret", "label": "API Secret (optionnel, pour scrobbling)", "type": "password"},
@@ -73,6 +79,8 @@ SERVICE_CATALOG: dict[str, dict] = {
         "name": "Tidal",
         "kind": "oauth",
         "purpose": "Streaming hi-res + années + couvertures.",
+        "pricing": "paid",
+        "pricing_note": "Abonnement Tidal HiFi requis (≈ 11€/mois HiFi, 22€/mois HiFi Plus).",
         "fields": [],
         "help_url": "/streaming/tidal",
         "help_steps": [
@@ -83,6 +91,8 @@ SERVICE_CATALOG: dict[str, dict] = {
         "name": "Qobuz",
         "kind": "login_password",
         "purpose": "Streaming hi-res + années + couvertures.",
+        "pricing": "paid",
+        "pricing_note": "Abonnement Qobuz Studio requis (≈ 13€/mois Studio, 22€/mois Sublime).",
         "fields": [],
         "help_url": "/streaming/qobuz",
         "help_steps": [
@@ -93,6 +103,8 @@ SERVICE_CATALOG: dict[str, dict] = {
         "name": "Spotify",
         "kind": "oauth",
         "purpose": "Streaming + connectivité.",
+        "pricing": "freemium",
+        "pricing_note": "Compte Spotify gratuit (avec pubs) ou Premium (≈ 11€/mois) requis pour Spotify Connect haute qualité.",
         "fields": [],
         "help_url": "/streaming/spotify",
         "help_steps": [
@@ -103,6 +115,8 @@ SERVICE_CATALOG: dict[str, dict] = {
         "name": "Deezer",
         "kind": "arl_token",
         "purpose": "Streaming.",
+        "pricing": "freemium",
+        "pricing_note": "Compte gratuit (avec pubs) ou Deezer HiFi (≈ 12€/mois) pour FLAC.",
         "fields": [
             {"key": "arl", "label": "ARL token (depuis cookies deezer.com)", "type": "password"},
         ],
@@ -246,6 +260,8 @@ async def list_service_tokens():
             "name": info["name"],
             "kind": info["kind"],
             "purpose": info["purpose"],
+            "pricing": info.get("pricing", "unknown"),
+            "pricing_note": info.get("pricing_note", ""),
             "fields": info["fields"],
             "help_url": info["help_url"],
             "help_steps": info["help_steps"],
