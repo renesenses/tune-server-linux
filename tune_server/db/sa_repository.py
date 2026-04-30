@@ -531,9 +531,45 @@ class SAAlbumRepo:
 
             loser_ids = [m["id"] for m in losers]
 
-            # 1. Delete tracks in losers that share the same file_path as a
-            #    track already in the winner (avoids duplicate file refs after
-            #    reassignment).
+            # 1. Re-target every reference to the about-to-be-deleted
+            #    duplicate-track rows (loser-side rows whose file_path
+            #    matches a track already on the winner) onto the winner's
+            #    canonical track id. Without this, the FK
+            #    playlist_tracks.track_id ... ON DELETE CASCADE wipes
+            #    those entries when we DELETE the duplicate tracks below
+            #    — that's how Bertrand lost most of the "Fip select"
+            #    playlist after the v0.7.58 merge run.
+            await self._db.sa_execute(
+                sa.text(
+                    """UPDATE playlist_tracks pt
+                          SET track_id = winner.id
+                         FROM tracks loser
+                         JOIN tracks winner
+                           ON winner.album_id = :winner_id
+                          AND winner.file_path = loser.file_path
+                          AND winner.file_path IS NOT NULL
+                        WHERE pt.track_id = loser.id
+                          AND loser.album_id = ANY(:loser_ids)"""
+                ).bindparams(loser_ids=loser_ids, winner_id=winner["id"])
+            )
+            # Same protection for play_queue (now-playing references the
+            # tracks table too via FK CASCADE).
+            await self._db.sa_execute(
+                sa.text(
+                    """UPDATE play_queue q
+                          SET track_id = winner.id
+                         FROM tracks loser
+                         JOIN tracks winner
+                           ON winner.album_id = :winner_id
+                          AND winner.file_path = loser.file_path
+                          AND winner.file_path IS NOT NULL
+                        WHERE q.track_id = loser.id
+                          AND loser.album_id = ANY(:loser_ids)"""
+                ).bindparams(loser_ids=loser_ids, winner_id=winner["id"])
+            )
+
+            # 2. Delete tracks in losers that share the same file_path as a
+            #    track already in the winner (now safe — references moved).
             await self._db.sa_execute(
                 sa.text(
                     """DELETE FROM tracks
@@ -547,7 +583,8 @@ class SAAlbumRepo:
                 ).bindparams(loser_ids=loser_ids, winner_id=winner["id"])
             )
 
-            # 2. Reassign remaining loser tracks to the winner.
+            # 3. Reassign remaining loser tracks (those not duplicated by
+            #    file_path on the winner) to the winner.
             for loser_id in loser_ids:
                 await self._db.sa_execute(
                     sa.text(
