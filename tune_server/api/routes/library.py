@@ -616,6 +616,23 @@ async def history_dashboard(
             tuple(params),
         )
 
+    async def q_by_genre():
+        # Genre is on `albums`, not on playback_history. Join through the
+        # track to find the album's genre. NULL/empty genres are bucketed
+        # as "—" so the breakdown still adds up.
+        return await deps.db.fetchall(
+            f"""SELECT COALESCE(NULLIF(al.genre, ''), '—') as genre,
+                       COUNT(*) as plays,
+                       COALESCE(SUM(ph.listened_ms), 0) as listening_ms
+                FROM playback_history ph
+                LEFT JOIN tracks t ON t.id = ph.track_id
+                LEFT JOIN albums al ON al.id = t.album_id
+                {where_clause.replace('played_at', 'ph.played_at').replace('zone_id', 'ph.zone_id').replace('user_id', 'ph.user_id')}
+                GROUP BY genre
+                ORDER BY plays DESC""",
+            tuple(params),
+        )
+
     async def q_completion():
         # Completed = listened_ms >= 0.85 * duration_ms. Both NULL/0
         # fields fall through to "skipped" so the bucket totals add up
@@ -632,9 +649,10 @@ async def history_dashboard(
 
     # Fan out — total wall time = max query, not sum.
     (totals_row, top_artists, top_albums, top_tracks, trend, hourly,
-     by_zone, by_source, completion_row) = await asyncio.gather(
+     by_zone, by_source, by_genre, completion_row) = await asyncio.gather(
         q_totals(), q_top_artists(), q_top_albums(), q_top_tracks(),
-        q_trend(), q_hourly(), q_by_zone(), q_by_source(), q_completion(),
+        q_trend(), q_hourly(), q_by_zone(), q_by_source(), q_by_genre(),
+        q_completion(),
     )
 
     # Zone names — cheap lookup once.
@@ -678,6 +696,9 @@ async def history_dashboard(
         "by_source": [
             {"source": r["source"], "plays": r["plays"],
              "listening_ms": r["listening_ms"]} for r in by_source],
+        "by_genre": [
+            {"genre": r["genre"], "plays": r["plays"],
+             "listening_ms": r["listening_ms"]} for r in by_genre],
         "completion": {
             "completed": int(completion_row["completed"] or 0) if completion_row else 0,
             "skipped": int(completion_row["skipped"] or 0) if completion_row else 0,
