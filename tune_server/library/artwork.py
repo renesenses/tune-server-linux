@@ -15,7 +15,16 @@ from mutagen import File as MutagenFile
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
-from PIL import Image
+from PIL import Image, ImageFile
+
+# Tolerate truncated JPEG/PNG payloads embedded in audio files. Many MP3
+# collections have ID3 APIC frames where trailing bytes were cut by a
+# buggy tagger; without this flag PIL raises OSError("image file is
+# truncated") on every such file and we log one error per track during
+# scan. With it, PIL still renders what it can and we get a usable
+# (slightly cropped) thumbnail. Reported by Yves on 2026-04-30 during
+# his v0.6.5 → v0.7.56 upgrade rescan.
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from tune_server.config import settings
 
