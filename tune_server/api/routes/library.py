@@ -50,6 +50,92 @@ async def get_track(track_id: int):
     return track
 
 
+@router.get("/tracks/{track_id}/all-tags")
+async def get_track_all_tags(track_id: int):
+    """Return EVERY metadata field on a track: DB columns + every raw tag
+    present in the audio file (mutagen) + audio info (sample_rate, etc.).
+
+    Designed for the per-track edit drawer in the metadata view: a classical
+    library can carry composer / conductor / performer / work / movement /
+    opus / key / catalog tags that aren't in the canonical Track model.
+    Returning the raw mutagen dict lets the UI render every tag actually
+    used in this user's library, not a hardcoded subset.
+    """
+    from pathlib import Path
+
+    track = await deps.track_repo.get(track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="Track not found")
+
+    # 1) DB columns: all of them (Pydantic dump).
+    try:
+        db_fields = track.model_dump() if hasattr(track, "model_dump") else dict(track)
+    except Exception:
+        db_fields = {}
+
+    # 2) Track credits.
+    try:
+        credits = await deps.credit_repo.list_by_track(track_id)
+        db_credits = [
+            (c.model_dump() if hasattr(c, "model_dump") else dict(c)) for c in credits
+        ]
+    except Exception:
+        db_credits = []
+
+    # 3) Raw audio file tags via mutagen + audio info.
+    file_tags: dict[str, list[str]] = {}
+    audio_info: dict = {}
+    file_exists = False
+    if track.file_path and Path(track.file_path).exists():
+        file_exists = True
+        try:
+            import mutagen
+            audio = mutagen.File(track.file_path)
+            if audio is not None:
+                # Stringify every tag value to a list of strings (handles
+                # ID3 frames, MP4 atoms, Vorbis comments uniformly).
+                if audio.tags:
+                    for k in audio.tags.keys():
+                        try:
+                            v = audio.tags[k]
+                            if hasattr(v, "text"):
+                                vals = [str(x) for x in v.text]
+                            elif isinstance(v, (list, tuple)):
+                                vals = [str(x) for x in v]
+                            else:
+                                vals = [str(v)]
+                        except Exception:
+                            vals = ["<unreadable>"]
+                        file_tags[str(k)] = vals
+                info = getattr(audio, "info", None)
+                if info is not None:
+                    for attr in (
+                        "length", "sample_rate", "bits_per_sample", "channels",
+                        "bitrate", "codec", "codec_description", "version",
+                        "layer", "mode", "protected", "encoder_info",
+                    ):
+                        if hasattr(info, attr):
+                            try:
+                                val = getattr(info, attr)
+                                if val is None:
+                                    continue
+                                audio_info[attr] = val if isinstance(val, (int, float, str, bool)) else str(val)
+                            except Exception:
+                                pass
+        except Exception as e:
+            audio_info["_mutagen_error"] = str(e)[:300]
+
+    return {
+        "track_id": track_id,
+        "file_path": track.file_path,
+        "file_exists": file_exists,
+        "db_fields": db_fields,
+        "db_credits": db_credits,
+        "file_tags": file_tags,
+        "audio_info": audio_info,
+    }
+
+
 
 @router.post("/tracks/{track_id}/quick-fav")
 async def quick_favorite_toggle(track_id: int, profile_id: int = 1):
