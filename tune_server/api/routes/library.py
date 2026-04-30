@@ -647,6 +647,31 @@ async def history_dashboard(
             tuple(params),
         )
 
+    async def q_weekday_hourly():
+        # 7×24 grid: rows = day-of-week (PG: 0=Sunday … 6=Saturday;
+        # SQLite strftime('%w'): 0=Sunday … 6=Saturday too — they agree).
+        # We re-map to ISO 8601 1=Monday … 7=Sunday at projection time
+        # so the UI shows weeks starting on Monday (FR convention).
+        if is_postgres:
+            return await deps.db.fetchall(
+                f"""SELECT EXTRACT(DOW FROM played_at)::INTEGER as raw_dow,
+                           EXTRACT(HOUR FROM played_at)::INTEGER as hour,
+                           COUNT(*) as plays
+                    FROM playback_history {where_clause}
+                    GROUP BY raw_dow, hour
+                    ORDER BY raw_dow, hour""",
+                tuple(params),
+            )
+        return await deps.db.fetchall(
+            f"""SELECT CAST(strftime('%w', played_at) AS INTEGER) as raw_dow,
+                       CAST(strftime('%H', played_at) AS INTEGER) as hour,
+                       COUNT(*) as plays
+                FROM playback_history {where_clause}
+                GROUP BY raw_dow, hour
+                ORDER BY raw_dow, hour""",
+            tuple(params),
+        )
+
     async def q_streak():
         # Longest current consecutive-day streak (counting back from today)
         # + longest historical streak overall.
@@ -747,11 +772,11 @@ async def history_dashboard(
 
     # Fan out — total wall time = max query, not sum.
     (totals_row, top_artists, top_albums, top_tracks, trend, hourly,
-     by_zone, by_source, by_genre, streak, on_this_day,
+     by_zone, by_source, by_genre, weekday_hourly, streak, on_this_day,
      completion_row) = await asyncio.gather(
         q_totals(), q_top_artists(), q_top_albums(), q_top_tracks(),
         q_trend(), q_hourly(), q_by_zone(), q_by_source(), q_by_genre(),
-        q_streak(), q_on_this_day(),
+        q_weekday_hourly(), q_streak(), q_on_this_day(),
         q_completion(),
     )
 
@@ -799,6 +824,16 @@ async def history_dashboard(
         "by_genre": [
             {"genre": r["genre_label"], "plays": r["plays"],
              "listening_ms": r["listening_ms"]} for r in by_genre],
+        "weekday_hourly": [
+            # Re-map raw 0=Sunday … 6=Saturday into ISO 1=Monday … 7=Sunday
+            # so the UI can render weeks starting on Monday without extra
+            # arithmetic.
+            {
+                "weekday": ((int(r["raw_dow"]) + 6) % 7) + 1,
+                "hour": int(r["hour"]),
+                "plays": int(r["plays"]),
+            } for r in weekday_hourly
+        ],
         "streak": streak,
         "on_this_day": [
             {
