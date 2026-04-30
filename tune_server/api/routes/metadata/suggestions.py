@@ -534,6 +534,262 @@ def _doubtful_reasons(row) -> list[str]:
 # Fix missing years from Tidal
 # ---------------------------------------------------------------------------
 
+@router.post("/mp3/diagnose")
+async def diagnose_mp3_files(limit: int = 5000):
+    """Scan local MP3 tracks for common playback-breaking defects.
+
+    Two passes per file:
+      1. mutagen — does the ID3 tag parse? Is the MPEG header readable?
+      2. ffprobe — does FFmpeg consider the stream playable end-to-end?
+                   We compare its reported duration against tracks.duration_ms;
+                   a >2s drift usually means the file is truncated or has
+                   a missing Xing/VBRI header (so seeking on Jacques' decoder
+                   gets confused and the track 'doesn't start').
+
+    Returns per-track diagnostic. Designed for a 'Repair' follow-up that
+    repacks the stream with `ffmpeg -c:a copy` (preserves quality, fixes
+    container-level issues). Read-only — does NOT modify any file.
+    """
+    import asyncio
+    from pathlib import Path
+
+    rows = await deps.db.fetchall(
+        """SELECT t.id, t.title, t.file_path, t.duration_ms, t.format,
+                  ar.name as artist_name, al.title as album_title
+             FROM tracks t
+             LEFT JOIN artists ar ON t.artist_id = ar.id
+             LEFT JOIN albums al ON t.album_id = al.id
+            WHERE t.source = 'local'
+              AND t.file_path IS NOT NULL
+              AND LOWER(t.format) = 'mp3'
+            LIMIT :lim""".replace(":lim", str(int(limit))),
+    )
+
+    issues: list[dict] = []
+    ok_count = 0
+    missing_count = 0
+
+    async def ffprobe_duration_ms(path: str) -> tuple[int | None, str | None]:
+        """Returns (duration_ms, error_str). error_str is None on success."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=8.0)
+            if proc.returncode != 0:
+                return None, (stderr.decode(errors="ignore").strip() or "ffprobe non-zero exit")[:300]
+            out = stdout.decode().strip()
+            if not out or out == "N/A":
+                return None, "ffprobe returned empty duration"
+            try:
+                return int(float(out) * 1000), None
+            except ValueError:
+                return None, f"ffprobe duration parse failed: {out!r}"
+        except asyncio.TimeoutError:
+            return None, "ffprobe timeout >8s (file likely unreadable)"
+        except FileNotFoundError:
+            return None, "ffprobe binary not found in PATH"
+        except Exception as e:
+            return None, f"ffprobe error: {e}"
+
+    for row in rows:
+        path = row["file_path"]
+        if not path:
+            continue
+        if not Path(path).exists():
+            issues.append({
+                "track_id": row["id"], "title": row["title"],
+                "artist": row["artist_name"], "album": row["album_title"],
+                "path": path, "issue": "missing_file",
+                "detail": "File does not exist on disk.",
+            })
+            missing_count += 1
+            continue
+
+        # Pass 1: mutagen
+        m_issue: str | None = None
+        m_detail: str | None = None
+        try:
+            import mutagen
+            audio = mutagen.File(path)
+            if audio is None:
+                m_issue = "unreadable"
+                m_detail = "mutagen returned None — not a recognized format"
+            else:
+                # Make sure MPEG info is sane.
+                info = getattr(audio, "info", None)
+                if info is None or not getattr(info, "length", 0):
+                    m_issue = "no_mpeg_info"
+                    m_detail = "mutagen could not read MPEG info / length=0"
+        except Exception as e:
+            m_issue = "mutagen_error"
+            m_detail = str(e)[:300]
+
+        # Pass 2: ffprobe (catches stream-level issues mutagen misses)
+        ff_ms, ff_err = await ffprobe_duration_ms(path)
+
+        # Decide diagnosis.
+        if m_issue:
+            issues.append({
+                "track_id": row["id"], "title": row["title"],
+                "artist": row["artist_name"], "album": row["album_title"],
+                "path": path, "issue": m_issue, "detail": m_detail,
+            })
+            continue
+        if ff_err:
+            issues.append({
+                "track_id": row["id"], "title": row["title"],
+                "artist": row["artist_name"], "album": row["album_title"],
+                "path": path, "issue": "ffprobe_error", "detail": ff_err,
+            })
+            continue
+        # Drift check: stored duration vs ffprobe.
+        db_ms = row["duration_ms"] or 0
+        if ff_ms is not None and db_ms and abs(ff_ms - db_ms) > 2000:
+            issues.append({
+                "track_id": row["id"], "title": row["title"],
+                "artist": row["artist_name"], "album": row["album_title"],
+                "path": path, "issue": "duration_drift",
+                "detail": (
+                    f"DB={db_ms}ms vs ffprobe={ff_ms}ms — likely truncated or "
+                    "missing Xing/VBRI header; some decoders may fail to start."
+                ),
+            })
+            continue
+        ok_count += 1
+
+    return {
+        "ok": True,
+        "scanned": len(rows),
+        "ok_files": ok_count,
+        "missing_files": missing_count,
+        "issues_found": len(issues),
+        "issues": issues[:300],
+    }
+
+
+@router.post("/mp3/repair")
+async def repair_mp3_files(body: dict):
+    """Repack a list of MP3 files with `ffmpeg -c:a copy` to fix container-
+    level issues (missing Xing header, truncated trailer, ID3v2 oversize,
+    etc.) without re-encoding (no quality loss).
+
+    Body: {"track_ids": [int, ...]}.
+
+    Strategy: for each track, run ffmpeg to a temp file, validate the temp
+    file has a sane duration, then atomic-replace the original. Tracks the
+    DB duration_ms once the repack succeeds.
+
+    Caveat: this rewrites bytes on disk. It is safe (no transcode) but
+    irreversible without backup. Files are skipped when ffmpeg refuses
+    them outright (truly corrupted).
+    """
+    import asyncio
+    import os
+    import tempfile
+    from pathlib import Path
+
+    ids = body.get("track_ids") or []
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="track_ids must be a non-empty list")
+    placeholders = ",".join("?" for _ in ids)
+    rows = await deps.db.fetchall(
+        f"""SELECT id, file_path, duration_ms FROM tracks
+             WHERE id IN ({placeholders}) AND source='local' AND file_path IS NOT NULL""",
+        tuple(ids),
+    )
+
+    repaired = 0
+    failed: list[dict] = []
+    skipped = 0
+
+    for row in rows:
+        src = row["file_path"]
+        if not src or not Path(src).exists():
+            skipped += 1
+            continue
+
+        suffix = Path(src).suffix or ".mp3"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            dst = tmp.name
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y", "-i", src, "-c:a", "copy",
+                "-map", "0:a:0", dst,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60.0)
+            if proc.returncode != 0:
+                failed.append({
+                    "track_id": row["id"], "path": src,
+                    "error": (stderr.decode(errors="ignore").strip() or "ffmpeg non-zero exit")[:300],
+                })
+                Path(dst).unlink(missing_ok=True)
+                continue
+
+            # Validate the repacked file has a duration.
+            check_proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                dst,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, _ = await asyncio.wait_for(check_proc.communicate(), timeout=8.0)
+            try:
+                new_ms = int(float(out.decode().strip()) * 1000)
+            except (ValueError, AttributeError):
+                new_ms = 0
+            if new_ms <= 0:
+                failed.append({
+                    "track_id": row["id"], "path": src,
+                    "error": "Repacked file has no readable duration",
+                })
+                Path(dst).unlink(missing_ok=True)
+                continue
+
+            # Atomic replace (preserves inode-pointing playlists etc).
+            os.replace(dst, src)
+
+            # Update tracks.duration_ms if it drifted.
+            if abs(new_ms - (row["duration_ms"] or 0)) > 1000:
+                await deps.db.execute(
+                    "UPDATE tracks SET duration_ms = ? WHERE id = ?",
+                    (new_ms, row["id"]),
+                )
+            repaired += 1
+        except asyncio.TimeoutError:
+            failed.append({
+                "track_id": row["id"], "path": src,
+                "error": "ffmpeg timeout >60s (file too large or unresponsive)",
+            })
+            Path(dst).unlink(missing_ok=True)
+        except Exception as e:
+            failed.append({
+                "track_id": row["id"], "path": src,
+                "error": str(e)[:300],
+            })
+            Path(dst).unlink(missing_ok=True)
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "requested": len(ids),
+        "repaired": repaired,
+        "skipped": skipped,
+        "failed": failed,
+    }
+
+
 @router.post("/fix-years-itunes")
 async def fix_years_from_itunes():
     """Fill missing album years from the iTunes Search API.
