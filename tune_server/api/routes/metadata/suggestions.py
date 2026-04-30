@@ -1071,7 +1071,34 @@ _GENRE_MAP = {
 }
 
 
-def _normalize_genre(tags: list[str]) -> str | None:
+def _normalize_genre(tags: list[str], allowed: dict[str, str] | None = None) -> str | None:
+    """Pick a genre from external service tags.
+
+    When ``allowed`` is provided (lowercase → original-case map of the user's
+    existing library genres), only return a value that is already in that
+    vocabulary. We never invent new genres in that mode — better to leave the
+    album empty than pollute the library with arbitrary Last.fm/Discogs tags.
+    """
+    if allowed is not None:
+        # 1) Direct hit in the user's existing genres (case-insensitive).
+        for tag in tags:
+            t = tag.strip()
+            if not t:
+                continue
+            hit = allowed.get(t.lower())
+            if hit:
+                return hit
+        # 2) Synonym → canonical bucket via _GENRE_MAP, but only if that
+        #    bucket already exists in the user's library.
+        for tag in tags:
+            bucket = _GENRE_MAP.get(tag.lower().strip())
+            if bucket:
+                hit = allowed.get(bucket.lower())
+                if hit:
+                    return hit
+        return None
+
+    # Legacy / unconstrained path — keep for callers that haven't migrated.
     for tag in tags:
         normalized = _GENRE_MAP.get(tag.lower().strip())
         if normalized:
@@ -1107,6 +1134,17 @@ async def fix_genres():
 
     if not rows:
         return {"ok": True, "total": 0, "fixed": 0}
+
+    # Build the user's existing genre vocabulary so external service tags
+    # are normalized into something already used in the library, rather
+    # than introducing arbitrary new labels (e.g. "Bebop" → "Jazz" only
+    # if "Jazz" is already in the library).
+    genre_rows = await deps.db.fetchall(
+        "SELECT DISTINCT genre FROM albums WHERE genre IS NOT NULL AND genre <> ''"
+    )
+    allowed_genres: dict[str, str] = {
+        (r["genre"]).lower(): r["genre"] for r in genre_rows if r["genre"]
+    }
 
     fixed = 0
     results = []
@@ -1144,7 +1182,7 @@ async def fix_genres():
                         if resp.status == 200:
                             data = await resp.json()
                             tags = [t["name"] for t in data.get("album", {}).get("tags", {}).get("tag", [])]
-                            genre = _normalize_genre(tags)
+                            genre = _normalize_genre(tags, allowed=allowed_genres)
                 except Exception:
                     pass
 
@@ -1164,7 +1202,7 @@ async def fix_genres():
                             data = await resp.json()
                             for hit in data.get("results", []):
                                 styles = hit.get("style", []) + hit.get("genre", [])
-                                genre = _normalize_genre(styles)
+                                genre = _normalize_genre(styles, allowed=allowed_genres)
                                 if genre:
                                     break
                         elif resp.status == 429:
