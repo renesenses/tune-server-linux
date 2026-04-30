@@ -1448,6 +1448,17 @@ class SmartPlaylistRepo:
             elif op == "starts_with":
                 conditions.append(f"{col} LIKE ?")
                 params.append(f"{value}%")
+            elif op == "branch_of":
+                # Walk the user's genre tree: match the value itself + all
+                # its direct children. Only meaningful for the genre column
+                # but we accept it on any text col (silently no-ops if the
+                # value has no entries in the tree).
+                from tune_server.library.genre_tree import expand_branch
+                branch = expand_branch(str(value))
+                if branch:
+                    placeholders = ",".join("?" for _ in branch)
+                    conditions.append(f"{col} IN ({placeholders})")
+                    params.extend(sorted(branch))
 
         where = ""
         if conditions:

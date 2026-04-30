@@ -50,6 +50,34 @@ async def get_track(track_id: int):
     return track
 
 
+@router.get("/genre-tree")
+async def get_genre_tree():
+    """Return the user's genre tree (parent → list of subgenres).
+
+    Hierarchical filtering uses this map without changing the flat-string
+    `albums.genre` storage. A parent genre rule expands to itself + all
+    direct children (Smart Playlists `branch_of` operator).
+    """
+    from tune_server.library import genre_tree
+    return {"tree": genre_tree.load()}
+
+
+@router.put("/genre-tree")
+async def put_genre_tree(body: dict):
+    """Replace the genre tree. Body: {"tree": {parent: [child, ...]}}.
+
+    Validation is lenient — empty parents and non-string entries are
+    silently dropped. Cache invalidates on save so the next read sees
+    the new tree without server restart.
+    """
+    from tune_server.library import genre_tree
+    tree = body.get("tree")
+    if not isinstance(tree, dict):
+        raise HTTPException(status_code=400, detail="Body must contain 'tree' (object)")
+    genre_tree.save(tree)
+    return {"ok": True, "tree": genre_tree.load()}
+
+
 @router.get("/tracks/{track_id}/all-tags")
 async def get_track_all_tags(track_id: int):
     """Return EVERY metadata field on a track: DB columns + every raw tag
