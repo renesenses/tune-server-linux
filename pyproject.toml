@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tune-server"
-version = "0.7.54"
+version = "0.7.55"
 description = "Network-accessible music server with multi-room playback"
 requires-python = ">=3.11"
 dependencies = [
@@ -18,14 +18,19 @@ dependencies = [
     "pyatv>=0.14",
     "zeroconf>=0.131",
     "sounddevice>=0.4",
-    "numpy>=1.26",
+    # Pin to <2.0 so the wheel comes from manylinux_2_17 (gcc 7 baseline,
+    # GLIBCXX_3.4.22). numpy 2.1+ moved to manylinux_2_28 which requires
+    # GLIBCXX_3.4.32 — incompatible with the libstdc++ bundled by
+    # PyInstaller from the ubuntu-22.04 release runner. Reported by Eric
+    # on 2026-04-29 (Linux tar.gz crashed at startup).
+    "numpy>=1.26,<2.0",
     "tidalapi>=0.7",
     "yt-dlp>=2024.1",
     "aiohttp>=3.9",
     "aiohttp_socks>=0.10",
     "watchfiles>=0.21",
     "pydantic-settings>=2.1",
-    "Pillow>=10.2",
+    "Pillow>=10.2,<11",  # Pillow 11+ ships manylinux_2_28 wheels (GLIBCXX_3.4.32)
     "structlog>=24.1",
     "python-multipart>=0.0.6",
     "spotipy>=2.24.0",

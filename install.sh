@@ -56,6 +56,21 @@ else
 fi
 echo "==> Detected install mode: $MODE"
 
+# Binary mode portability check: the PyInstaller bundle ships its own
+# libstdc++.so.6, but newer wheels (numpy ≥ 2.1, Pillow ≥ 11) require
+# GLIBCXX_3.4.32+ which the build runner's libstdc++ doesn't carry. We
+# pinned those wheels in v0.7.55 to manylinux_2_17 baseline to avoid the
+# drift, but old binaries from earlier releases will still crash on
+# Ubuntu < 22.04 / CentOS 7 / Debian 11. Fail-fast with a clear hint.
+if [[ "$MODE" == "binary" ]]; then
+    if ! /sbin/ldconfig -p | grep -q libstdc++.so.6; then
+        echo "Error: libstdc++.so.6 missing on this system."
+        echo "  apt install libstdc++6  (Debian/Ubuntu)"
+        echo "  or use the source install: git clone + pip install -e ."
+        exit 1
+    fi
+fi
+
 echo "==> Installing system dependencies..."
 apt-get update -qq
 if [[ "$MODE" == "source" ]]; then
