@@ -529,38 +529,35 @@ class SAAlbumRepo:
             winner = members[0]
             losers = members[1:]
 
+            loser_ids = [m["id"] for m in losers]
+
             # 1. Delete tracks in losers that share the same file_path as a
             #    track already in the winner (avoids duplicate file refs after
             #    reassignment).
             await self._db.sa_execute(
                 sa.text(
                     """DELETE FROM tracks
-                        WHERE album_id IN :loser_ids
+                        WHERE album_id = ANY(:loser_ids)
                           AND file_path IS NOT NULL
                           AND file_path IN (
                               SELECT file_path FROM tracks
                                WHERE album_id = :winner_id
                                  AND file_path IS NOT NULL
                           )"""
-                ),
-                {
-                    "loser_ids": tuple(m["id"] for m in losers),
-                    "winner_id": winner["id"],
-                }
+                ).bindparams(loser_ids=loser_ids, winner_id=winner["id"])
             )
 
             # 2. Reassign remaining loser tracks to the winner.
-            for loser in losers:
+            for loser_id in loser_ids:
                 await self._db.sa_execute(
                     sa.text(
                         "UPDATE tracks SET album_id = :winner WHERE album_id = :loser"
-                    ),
-                    {"winner": winner["id"], "loser": loser["id"]}
+                    ).bindparams(winner=winner["id"], loser=loser_id)
                 )
 
             # 3. Delete loser albums.
             await self._db.sa_execute(
-                albums.delete().where(albums.c.id.in_([m["id"] for m in losers]))
+                albums.delete().where(albums.c.id.in_(loser_ids))
             )
             merged += len(losers)
 
@@ -570,8 +567,7 @@ class SAAlbumRepo:
                     """UPDATE albums SET track_count = (
                             SELECT COUNT(*) FROM tracks WHERE album_id = :wid
                        ) WHERE id = :wid"""
-                ),
-                {"wid": winner["id"]}
+                ).bindparams(wid=winner["id"])
             )
 
             groups_processed.append({
