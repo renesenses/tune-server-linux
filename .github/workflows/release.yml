@@ -559,30 +559,16 @@ jobs:
       - name: Update mozaiklabs.fr download page
         if: success()
         env:
+          # New simple shared-secret webhook (App\Http\Controllers\ReleaseWebhookController).
+          # Replaces the old HMAC GitHub-style endpoint that was silently failing.
+          # Set TUNE_RELEASE_WEBHOOK_SECRET in repo secrets, mirrored in the
+          # mozaiklabs container env (TUNE_RELEASE_WEBHOOK_SECRET).
           WEBHOOK_SECRET: ${{ secrets.MOZAIKLABS_WEBHOOK_SECRET }}
         run: |
           VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
-          BASE_URL="https://github.com/renesenses/tune-server-linux/releases/download/v${VERSION}"
-
-          LINUX_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-linux.tar.gz" 2>/dev/null || echo 0)
-          MACOS_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-macos.tar.gz" 2>/dev/null || echo 0)
-          MACOS_DMG_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-macos.dmg" 2>/dev/null || echo 0)
-          WINDOWS_SIZE=$(stat -c%s "artifacts/tune-server-${VERSION}-windows.zip" 2>/dev/null || echo 0)
-
-          # Build GitHub-style webhook payload
-          PAYLOAD=$(cat <<EOF
-          {"action":"published","repository":{"name":"tune-server-linux","full_name":"renesenses/tune-server-linux"},"release":{"tag_name":"v${VERSION}","name":"v${VERSION}","html_url":"${BASE_URL}","assets":[{"name":"tune-server-${VERSION}-linux.tar.gz","size":${LINUX_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-linux.tar.gz"},{"name":"tune-server-${VERSION}-macos.tar.gz","size":${MACOS_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-macos.tar.gz"},{"name":"tune-server-${VERSION}-macos.dmg","size":${MACOS_DMG_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-macos.dmg"},{"name":"tune-server-${VERSION}-windows.zip","size":${WINDOWS_SIZE},"browser_download_url":"${BASE_URL}/tune-server-${VERSION}-windows.zip"}]}}
-          EOF
-          )
-          PAYLOAD=$(echo "$PAYLOAD" | tr -d '\n' | sed 's/  */ /g')
-
-          # Compute HMAC signature
-          SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $2}')"
-
-          curl -sf -X POST "https://mozaiklabs.fr/webhooks/github/release" \
+          curl -sf -X POST "https://mozaiklabs.fr/api/webhooks/tune-release" \
             -H "Content-Type: application/json" \
-            -H "X-GitHub-Event: release" \
-            -H "X-Hub-Signature-256: ${SIGNATURE}" \
-            -d "$PAYLOAD" \
-            && echo "mozaiklabs.fr updated to v${VERSION}" \
-            || echo "Warning: mozaiklabs.fr update failed (non-blocking)"
+            -H "X-Tune-Webhook-Secret: ${WEBHOOK_SECRET}" \
+            -d "{\"version\":\"${VERSION}\"}" \
+            && echo "mozaiklabs.fr deploy job dispatched for v${VERSION}" \
+            || echo "Warning: mozaiklabs.fr webhook failed (non-blocking) — check repo secret + container env."
