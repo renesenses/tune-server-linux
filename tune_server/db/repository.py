@@ -1344,8 +1344,8 @@ class SmartPlaylistRepo:
                      max_tracks: int = 200, description: str | None = None) -> int:
         result = await self._db.execute(
             """INSERT INTO smart_playlists (name, description, rules, match_mode,
-               sort_by, sort_order, max_tracks, auto_refresh, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               sort_by, sort_order, max_tracks, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                RETURNING id""",
             (name, description, rules, match_mode, sort_by, sort_order, max_tracks),
         )
