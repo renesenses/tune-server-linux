@@ -647,6 +647,90 @@ async def history_dashboard(
             tuple(params),
         )
 
+    async def q_streak():
+        # Longest current consecutive-day streak (counting back from today)
+        # + longest historical streak overall.
+        date_expr = "DATE(ph.played_at)" if not is_postgres else "DATE(ph.played_at)"
+        rows = await deps.db.fetchall(
+            f"""SELECT DISTINCT {date_expr} as d
+                FROM playback_history ph
+                ORDER BY d DESC""",
+        )
+        if not rows:
+            return {"current": 0, "best": 0, "last_day": None}
+        # Convert to a sorted set of date strings for portability.
+        from datetime import date as _date, timedelta as _td
+        days = []
+        for r in rows:
+            v = r["d"]
+            if isinstance(v, str):
+                try: v = _date.fromisoformat(v[:10])
+                except Exception: continue
+            days.append(v)
+        days = sorted(set(days), reverse=True)
+        if not days:
+            return {"current": 0, "best": 0, "last_day": None}
+        today = _date.today()
+        # Current streak: from today (or yesterday — listening today not
+        # required) walk backward as long as days are consecutive.
+        current = 0
+        cursor = today
+        if days[0] == today:
+            current = 1
+            cursor = today - _td(days=1)
+            for d in days[1:]:
+                if d == cursor:
+                    current += 1
+                    cursor -= _td(days=1)
+                else:
+                    break
+        elif days[0] == today - _td(days=1):
+            # No play today yet — "yesterday-anchored" streak still counts.
+            current = 1
+            cursor = today - _td(days=2)
+            for d in days[1:]:
+                if d == cursor:
+                    current += 1
+                    cursor -= _td(days=1)
+                else:
+                    break
+        # Best historical streak.
+        best = 1
+        run = 1
+        for i in range(1, len(days)):
+            if days[i] == days[i-1] - _td(days=1):
+                run += 1
+                if run > best: best = run
+            else:
+                run = 1
+        return {
+            "current": current,
+            "best": best,
+            "last_day": days[0].isoformat(),
+        }
+
+    async def q_on_this_day():
+        # Tracks played on this calendar day in past years.
+        if is_postgres:
+            sql = """SELECT track_title, artist_name, album_title, cover_path,
+                            played_at, EXTRACT(YEAR FROM played_at)::INTEGER as year
+                     FROM playback_history
+                     WHERE EXTRACT(MONTH FROM played_at) = EXTRACT(MONTH FROM CURRENT_DATE)
+                       AND EXTRACT(DAY   FROM played_at) = EXTRACT(DAY   FROM CURRENT_DATE)
+                       AND DATE(played_at) < CURRENT_DATE
+                     ORDER BY played_at DESC
+                     LIMIT 30"""
+        else:
+            sql = """SELECT track_title, artist_name, album_title, cover_path,
+                            played_at,
+                            CAST(strftime('%Y', played_at) AS INTEGER) as year
+                     FROM playback_history
+                     WHERE strftime('%m-%d', played_at) = strftime('%m-%d', 'now')
+                       AND DATE(played_at) < DATE('now')
+                     ORDER BY played_at DESC
+                     LIMIT 30"""
+        return await deps.db.fetchall(sql)
+
     async def q_completion():
         # Completed = listened_ms >= 0.85 * duration_ms. Both NULL/0
         # fields fall through to "skipped" so the bucket totals add up
@@ -663,9 +747,11 @@ async def history_dashboard(
 
     # Fan out — total wall time = max query, not sum.
     (totals_row, top_artists, top_albums, top_tracks, trend, hourly,
-     by_zone, by_source, by_genre, completion_row) = await asyncio.gather(
+     by_zone, by_source, by_genre, streak, on_this_day,
+     completion_row) = await asyncio.gather(
         q_totals(), q_top_artists(), q_top_albums(), q_top_tracks(),
         q_trend(), q_hourly(), q_by_zone(), q_by_source(), q_by_genre(),
+        q_streak(), q_on_this_day(),
         q_completion(),
     )
 
@@ -713,6 +799,16 @@ async def history_dashboard(
         "by_genre": [
             {"genre": r["genre_label"], "plays": r["plays"],
              "listening_ms": r["listening_ms"]} for r in by_genre],
+        "streak": streak,
+        "on_this_day": [
+            {
+                "track_title": r["track_title"],
+                "artist_name": r["artist_name"],
+                "album_title": r["album_title"],
+                "cover_path": r["cover_path"],
+                "played_at": str(r["played_at"]) if r["played_at"] else None,
+                "year": int(r["year"]) if r.get("year") else None,
+            } for r in on_this_day],
         "completion": {
             "completed": int(completion_row["completed"] or 0) if completion_row else 0,
             "skipped": int(completion_row["skipped"] or 0) if completion_row else 0,
