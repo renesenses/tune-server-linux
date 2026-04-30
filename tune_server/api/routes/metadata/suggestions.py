@@ -1248,6 +1248,58 @@ _ARTIST_NORMALIZE_RE = re.compile(
 )
 
 
+# Ordered keyword → family classifier for user-curated genres. First match
+# wins (so "Pop-Rock" → rock, not pop). The aim is family-level coherence
+# voting: an artist whose albums are 90% jazz-something (Jazz / Contemporary
+# Jazz / Jazz US / Jazz Europe) should still propagate, even though no
+# specific bucket reaches the 70% threshold by itself.
+_GENRE_FAMILY_RULES: list[tuple[str, str]] = [
+    ("soul", "soul-funk"),
+    ("funk", "soul-funk"),
+    ("r&b", "soul-funk"),
+    ("rnb", "soul-funk"),
+    ("jazz", "jazz"),
+    ("classical", "classical"),
+    ("baroque", "classical"),
+    ("opera", "classical"),
+    ("orchestral", "classical"),
+    ("blues", "blues"),
+    ("chanson", "chanson"),
+    ("variét", "chanson"),
+    ("bossa", "world"),
+    ("afro", "world"),
+    ("latin", "world"),
+    ("reggae", "world"),
+    ("tango", "world"),
+    ("world", "world"),
+    ("electro", "electro"),
+    ("electronic", "electro"),
+    ("techno", "electro"),
+    ("ambient", "electro"),
+    ("idm", "electro"),
+    ("house", "electro"),
+    ("folk", "folk"),
+    ("country", "country"),
+    ("soundtrack", "soundtrack"),
+    ("film", "soundtrack"),
+    ("rap", "hip-hop"),
+    ("hip-hop", "hip-hop"),
+    ("hip hop", "hip-hop"),
+    ("metal", "metal"),
+    ("punk", "punk"),
+    ("rock", "rock"),
+    ("pop", "pop"),
+]
+
+
+def _genre_family(genre: str) -> str:
+    g = (genre or "").lower()
+    for kw, fam in _GENRE_FAMILY_RULES:
+        if kw in g:
+            return fam
+    return "other"
+
+
 def _normalize_artist_for_grouping(name: str) -> str:
     """Strip ensemble suffixes / prefixes so 'Charlie Parker', 'Charlie
     Parker Quartet', 'The Charlie Parker Quintet', 'Charlie Parker and
@@ -1352,6 +1404,116 @@ async def fix_genres_by_artist_fuzzy(min_coherence: float = 0.7):
         "fixed": fixed,
         "skipped_low_coherence": skipped_low_coherence,
         "skipped_no_known_genre": skipped_no_known_genre,
+        "min_coherence": min_coherence,
+        "details": details,
+    }
+
+
+@router.post("/fix-genres-by-family")
+async def fix_genres_by_family(min_coherence: float = 0.7):
+    """Family-aware genre propagation across fuzzy artist groups.
+
+    Same grouping as fuzzy (collapses ensemble suffixes). Then per artist
+    group, classifies every known genre into a family (jazz / soul-funk /
+    rock / classical / electro / world / chanson / blues / folk / country /
+    soundtrack / hip-hop / metal / punk / pop / other).
+
+    If the dominant family reaches ``min_coherence``, the most common
+    specific genre within that family is propagated to the orphan albums.
+
+    Designed for libraries with curated subgenres (Jazz, Contemporary Jazz,
+    Jazz US, Jazz Europe…) where strict per-bucket voting fails because
+    the count is split across siblings.
+    """
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, al.genre, al.artist_id, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE al.artist_id IS NOT NULL""",
+    )
+
+    SKIP_NAMES = {
+        "various artists", "various", "va", "v.a.",
+        "unknown artist", "unknown", "?",
+        "compilation", "compilations",
+    }
+
+    from collections import Counter, defaultdict
+    # group_key -> family_name -> count_of_known_albums
+    family_counts: dict[str, Counter] = defaultdict(Counter)
+    # group_key -> family_name -> Counter[specific_genre]
+    family_specific: dict[str, dict[str, Counter]] = defaultdict(lambda: defaultdict(Counter))
+    by_group_missing: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
+    group_display: dict[str, str] = {}
+
+    for row in rows:
+        name = (row["artist_name"] or "").strip()
+        if not name or name.lower() in SKIP_NAMES:
+            continue
+        key = _normalize_artist_for_grouping(name)
+        if not key:
+            continue
+        if key not in group_display or len(name) < len(group_display[key]):
+            group_display[key] = name
+        g = (row["genre"] or "").strip()
+        if g:
+            fam = _genre_family(g)
+            family_counts[key][fam] += 1
+            family_specific[key][fam][g] += 1
+        else:
+            by_group_missing[key].append((row["id"], row["title"] or "", name))
+
+    fixed = 0
+    skipped_low_coherence = 0
+    skipped_no_known_genre = 0
+    skipped_only_other_family = 0
+    details: list[dict] = []
+
+    for key, missing in by_group_missing.items():
+        counter = family_counts.get(key)
+        if not counter:
+            skipped_no_known_genre += len(missing)
+            continue
+        total_known = sum(counter.values())
+        # Pick top family (excluding "other" — never a confident family).
+        non_other = Counter({f: c for f, c in counter.items() if f != "other"})
+        if not non_other:
+            skipped_only_other_family += len(missing)
+            continue
+        top_family, top_count = non_other.most_common(1)[0]
+        coherence = top_count / total_known if total_known else 0.0
+        if coherence < min_coherence:
+            skipped_low_coherence += len(missing)
+            continue
+        # Most common specific genre within that family.
+        specific_counter = family_specific[key][top_family]
+        target_genre, _ = specific_counter.most_common(1)[0]
+        for album_id, title, original_artist in missing:
+            await deps.db.execute(
+                "UPDATE albums SET genre = ? WHERE id = ?", (target_genre, album_id),
+            )
+            fixed += 1
+            if len(details) < 200:
+                details.append({
+                    "album": title,
+                    "artist": original_artist,
+                    "group": group_display.get(key, key),
+                    "family": top_family,
+                    "genre": target_genre,
+                    "family_coherence": round(coherence, 2),
+                    "based_on": total_known,
+                })
+
+    await deps.db.commit()
+
+    total_candidates = sum(len(m) for m in by_group_missing.values())
+    return {
+        "ok": True,
+        "total": total_candidates,
+        "fixed": fixed,
+        "skipped_low_coherence": skipped_low_coherence,
+        "skipped_no_known_genre": skipped_no_known_genre,
+        "skipped_only_other_family": skipped_only_other_family,
         "min_coherence": min_coherence,
         "details": details,
     }
