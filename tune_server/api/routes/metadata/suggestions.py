@@ -1274,8 +1274,9 @@ async def fix_years_from_lastfm():
     import asyncio
     import aiohttp
     from tune_server.config import settings
+    from tune_server.api.routes.services import get_credential
 
-    api_key = getattr(settings, "lastfm_api_key", "")
+    api_key = await get_credential("lastfm", "api_key") or getattr(settings, "lastfm_api_key", "")
     if not api_key:
         raise HTTPException(status_code=400, detail="Last.fm API key not configured")
 
@@ -1373,8 +1374,9 @@ async def fix_years_from_discogs():
     import aiohttp
     import re
     from tune_server.config import settings
+    from tune_server.api.routes.services import get_credential
 
-    token = settings.discogs_token
+    token = await get_credential("discogs", "token") or settings.discogs_token
     if not token:
         raise HTTPException(status_code=400, detail="Discogs token not configured")
 
@@ -1660,9 +1662,12 @@ async def fix_genres():
     import aiohttp
     import re
     from tune_server.config import settings
+    from tune_server.api.routes.services import get_credential
 
-    lastfm_key = settings.lastfm_api_key
-    discogs_token = settings.discogs_token
+    # Prefer DB-stored credentials (set via Paramètres → Services UI),
+    # fall back to env-loaded settings for legacy installs.
+    lastfm_key = await get_credential("lastfm", "api_key") or settings.lastfm_api_key
+    discogs_token = await get_credential("discogs", "token") or settings.discogs_token
 
     if not lastfm_key and not discogs_token:
         raise HTTPException(status_code=400, detail="No Last.fm or Discogs credentials configured")
