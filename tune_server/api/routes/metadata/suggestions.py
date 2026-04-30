@@ -790,6 +790,115 @@ async def repair_mp3_files(body: dict):
     }
 
 
+@router.post("/reclassify-genres-by-path")
+async def reclassify_genres_by_path(dry_run: bool = False, min_coherence: float = 0.7):
+    """Promote albums from a parent genre to a more specific subgenre when
+    the file path encodes the subgenre.
+
+    Bertrand's library is organized as ``/data/music/NEW_FLAC/JAZZ US/<artist>/...``
+    which carries more information than the (often parent-level) genre
+    tag. We walk each album's first track path, look for path components
+    that match a child of the user's genre tree, and reclassify when:
+      1. the current album.genre is the parent of that child (or empty),
+      2. the path-detected subgenre is different from the current genre.
+
+    Set ``dry_run=true`` to get the proposed changes without persisting.
+    """
+    from tune_server.library.genre_tree import load as load_tree
+
+    tree = load_tree()
+
+    # Build (lowercased child name → canonical case + parent) lookup, plus
+    # a few common path-style aliases so e.g. 'JAZZ US' / 'jazz_us' / 'Jazz-US'
+    # all resolve to 'Jazz US'.
+    def normalize_path_part(s: str) -> str:
+        return re.sub(r"[\s_\-]+", " ", s).strip().lower()
+
+    child_lookup: dict[str, tuple[str, str]] = {}
+    for parent, children in tree.items():
+        for child in children:
+            key = normalize_path_part(child)
+            child_lookup[key] = (child, parent)
+
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, al.genre, MIN(t.file_path) as file_path
+             FROM albums al
+             JOIN tracks t ON t.album_id = al.id
+            WHERE t.file_path IS NOT NULL
+            GROUP BY al.id""",
+    )
+
+    if not rows:
+        return {"ok": True, "scanned": 0, "fixed": 0, "suggestions": []}
+
+    suggestions: list[dict] = []
+    fixed = 0
+    skipped_no_match = 0
+    skipped_already_specific = 0
+
+    for row in rows:
+        path = row["file_path"]
+        if not path:
+            continue
+        current_genre = (row["genre"] or "").strip()
+        # Walk path components from broadest to most specific.
+        parts = re.split(r"[/\\]", path)
+        match: tuple[str, str] | None = None  # (canonical_subgenre, parent)
+        for part in parts:
+            key = normalize_path_part(part)
+            if not key:
+                continue
+            hit = child_lookup.get(key)
+            if hit:
+                match = hit
+                break
+        if not match:
+            skipped_no_match += 1
+            continue
+        detected_sub, detected_parent = match
+
+        # Only reclassify when current genre is the parent of the detected
+        # subgenre (the path is more specific than the tag). If the current
+        # genre is already the same subgenre, or a different parent
+        # entirely, leave the album alone — the user knows better than
+        # the path.
+        if current_genre.lower() == detected_sub.lower():
+            skipped_already_specific += 1
+            continue
+        if current_genre and current_genre.lower() != detected_parent.lower():
+            continue
+
+        suggestions.append({
+            "album_id": row["id"],
+            "title": row["title"],
+            "current": current_genre or None,
+            "suggested": detected_sub,
+            "parent": detected_parent,
+            "from_path_part": next(p for p in parts if normalize_path_part(p) == normalize_path_part(detected_sub)),
+        })
+
+        if not dry_run:
+            await deps.db.execute(
+                "UPDATE albums SET genre = ? WHERE id = ?",
+                (detected_sub, row["id"]),
+            )
+            fixed += 1
+
+    if not dry_run:
+        await deps.db.commit()
+
+    return {
+        "ok": True,
+        "scanned": len(rows),
+        "fixed": fixed,
+        "skipped_no_match": skipped_no_match,
+        "skipped_already_specific": skipped_already_specific,
+        "suggestions_total": len(suggestions),
+        "dry_run": dry_run,
+        "details": suggestions[:200],
+    }
+
+
 @router.post("/fix-years-itunes")
 async def fix_years_from_itunes():
     """Fill missing album years from the iTunes Search API.
