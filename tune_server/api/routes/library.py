@@ -1069,8 +1069,14 @@ async def update_album(album_id: int, req: AlbumUpdateRequest):
 
 @router.post("/albums/merge-duplicates")
 async def merge_duplicate_albums():
-    merged = await deps.album_repo.merge_duplicates()
-    return {"merged": merged}
+    """Merge albums that share normalized title + artist within the same
+    quality tier. The repo decides keep/drop and handles duplicate track
+    rows. Returns groups_merged, albums_deleted, details."""
+    result = await deps.album_repo.merge_duplicates()
+    if isinstance(result, int):
+        # Legacy SQLite repo returns an int.
+        return {"merged": result}
+    return result
 
 
 @router.delete("/albums/{album_id}", status_code=204)

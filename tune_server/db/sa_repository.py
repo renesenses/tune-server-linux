@@ -460,6 +460,137 @@ class SAAlbumRepo:
             albums.delete().where(albums.c.id == album_id)
         )
 
+    async def merge_duplicates(self) -> dict:
+        """Merge albums that look like duplicates after light normalization.
+
+        Two albums are considered duplicates when they share:
+          - the same case-insensitive trimmed title,
+          - the same case-insensitive trimmed artist name,
+          - the same quality tier (we group sample_rate into CD-44.1/48,
+            hi-res 88+, DSD 2.8M+ — never merge across tiers because the
+            scanner intentionally splits albums by quality).
+
+        Within each duplicate group:
+          - The album with the most tracks wins (most likely the canonical entry).
+          - All tracks of the losing albums are reassigned to the winner.
+          - When a track exists in both winner and loser pointing to the SAME
+            file_path, the duplicate track row is deleted (keeps the winner's).
+          - The losing album rows are then deleted.
+          - The winner's track_count is recomputed.
+
+        Returns a dict with merge stats and per-group details.
+        """
+        from collections import defaultdict
+
+        def quality_tier(sr: int | None) -> str:
+            sr = sr or 0
+            if sr >= 1000000:
+                return "dsd"
+            if sr >= 80000:
+                return "hires"
+            return "cd"
+
+        rows = await self._db.sa_fetchall(
+            sa.text(
+                """SELECT al.id, al.title, al.artist_id, al.sample_rate,
+                          al.format,
+                          ar.name AS artist_name,
+                          (SELECT COUNT(*) FROM tracks t WHERE t.album_id = al.id) AS track_count
+                     FROM albums al
+                     LEFT JOIN artists ar ON ar.id = al.artist_id"""
+            )
+        )
+
+        # Group by (lower title, lower artist, quality tier).
+        groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+        for r in rows:
+            title = (r.get("title") or "").strip().lower()
+            artist = (r.get("artist_name") or "").strip().lower()
+            if not title or not artist:
+                continue
+            key = (title, artist, quality_tier(r.get("sample_rate")))
+            groups[key].append({
+                "id": r["id"],
+                "title": r.get("title"),
+                "artist": r.get("artist_name"),
+                "tracks": r.get("track_count") or 0,
+                "format": r.get("format"),
+            })
+
+        merged = 0
+        groups_processed: list[dict] = []
+        deleted_track_dupes = 0
+
+        for key, members in groups.items():
+            if len(members) < 2:
+                continue
+            # Pick the winner: most tracks first, then lowest id (stable).
+            members.sort(key=lambda m: (-m["tracks"], m["id"]))
+            winner = members[0]
+            losers = members[1:]
+
+            # 1. Delete tracks in losers that share the same file_path as a
+            #    track already in the winner (avoids duplicate file refs after
+            #    reassignment).
+            await self._db.sa_execute(
+                sa.text(
+                    """DELETE FROM tracks
+                        WHERE album_id IN :loser_ids
+                          AND file_path IS NOT NULL
+                          AND file_path IN (
+                              SELECT file_path FROM tracks
+                               WHERE album_id = :winner_id
+                                 AND file_path IS NOT NULL
+                          )"""
+                ),
+                {
+                    "loser_ids": tuple(m["id"] for m in losers),
+                    "winner_id": winner["id"],
+                }
+            )
+
+            # 2. Reassign remaining loser tracks to the winner.
+            for loser in losers:
+                await self._db.sa_execute(
+                    sa.text(
+                        "UPDATE tracks SET album_id = :winner WHERE album_id = :loser"
+                    ),
+                    {"winner": winner["id"], "loser": loser["id"]}
+                )
+
+            # 3. Delete loser albums.
+            await self._db.sa_execute(
+                albums.delete().where(albums.c.id.in_([m["id"] for m in losers]))
+            )
+            merged += len(losers)
+
+            # 4. Recompute the winner's track_count.
+            await self._db.sa_execute(
+                sa.text(
+                    """UPDATE albums SET track_count = (
+                            SELECT COUNT(*) FROM tracks WHERE album_id = :wid
+                       ) WHERE id = :wid"""
+                ),
+                {"wid": winner["id"]}
+            )
+
+            groups_processed.append({
+                "title": winner["title"],
+                "artist": winner["artist"],
+                "tier": key[2],
+                "winner_id": winner["id"],
+                "winner_format": winner["format"],
+                "loser_ids": [m["id"] for m in losers],
+                "tracks_after": sum(m["tracks"] for m in members),
+            })
+
+        return {
+            "ok": True,
+            "groups_merged": len(groups_processed),
+            "albums_deleted": merged,
+            "details": groups_processed,
+        }
+
     async def search(self, query: str, limit: int = 50) -> list[Album]:
         where_clause = self._db.fts.search_where("albums", query)
         fts_query = query + "*" if self._db.engine_name == "sqlite" else query
