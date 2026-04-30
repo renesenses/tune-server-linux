@@ -1135,16 +1135,19 @@ async def fix_genres():
     if not rows:
         return {"ok": True, "total": 0, "fixed": 0}
 
-    # Build the user's existing genre vocabulary so external service tags
-    # are normalized into something already used in the library, rather
-    # than introducing arbitrary new labels (e.g. "Bebop" → "Jazz" only
-    # if "Jazz" is already in the library).
-    genre_rows = await deps.db.fetchall(
-        "SELECT DISTINCT genre FROM albums WHERE genre IS NOT NULL AND genre <> ''"
-    )
-    allowed_genres: dict[str, str] = {
-        (r["genre"]).lower(): r["genre"] for r in genre_rows if r["genre"]
-    }
+    # Opt-in: when settings.metadata_fix_genres_respect_vocabulary is True,
+    # only assign genres that already exist in the user's library. This
+    # avoids polluting a curated genre list with arbitrary Last.fm/Discogs
+    # tags. Default False so a fresh install with no genres yet still gets
+    # populated by external service tags.
+    allowed_genres: dict[str, str] | None = None
+    if settings.metadata_fix_genres_respect_vocabulary:
+        genre_rows = await deps.db.fetchall(
+            "SELECT DISTINCT genre FROM albums WHERE genre IS NOT NULL AND genre <> ''"
+        )
+        allowed_genres = {
+            (r["genre"]).lower(): r["genre"] for r in genre_rows if r["genre"]
+        }
 
     fixed = 0
     results = []

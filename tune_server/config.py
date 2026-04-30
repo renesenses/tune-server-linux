@@ -129,6 +129,13 @@ class Settings(BaseSettings):
     # Metadata
     metadata_readonly: bool = True  # When True, Tune never writes tags to audio files
 
+    # When True, /metadata/fix-genres only assigns a genre that is already
+    # present in the user's library (case-insensitive). Synonyms via
+    # _GENRE_MAP still apply, but only if the canonical bucket is itself
+    # in the existing vocabulary. Default False so a fresh install with
+    # no genres yet still gets populated by Last.fm/Discogs tags.
+    metadata_fix_genres_respect_vocabulary: bool = False
+
     # Enrichment
     discogs_token: str = ""  # Personal Discogs API token for artist images
     lastfm_api_key: str = ""  # Last.fm API key for metadata enrichment
