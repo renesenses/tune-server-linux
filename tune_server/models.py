@@ -83,6 +83,8 @@ class Album(BaseModel):
     format: Optional[str] = None
     quality: Optional[str] = None  # "hi-res", "cd", "lossy"
     bio: Optional[str] = None
+    label: Optional[str] = None
+    catalog_number: Optional[str] = None
 
 
 class TrackCredit(BaseModel):

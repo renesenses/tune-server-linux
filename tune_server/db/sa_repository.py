@@ -75,6 +75,8 @@ def _row_to_album(row) -> Album:
         format=fmt,
         quality=_quality_from_audio(sr, bd, fmt) if sr or bd or fmt else None,
         bio=row.get("bio") if "bio" in keys else None,
+        label=row.get("label") if "label" in keys else None,
+        catalog_number=row.get("catalog_number") if "catalog_number" in keys else None,
     )
 
 
