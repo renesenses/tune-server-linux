@@ -534,6 +534,73 @@ def _doubtful_reasons(row) -> list[str]:
 # Fix missing years from Tidal
 # ---------------------------------------------------------------------------
 
+@router.post("/fix-years-from-path")
+async def fix_years_from_path():
+    """Extract album year from a track's file path.
+
+    Many libraries name folders like 'Artist - 1972 - Album', 'Album (1972)',
+    '[1972] Album' or '1972 — Album'. For each album without a year, look
+    at any track's file path and pull the first 4-digit year (1900-2030).
+    Free, instant, no API call.
+    """
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, t.file_path
+           FROM albums al
+           JOIN tracks t ON t.album_id = al.id
+           WHERE (al.year IS NULL OR al.year = 0)
+             AND t.file_path IS NOT NULL
+           ORDER BY al.id""",
+    )
+
+    if not rows:
+        return {"ok": True, "total": 0, "fixed": 0}
+
+    # Group by album (one path per album).
+    seen: set[int] = set()
+    albums: list[dict] = []
+    for r in rows:
+        aid = r["id"]
+        if aid in seen:
+            continue
+        seen.add(aid)
+        albums.append({"id": aid, "title": r["title"], "file_path": r["file_path"]})
+
+    # Regex: match a 4-digit year that is NOT directly attached to other digits
+    # (avoid catching "12345" or sample rates like "44100"). Word-boundary on
+    # both sides. Range 1900-2030.
+    year_re = re.compile(r"(?<!\d)(19[0-9]{2}|20[0-3][0-9])(?!\d)")
+
+    fixed = 0
+    results: list[dict] = []
+    for a in albums:
+        # Strip the file name itself (drop the extension and digits in track
+        # numbers like "01 Track.flac"); keep just the directory path.
+        from pathlib import Path
+        parent = str(Path(a["file_path"]).parent)
+        m = year_re.search(parent)
+        if not m:
+            continue
+        year = int(m.group(1))
+        if not (1900 <= year <= 2030):
+            continue
+        await deps.db.execute(
+            "UPDATE albums SET year = ? WHERE id = ?", (year, a["id"]),
+        )
+        fixed += 1
+        if len(results) < 200:
+            results.append({"album": a["title"], "year": year, "path_hint": parent[-80:]})
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "total": len(albums),
+        "fixed": fixed,
+        "not_found": len(albums) - fixed,
+        "details": results,
+    }
+
+
 @router.post("/fix-years-tidal")
 async def fix_years_from_tidal():
     """Fill missing album years by searching Tidal.
