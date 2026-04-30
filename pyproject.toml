@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tune-server"
-version = "0.7.53"
+version = "0.7.54"
 description = "Network-accessible music server with multi-room playback"
 requires-python = ">=3.11"
 dependencies = [
@@ -22,6 +22,7 @@ dependencies = [
     "tidalapi>=0.7",
     "yt-dlp>=2024.1",
     "aiohttp>=3.9",
+    "aiohttp_socks>=0.10",
     "watchfiles>=0.21",
     "pydantic-settings>=2.1",
     "Pillow>=10.2",

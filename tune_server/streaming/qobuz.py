@@ -45,7 +45,19 @@ class QobuzService(StreamingService):
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=settings.api_timeout, connect=10)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            connector = None
+            proxy_url = settings.qobuz_proxy_url
+            if proxy_url:
+                # Akamai blacklists most Free / OVH / datacenter ASNs at the
+                # CDN edge — direct calls hit a hard 403 even with valid
+                # creds. Tunnel through the configured proxy (SOCKS5 from
+                # NordVPN/Mullvad, HTTP from a residential gateway, etc.).
+                # Other streaming services (Tidal, Deezer, Spotify) are not
+                # affected and stay on the default direct connection.
+                from aiohttp_socks import ProxyConnector
+                connector = ProxyConnector.from_url(proxy_url)
+                logger.info("qobuz_proxy_enabled", proxy=proxy_url.split("@")[-1])
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._session
 
     async def _api_get(self, endpoint: str, params: dict = None, _retry: bool = True) -> dict:

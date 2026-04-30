@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     stream_host: str = "0.0.0.0"
     stream_port: int = 8080
 
+    # Qobuz outbound proxy. Akamai blacklists most Free / OVH / datacenter
+    # ASNs at the CDN edge, so direct calls to www.qobuz.com return a hard
+    # 403 even with a valid app_id. Set this to a SOCKS5 / HTTP proxy that
+    # exits through a residential ASN (NordVPN, Mullvad, your phone's 4G,
+    # etc.) and Qobuz traffic only will be tunnelled through it. Empty
+    # = direct (default, works fine on residential ISPs).
+    qobuz_proxy_url: str | None = None
+
     # WebSocket
     ws_heartbeat_interval: int = 30  # seconds, 0 to disable
 
