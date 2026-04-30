@@ -1397,7 +1397,7 @@ class SmartPlaylistRepo:
 
             col_map = {
                 "title": "t.title", "artist": "ar.name", "album": "al.title",
-                "genre": "t.genre", "year": "al.year", "format": "t.format",
+                "genre": "al.genre", "year": "al.year", "format": "t.format",
                 "sample_rate": "t.sample_rate", "bit_depth": "t.bit_depth",
                 "source": "t.source", "composer": "t.composer",
             }
