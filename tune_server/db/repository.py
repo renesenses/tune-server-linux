@@ -1120,6 +1120,12 @@ class PlaylistRepo:
             )
             await self._db.commit()
 
+    # Alias kept in sync with SAPlaylistRepo (which had two overlapping
+    # methods named remove_track and was renamed in v0.7.56 to remove the
+    # ambiguity). The route always calls remove_track_by_id; the SQLite
+    # version only ever had the by-id signature.
+    remove_track_by_id = remove_track
+
     async def reorder_tracks(self, playlist_id: int, track_ids: list[int]) -> None:
         await self._db.execute(
             "DELETE FROM playlist_tracks WHERE playlist_id = ?",
