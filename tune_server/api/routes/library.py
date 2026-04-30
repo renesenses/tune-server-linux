@@ -617,19 +617,30 @@ async def history_dashboard(
         )
 
     async def q_by_genre():
-        # Genre is on `albums`, not on playback_history. Join through the
-        # track to find the album's genre. NULL/empty genres are bucketed
-        # as "—" so the breakdown still adds up. Aliased as `genre_label`
-        # to avoid the ambiguous-column error PG throws when GROUP BY
-        # reads the SELECT alias and the source table also has a column
-        # called `genre`.
+        # Genre is on `albums`, not on playback_history. We try two paths:
+        # 1) ph.track_id → tracks.album_id → albums  (local, freshest)
+        # 2) (ph.artist_name, ph.album_title) → albums  (streaming or rows
+        #    where track_id wasn't populated at write time — they still
+        #    carry artist_name + album_title denormalized).
+        # Aliased as `genre_label` to avoid the ambiguous-column error PG
+        # throws when GROUP BY reads the SELECT alias and a joined table
+        # has a column called `genre`.
         return await deps.db.fetchall(
-            f"""SELECT COALESCE(NULLIF(al.genre, ''), '—') as genre_label,
+            f"""SELECT COALESCE(
+                          NULLIF(al_by_track.genre, ''),
+                          NULLIF(al_by_meta.genre, ''),
+                          '—'
+                       ) as genre_label,
                        COUNT(*) as plays,
                        COALESCE(SUM(ph.listened_ms), 0) as listening_ms
                 FROM playback_history ph
                 LEFT JOIN tracks t ON t.id = ph.track_id
-                LEFT JOIN albums al ON al.id = t.album_id
+                LEFT JOIN albums al_by_track ON al_by_track.id = t.album_id
+                LEFT JOIN artists ar ON LOWER(ar.name) = LOWER(ph.artist_name)
+                LEFT JOIN albums al_by_meta
+                    ON al_by_track.id IS NULL
+                   AND LOWER(al_by_meta.title) = LOWER(ph.album_title)
+                   AND al_by_meta.artist_id = ar.id
                 {where_clause.replace('played_at', 'ph.played_at').replace('zone_id', 'ph.zone_id').replace('user_id', 'ph.user_id')}
                 GROUP BY genre_label
                 ORDER BY plays DESC""",
