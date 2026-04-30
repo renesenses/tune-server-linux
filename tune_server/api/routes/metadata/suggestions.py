@@ -534,6 +534,224 @@ def _doubtful_reasons(row) -> list[str]:
 # Fix missing years from Tidal
 # ---------------------------------------------------------------------------
 
+@router.post("/fix-years-itunes")
+async def fix_years_from_itunes():
+    """Fill missing album years from the iTunes Search API.
+
+    Public, no auth. https://itunes.apple.com/search?term=<artist+album>&entity=album
+    The Apple catalog has very deep coverage including jazz / world / obscure
+    releases. Match is fuzzy on collectionName/artistName.
+    """
+    import asyncio
+    import aiohttp
+    from difflib import SequenceMatcher
+
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE al.year IS NULL OR al.year = 0
+           ORDER BY al.title""",
+    )
+
+    if not rows:
+        return {"ok": True, "total": 0, "fixed": 0}
+
+    fixed = 0
+    not_found = 0
+    results: list[dict] = []
+
+    async with aiohttp.ClientSession() as session:
+        for row in rows:
+            album_title = (row["title"] or "").strip()
+            artist_name = (row["artist_name"] or "").strip()
+            album_id = row["id"]
+
+            if not album_title or album_title in ("Unknown Album", ""):
+                not_found += 1
+                continue
+
+            try:
+                clean = re.sub(r"\s*\(\d+k?hz[^)]*\)", "", album_title, flags=re.IGNORECASE).strip()
+                term = f"{artist_name} {clean}".strip() if artist_name and artist_name not in ("Unknown Artist", "?") else clean
+                async with session.get(
+                    "https://itunes.apple.com/search",
+                    params={"term": term, "entity": "album", "limit": "5"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status != 200:
+                        not_found += 1
+                        continue
+                    data = await resp.json()
+
+                best = None
+                best_score = 0.0
+                for hit in data.get("results", []):
+                    coll = (hit.get("collectionName") or "").lower()
+                    art = (hit.get("artistName") or "").lower()
+                    score_album = SequenceMatcher(None, coll, clean.lower()).ratio()
+                    score_artist = SequenceMatcher(None, art, artist_name.lower()).ratio() if artist_name else 1.0
+                    score = (score_album + score_artist) / 2
+                    if score > best_score:
+                        best = hit
+                        best_score = score
+
+                if best and best_score >= 0.65 and best.get("releaseDate"):
+                    raw = best["releaseDate"][:4]
+                    if raw.isdigit() and 1900 < int(raw) < 2030:
+                        year = int(raw)
+                        await deps.db.execute(
+                            "UPDATE albums SET year = ? WHERE id = ?", (year, album_id),
+                        )
+                        fixed += 1
+                        results.append({
+                            "album": album_title, "artist": artist_name,
+                            "year": year, "match_score": round(best_score, 2),
+                            "source_album": best.get("collectionName"),
+                        })
+                    else:
+                        not_found += 1
+                else:
+                    not_found += 1
+            except Exception:
+                not_found += 1
+
+            await asyncio.sleep(0.25)  # be nice to Apple's servers
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "total": len(rows),
+        "fixed": fixed,
+        "not_found": not_found,
+        "details": results[:200],
+    }
+
+
+@router.post("/fix-years-wikidata")
+async def fix_years_from_wikidata():
+    """Fill missing album years from Wikidata.
+
+    Two-step:
+    1) wbsearchentities to find the album entity (Q-ID) by label.
+    2) wbgetclaims P577 (publication date) on the matched entity.
+
+    Free, no auth. Coverage strong for famous releases, sparse for obscure ones.
+    """
+    import asyncio
+    import aiohttp
+
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE al.year IS NULL OR al.year = 0
+           ORDER BY al.title""",
+    )
+
+    if not rows:
+        return {"ok": True, "total": 0, "fixed": 0}
+
+    fixed = 0
+    not_found = 0
+    results: list[dict] = []
+    api_url = "https://www.wikidata.org/w/api.php"
+
+    async with aiohttp.ClientSession() as session:
+        for row in rows:
+            album_title = (row["title"] or "").strip()
+            artist_name = (row["artist_name"] or "").strip()
+            album_id = row["id"]
+
+            if not album_title or album_title in ("Unknown Album", ""):
+                not_found += 1
+                continue
+
+            try:
+                clean = re.sub(r"\s*\(\d+k?hz[^)]*\)", "", album_title, flags=re.IGNORECASE).strip()
+                # Step 1: search for the album entity.
+                async with session.get(
+                    api_url,
+                    params={
+                        "action": "wbsearchentities", "search": clean,
+                        "language": "en", "format": "json", "limit": "5",
+                        "type": "item",
+                    },
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as resp:
+                    if resp.status != 200:
+                        not_found += 1
+                        continue
+                    data = await resp.json()
+
+                # Pick the first hit whose description mentions "album" or
+                # the artist name (rough disambiguation).
+                qid = None
+                for hit in data.get("search", []):
+                    desc = (hit.get("description") or "").lower()
+                    if "album" in desc or (artist_name and artist_name.lower() in desc):
+                        qid = hit.get("id")
+                        break
+                if not qid and data.get("search"):
+                    qid = data["search"][0].get("id")
+                if not qid:
+                    not_found += 1
+                    continue
+
+                # Step 2: fetch P577 (publication date) on that entity.
+                async with session.get(
+                    api_url,
+                    params={
+                        "action": "wbgetclaims", "entity": qid,
+                        "property": "P577", "format": "json",
+                    },
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as resp:
+                    if resp.status != 200:
+                        not_found += 1
+                        continue
+                    cdata = await resp.json()
+
+                year = None
+                claims = cdata.get("claims", {}).get("P577", [])
+                for c in claims:
+                    val = c.get("mainsnak", {}).get("datavalue", {}).get("value", {})
+                    time_str = val.get("time", "")
+                    # Format: "+1972-01-01T00:00:00Z"
+                    if time_str.startswith("+"):
+                        raw = time_str[1:5]
+                        if raw.isdigit() and 1900 < int(raw) < 2030:
+                            year = int(raw)
+                            break
+
+                if year:
+                    await deps.db.execute(
+                        "UPDATE albums SET year = ? WHERE id = ?", (year, album_id),
+                    )
+                    fixed += 1
+                    results.append({
+                        "album": album_title, "artist": artist_name,
+                        "year": year, "qid": qid,
+                    })
+                else:
+                    not_found += 1
+            except Exception:
+                not_found += 1
+
+            await asyncio.sleep(0.25)
+
+    await deps.db.commit()
+
+    return {
+        "ok": True,
+        "total": len(rows),
+        "fixed": fixed,
+        "not_found": not_found,
+        "details": results[:200],
+    }
+
+
 @router.post("/fix-years-from-path")
 async def fix_years_from_path():
     """Extract album year from a track's file path.
