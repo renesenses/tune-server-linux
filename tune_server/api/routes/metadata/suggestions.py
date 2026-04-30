@@ -1232,6 +1232,129 @@ async def fix_genres():
     }
 
 
+_ARTIST_NORMALIZE_RE = re.compile(
+    r"\s*("
+    # Trailing suffixes
+    r"(?:and\s+his|and\s+her|with\s+his|with\s+her)\s+.+|"
+    r"&\s+(?:the|his|her).+|"
+    r"(?:feat\.?|featuring)\s+.+|"
+    r"(?:Quartet|Quintet|Trio|Sextet|Septet|Octet|Nonet|"
+    r"Orchestra|Big\s*Band|Band|Ensemble|Group|Project|Combo|"
+    r"All[\s-]?Stars?|All[\s-]?Star\s+\w+|Collective|Players)"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_artist_for_grouping(name: str) -> str:
+    """Strip ensemble suffixes / prefixes so 'Charlie Parker', 'Charlie
+    Parker Quartet', 'The Charlie Parker Quintet', 'Charlie Parker and
+    his Orchestra' all collapse to 'charlie parker'."""
+    if not name:
+        return ""
+    n = name.strip()
+    # Strip leading "The "
+    if n.lower().startswith("the "):
+        n = n[4:]
+    # Iteratively strip trailing ensemble suffix (handles "Charlie Parker
+    # Quartet" but also nested "Charlie Parker All Stars Quartet").
+    for _ in range(3):
+        new = _ARTIST_NORMALIZE_RE.sub("", n).strip()
+        if new == n:
+            break
+        n = new
+    return n.lower().strip()
+
+
+@router.post("/fix-genres-by-artist-fuzzy")
+async def fix_genres_by_artist_fuzzy(min_coherence: float = 0.7):
+    """Same as fix-genres-by-artist but groups artist-name variants together.
+
+    Useful for libraries with many ensemble variants ('Charlie Parker',
+    'Charlie Parker Quartet', 'The Charlie Parker Quintet', 'Charlie Parker
+    and his Orchestra' — all considered the same musician for genre
+    propagation). The rest of the logic (coherence threshold, skip
+    Various/Unknown, no external API) is identical.
+    """
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, al.genre, al.artist_id, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE al.artist_id IS NOT NULL""",
+    )
+
+    SKIP_NAMES = {
+        "various artists", "various", "va", "v.a.",
+        "unknown artist", "unknown", "?",
+        "compilation", "compilations",
+    }
+
+    from collections import Counter, defaultdict
+    by_group_genres: dict[str, Counter] = defaultdict(Counter)
+    by_group_missing: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
+    group_display: dict[str, str] = {}
+
+    for row in rows:
+        name = (row["artist_name"] or "").strip()
+        if not name or name.lower() in SKIP_NAMES:
+            continue
+        key = _normalize_artist_for_grouping(name)
+        if not key:
+            continue
+        # Display name: shortest variant as the canonical label.
+        if key not in group_display or len(name) < len(group_display[key]):
+            group_display[key] = name
+        g = (row["genre"] or "").strip()
+        if g:
+            by_group_genres[key][g] += 1
+        else:
+            by_group_missing[key].append((row["id"], row["title"] or "", name))
+
+    fixed = 0
+    skipped_low_coherence = 0
+    skipped_no_known_genre = 0
+    details: list[dict] = []
+
+    for key, missing in by_group_missing.items():
+        counter = by_group_genres.get(key)
+        if not counter:
+            skipped_no_known_genre += len(missing)
+            continue
+        total_known = sum(counter.values())
+        top_genre, top_count = counter.most_common(1)[0]
+        coherence = top_count / total_known if total_known else 0.0
+        if coherence < min_coherence:
+            skipped_low_coherence += len(missing)
+            continue
+        for album_id, title, original_artist in missing:
+            await deps.db.execute(
+                "UPDATE albums SET genre = ? WHERE id = ?", (top_genre, album_id),
+            )
+            fixed += 1
+            if len(details) < 200:
+                details.append({
+                    "album": title,
+                    "artist": original_artist,
+                    "group": group_display.get(key, key),
+                    "genre": top_genre,
+                    "coherence": round(coherence, 2),
+                    "based_on": total_known,
+                })
+
+    await deps.db.commit()
+
+    total_candidates = sum(len(m) for m in by_group_missing.values())
+    return {
+        "ok": True,
+        "total": total_candidates,
+        "fixed": fixed,
+        "skipped_low_coherence": skipped_low_coherence,
+        "skipped_no_known_genre": skipped_no_known_genre,
+        "min_coherence": min_coherence,
+        "details": details,
+    }
+
+
 @router.post("/fix-genres-by-artist")
 async def fix_genres_by_artist(min_coherence: float = 0.7):
     """Propagate the dominant genre of an artist to their genre-less albums.
