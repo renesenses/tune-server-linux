@@ -332,14 +332,31 @@ class AlbumRepo:
     async def create(self, album: Album) -> int:
         result = await self._db.execute(
             """INSERT INTO albums (title, artist_id, year, genre, disc_count,
-               track_count, cover_path, source, source_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+               track_count, cover_path, source, source_id, label, catalog_number)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (album.title, album.artist_id, album.year, album.genre,
              album.disc_count, album.track_count, album.cover_path,
-             album.source, album.source_id),
+             album.source, album.source_id, album.label, album.catalog_number),
         )
         await self._db.commit()
         return result.lastrowid
+
+    async def update_label(self, album_id: int, label: str | None,
+                            catalog_number: str | None = None) -> None:
+        """Backfill label / catalog_number for an album that doesn't have one yet.
+
+        Used by the scanner: a scan-time tag may carry the label even if it
+        was missing on the very first track that created the album.
+        """
+        await self._db.execute(
+            """UPDATE albums
+                 SET label = COALESCE(NULLIF(label, ''), ?),
+                     catalog_number = COALESCE(NULLIF(catalog_number, ''), ?),
+                     updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?""",
+            (label, catalog_number, album_id),
+        )
+        await self._db.commit()
 
     async def get_or_create(self, title: str, artist_id: int, **kwargs) -> Album:
         existing = await self.get_by_title_and_artist(title, artist_id)

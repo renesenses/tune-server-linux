@@ -43,6 +43,8 @@ class TrackMetadata:
     has_cover: bool
     bpm: Optional[float] = None
     credits: list[dict] | None = None
+    label: Optional[str] = None
+    catalog_number: Optional[str] = None
 
 
 def _clean_text(value: str) -> str:
@@ -285,6 +287,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             disc_num = _parse_int(_get_first(tags, ["TPOS"]), 1) if tags else 1
             year_str = (_get_first(tags, ["TDRC", "TYER"]) if tags else "")
             genre = (_get_first(tags, ["TCON"]) or None) if tags else None
+            label = (_get_first(tags, ["TPUB"]) or None) if tags else None
+            catalog_number = (_get_first(tags, ["TXXX:CATALOGNUMBER", "TXXX:CATALOGNO"]) or None) if tags else None
             sample_rate = info.sample_rate  # 2822400 (DSD64), 5644800 (DSD128), etc.
             bit_depth = 1  # DSD is 1-bit
             has_cover = any(k.startswith("APIC") for k in tags.keys()) if tags else False
@@ -299,6 +303,19 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             disc_num = _parse_int(_get_first(tags, ["discnumber", "TPOS"]), 1)
             year_str = _get_first(tags, ["date", "TDRC", "TYER", "\xa9day"])
             genre = _get_first(tags, ["genre", "TCON", "\xa9gen"]) or None
+            # Label/publisher: VorbisComment uses LABEL/PUBLISHER/ORGANIZATION,
+            # ID3v2 uses TPUB, MP4 has its own iTunes atom but mutagen
+            # surfaces it as 'label' in EasyMP4. Catalog number similar.
+            label = _get_first(tags, [
+                "label", "LABEL", "publisher", "PUBLISHER",
+                "organization", "ORGANIZATION", "TPUB",
+                "----:com.apple.iTunes:LABEL",
+            ]) or None
+            catalog_number = _get_first(tags, [
+                "catalognumber", "CATALOGNUMBER", "catalogno", "CATALOGNO",
+                "TXXX:CATALOGNUMBER", "TXXX:CATALOGNO",
+                "----:com.apple.iTunes:CATALOGNUMBER",
+            ]) or None
             sample_rate = getattr(info, "sample_rate", 44100)
             bit_depth = getattr(info, "bits_per_sample", 16)
             has_cover = False
@@ -351,6 +368,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             bit_depth=bit_depth or 16,
             channels=channels or 2,
             has_cover=has_cover,
+            label=_clean_text(str(label)) if label else None,
+            catalog_number=_clean_text(str(catalog_number)) if catalog_number else None,
             bpm=bpm_value,
             credits=extracted_credits if extracted_credits else None,
         )

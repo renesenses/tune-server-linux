@@ -415,6 +415,8 @@ class SAAlbumRepo:
                 cover_path=album.cover_path,
                 source=album.source or "local",
                 source_id=album.source_id,
+                label=album.label,
+                catalog_number=album.catalog_number,
             )
         )
         return result.lastrowid
@@ -428,9 +430,30 @@ class SAAlbumRepo:
                 year=album.year,
                 genre=album.genre,
                 cover_path=album.cover_path,
+                label=album.label,
+                catalog_number=album.catalog_number,
                 updated_at=sa.func.now(),
             )
         )
+
+    async def update_label(self, album_id: int, label: str | None,
+                            catalog_number: str | None = None) -> None:
+        """Backfill label / catalog_number if the album doesn't have them yet."""
+        existing = await self._db.sa_fetchone(
+            sa.select(albums.c.label, albums.c.catalog_number).where(albums.c.id == album_id)
+        )
+        if not existing:
+            return
+        new_label = existing.get("label") or label
+        new_cat = existing.get("catalog_number") or catalog_number
+        if new_label != existing.get("label") or new_cat != existing.get("catalog_number"):
+            await self._db.sa_execute(
+                albums.update().where(albums.c.id == album_id).values(
+                    label=new_label,
+                    catalog_number=new_cat,
+                    updated_at=sa.func.now(),
+                )
+            )
 
     async def delete(self, album_id: int) -> None:
         await self._db.sa_execute(

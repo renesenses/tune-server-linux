@@ -288,14 +288,24 @@ class LibraryScanner:
                         artist_id=artist.id,
                         year=metadata.year,
                         genre=metadata.genre,
+                        label=metadata.label,
+                        catalog_number=metadata.catalog_number,
                     )
                     logger.info("album_quality_split", base=base_title, new_title=qualified_title)
+                # Backfill label/catalog_number if the album was created
+                # earlier from a track that didn't carry these tags.
+                if metadata.label or metadata.catalog_number:
+                    await self._album_repo.update_label(
+                        album.id, metadata.label, metadata.catalog_number,
+                    )
             else:
                 album = await self._album_repo.get_or_create(
                     title=base_title,
                     artist_id=artist.id,
                     year=metadata.year,
                     genre=metadata.genre,
+                    label=metadata.label,
+                    catalog_number=metadata.catalog_number,
                 )
 
             # Create track
