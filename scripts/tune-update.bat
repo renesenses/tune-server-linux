@@ -22,8 +22,8 @@ if not exist "tune-server.exe" (
 REM Discover the latest GitHub release tag so the script doesn't go stale
 REM every patch. Fall back to a known-good version if the API is blocked.
 echo [0/5] Looking up latest release...
-for /f "tokens=*" %%t in ('powershell -NoProfile -Command "try { (Invoke-RestMethod -Uri 'https://api.github.com/repos/renesenses/tune-server-linux/releases/latest' -UseBasicParsing).tag_name.TrimStart('v') } catch { Write-Output '0.7.56' }"') do set "VERSION=%%t"
-if "%VERSION%"=="" set "VERSION=0.7.56"
+for /f "tokens=*" %%t in ('powershell -NoProfile -Command "try { (Invoke-RestMethod -Uri 'https://api.github.com/repos/renesenses/tune-server-linux/releases/latest' -UseBasicParsing).tag_name.TrimStart('v') } catch { Write-Output '0.7.57' }"') do set "VERSION=%%t"
+if "%VERSION%"=="" set "VERSION=0.7.57"
 set "URL=https://github.com/renesenses/tune-server-linux/releases/download/v%VERSION%/tune-server-%VERSION%-windows.zip"
 
 echo.
