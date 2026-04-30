@@ -222,6 +222,10 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
         tags = audio.tags or {}
         info = audio.info
 
+        # Default for label / catalog (per-branch overrides below).
+        label: str | None = None
+        catalog_number: str | None = None
+
         # Extract metadata based on file type
         if isinstance(audio, FLAC):
             title = _get_first(tags, ["title"], path.stem)
@@ -232,6 +236,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             year_str = _get_first(tags, ["date", "year"])
             genre = _get_first(tags, ["genre"]) or None
+            label = _get_first(tags, ["label", "publisher", "organization"]) or None
+            catalog_number = _get_first(tags, ["catalognumber", "catalogno"]) or None
             sample_rate = info.sample_rate
             bit_depth = info.bits_per_sample or 16
             has_cover = len(audio.pictures) > 0
@@ -245,6 +251,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             disc_num = _parse_int(_get_first(tags, ["TPOS"]), 1)
             year_str = _get_first(tags, ["TDRC", "TYER"])
             genre = _get_first(tags, ["TCON"]) or None
+            label = _get_first(tags, ["TPUB"]) or None
+            catalog_number = _get_first(tags, ["TXXX:CATALOGNUMBER", "TXXX:CATALOGNO"]) or None
             sample_rate = info.sample_rate
             bit_depth = 16
             has_cover = any(k.startswith("APIC") for k in tags.keys()) if tags else False
@@ -260,6 +268,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             disc_num = disk[0] if isinstance(disk, tuple) else 1
             year_str = _get_first(tags, ["\xa9day"])
             genre = _get_first(tags, ["\xa9gen"]) or None
+            label = _get_first(tags, ["----:com.apple.iTunes:LABEL"]) or None
+            catalog_number = _get_first(tags, ["----:com.apple.iTunes:CATALOGNUMBER"]) or None
             sample_rate = info.sample_rate
             bit_depth = info.bits_per_sample if hasattr(info, "bits_per_sample") else 16
             has_cover = "covr" in tags
@@ -273,6 +283,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             year_str = _get_first(tags, ["date"])
             genre = _get_first(tags, ["genre"]) or None
+            label = _get_first(tags, ["label", "publisher", "organization"]) or None
+            catalog_number = _get_first(tags, ["catalognumber", "catalogno"]) or None
             sample_rate = info.sample_rate
             bit_depth = 16
             has_cover = False
