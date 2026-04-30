@@ -138,6 +138,7 @@ class ZoneInstance:
             id=self._zone_id,
             name=self._name,
             output_type=self._output_type,
+            output_device_id=self._output_device_id,
             volume=self._player.volume,
             group_id=self._group_id,
             sync_delay_ms=self._sync_delay_ms,
