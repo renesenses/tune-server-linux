@@ -934,7 +934,11 @@ class SAPlaylistRepo:
                 )
             )
 
-    async def remove_track(self, playlist_id: int, track_id: int) -> None:
+    async def remove_track_by_id(self, playlist_id: int, track_id: int) -> None:
+        """Remove the first occurrence of track_id from the playlist and
+        compact remaining positions. Used by `DELETE
+        /playlists/{playlist_id}/tracks/{track_id}` where the route key
+        is the track id, not its position in the playlist."""
         row = await self._db.sa_fetchone(
             sa.select(playlist_tracks.c.position).where(
                 sa.and_(

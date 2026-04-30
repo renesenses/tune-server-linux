@@ -731,7 +731,7 @@ async def remove_playlist_track(playlist_id: int, track_id: int):
     existing = await deps.playlist_repo.get(playlist_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    await deps.playlist_repo.remove_track(playlist_id, track_id)
+    await deps.playlist_repo.remove_track_by_id(playlist_id, track_id)
     deps.event_bus.emit_nowait(Event(
         type=EventType.PLAYLIST_TRACKS_CHANGED,
         data={"playlist_id": playlist_id},
