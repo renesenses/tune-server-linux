@@ -1230,3 +1230,92 @@ async def fix_genres():
         "not_found": len(rows) - fixed,
         "details": results[:100],
     }
+
+
+@router.post("/fix-genres-by-artist")
+async def fix_genres_by_artist(min_coherence: float = 0.7):
+    """Propagate the dominant genre of an artist to their genre-less albums.
+
+    For each artist, look at their albums that already have a genre. If at
+    least ``min_coherence`` (default 70%) share the same value, assign that
+    genre to the artist's albums that are still missing one. No external
+    API call, deterministic, instant.
+
+    Skips:
+    - Artists whose albums are too inconsistent (below threshold)
+    - The "Various Artists" / "VA" / Unknown placeholder so compilations are
+      not poisoned by whatever the first genre happens to be.
+    """
+    rows = await deps.db.fetchall(
+        """SELECT al.id, al.title, al.genre, al.artist_id, ar.name as artist_name
+           FROM albums al
+           LEFT JOIN artists ar ON al.artist_id = ar.id
+           WHERE al.artist_id IS NOT NULL""",
+    )
+
+    SKIP_NAMES = {
+        "various artists", "various", "va", "v.a.",
+        "unknown artist", "unknown", "?",
+        "compilation", "compilations",
+    }
+
+    # Group by artist_id: collect known genres + ids missing genre.
+    from collections import Counter, defaultdict
+    by_artist_genres: dict[int, Counter] = defaultdict(Counter)
+    by_artist_missing: dict[int, list[tuple[int, str]]] = defaultdict(list)
+    artist_names: dict[int, str] = {}
+
+    for row in rows:
+        aid = row["artist_id"]
+        name = (row["artist_name"] or "").strip()
+        if not name or name.lower() in SKIP_NAMES:
+            continue
+        artist_names[aid] = name
+        g = (row["genre"] or "").strip()
+        if g:
+            by_artist_genres[aid][g] += 1
+        else:
+            by_artist_missing[aid].append((row["id"], row["title"] or ""))
+
+    fixed = 0
+    skipped_low_coherence = 0
+    skipped_no_known_genre = 0
+    details: list[dict] = []
+
+    for aid, missing in by_artist_missing.items():
+        counter = by_artist_genres.get(aid)
+        if not counter:
+            skipped_no_known_genre += len(missing)
+            continue
+        total_known = sum(counter.values())
+        top_genre, top_count = counter.most_common(1)[0]
+        coherence = top_count / total_known if total_known else 0.0
+        if coherence < min_coherence:
+            skipped_low_coherence += len(missing)
+            continue
+        for album_id, title in missing:
+            await deps.db.execute(
+                "UPDATE albums SET genre = ? WHERE id = ?", (top_genre, album_id),
+            )
+            fixed += 1
+            if len(details) < 200:
+                details.append({
+                    "album": title,
+                    "artist": artist_names.get(aid, "?"),
+                    "genre": top_genre,
+                    "coherence": round(coherence, 2),
+                    "based_on": total_known,
+                })
+
+    await deps.db.commit()
+
+    total_candidates = sum(len(m) for m in by_artist_missing.values())
+    return {
+        "ok": True,
+        "total": total_candidates,
+        "fixed": fixed,
+        "skipped_low_coherence": skipped_low_coherence,
+        "skipped_no_known_genre": skipped_no_known_genre,
+        "min_coherence": min_coherence,
+        "details": details,
+    }
