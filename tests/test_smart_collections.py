@@ -237,7 +237,8 @@ class TestDefaultCollections:
                 sort_order=spec.get("sort_order", "desc"),
                 max_albums=spec.get("max_albums", 500),
             )
-            assert sql.startswith("SELECT albums.* FROM albums WHERE")
+            assert sql.startswith("SELECT albums.*, COALESCE(NULLIF(albums.artist_name, ''), artists.name)")
+            assert "LEFT JOIN artists" in sql
             assert isinstance(params, list)
 
 
@@ -353,6 +354,7 @@ async def smart_repo():
         CREATE TABLE albums (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
+            artist_id INTEGER,
             artist_name TEXT,
             year INTEGER,
             genre TEXT,
@@ -368,6 +370,12 @@ async def smart_repo():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             musicbrainz_release_id TEXT,
             catalog_number TEXT
+        )
+    """)
+    await conn.execute("""
+        CREATE TABLE artists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL
         )
     """)
     await conn.commit()
