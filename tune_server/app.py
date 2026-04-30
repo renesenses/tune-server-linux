@@ -392,6 +392,16 @@ class TuneServer:
                 logger.info("smart_collections_seeded", count=inserted)
         except Exception:
             logger.exception("smart_collections_seed_failed")
+
+        try:
+            from tune_server.db.repository import (
+                SmartPlaylistRepo, seed_default_smart_playlists,
+            )
+            inserted = await seed_default_smart_playlists(SmartPlaylistRepo(self._db))
+            if inserted > 0:
+                logger.info("smart_playlists_seeded", count=inserted)
+        except Exception:
+            logger.exception("smart_playlists_seed_failed")
         if settings.spotify_connect_enabled and settings.spotify_connect_zone_id is not None:
             try:
                 await self._spotify_connect.enable(

@@ -466,9 +466,8 @@ async def get_doubtful_albums():
            FROM albums al
            LEFT JOIN artists ar ON al.artist_id = ar.id
            WHERE
-             -- Artist is ALL CAPS and > 3 chars (inferred from folder name)
+             -- Artist is ALL CAPS and > 4 chars (inferred from folder name)
              (al.artist_name = UPPER(al.artist_name) AND LENGTH(al.artist_name) > 4
-              AND al.artist_name NOT SIMILAR TO '[A-Z]{2,4}'
               AND LOWER(al.artist_name) NOT IN ('various artists', 'various', 'compilation',
                   'compilations', 'multi-artistes', 'multi artistes',
                   'various artists & performers'))
@@ -479,10 +478,9 @@ async def get_doubtful_albums():
              -- Year seems wrong (before 1920 or after current year)
              OR (al.year IS NOT NULL AND al.year > 0 AND (al.year < 1920 OR al.year > 2026))
              -- Album title looks like an ALL CAPS path component
-             OR (al.title = UPPER(al.title) AND LENGTH(al.title) > 4
-                 AND al.title NOT SIMILAR TO '[A-Z]{2,4}')
+             OR (al.title = UPPER(al.title) AND LENGTH(al.title) > 4)
              -- Artist name contains year prefix (folder-derived like "1970-The Complete...")
-             OR al.artist_name ~ '^\d{4}[-\s]'
+             OR (al.artist_name LIKE '____-%' OR al.artist_name LIKE '____ %')
            ORDER BY al.artist_name, al.title""",
     )
     results = []

@@ -1107,14 +1107,12 @@ async def completeness_stats():
     doubtful_row = await deps.db.fetchone(
         """SELECT count(*) as c FROM albums al
            LEFT JOIN artists ar ON al.artist_id = ar.id
-           WHERE (al.artist_name = UPPER(al.artist_name) AND LENGTH(al.artist_name) > 4
-                  AND al.artist_name NOT SIMILAR TO '[A-Z]{2,4}')
+           WHERE (al.artist_name = UPPER(al.artist_name) AND LENGTH(al.artist_name) > 4)
              OR LOWER(al.artist_name) IN ('inconnu', 'various artists', 'none')
              OR LOWER(al.genre) IN ('other', 'divers')
              OR (al.year IS NOT NULL AND al.year > 0 AND (al.year < 1920 OR al.year > 2026))
-             OR (al.title = UPPER(al.title) AND LENGTH(al.title) > 4
-                 AND al.title NOT SIMILAR TO '[A-Z]{2,4}')
-             OR al.artist_name ~ '^\d{4}[-\s]'""",
+             OR (al.title = UPPER(al.title) AND LENGTH(al.title) > 4)
+             OR (al.artist_name LIKE '____-%' OR al.artist_name LIKE '____ %')""",
     )
     return CompletenessStats(
         total_albums=await deps.album_repo.count(),

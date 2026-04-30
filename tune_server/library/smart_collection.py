@@ -305,7 +305,8 @@ def compile_rules(
     glue = " AND " if match_mode == "all" else " OR "
     where_sql = glue.join(where_parts) if where_parts else "1=1"
     final = (
-        f"SELECT albums.* FROM albums "
+        f"SELECT albums.*, COALESCE(NULLIF(albums.artist_name, ''), artists.name) AS artist_name "
+        f"FROM albums LEFT JOIN artists ON artists.id = albums.artist_id "
         f"WHERE {where_sql} "
         f"ORDER BY albums.{sort_col} {sort_order.upper()} "
         f"LIMIT ?"

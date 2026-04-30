@@ -376,3 +376,17 @@ CREATE TABLE IF NOT EXISTS smart_collections (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS smart_playlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    rules TEXT NOT NULL,
+    match_mode TEXT DEFAULT 'all',
+    sort_by TEXT DEFAULT 'title',
+    sort_order TEXT DEFAULT 'asc',
+    max_tracks INTEGER DEFAULT 200,
+    auto_refresh INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

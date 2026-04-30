@@ -789,3 +789,19 @@ smart_collections = sa.Table(
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
 )
+
+smart_playlists = sa.Table(
+    "smart_playlists",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text),
+    sa.Column("rules", sa.Text, nullable=False),  # JSON: list[Rule]
+    sa.Column("match_mode", sa.Text, server_default="all"),  # 'all' | 'any'
+    sa.Column("sort_by", sa.Text, server_default="title"),
+    sa.Column("sort_order", sa.Text, server_default="asc"),
+    sa.Column("max_tracks", sa.Integer, server_default="200"),
+    sa.Column("auto_refresh", sa.Integer, server_default="1"),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
+)

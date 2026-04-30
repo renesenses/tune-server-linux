@@ -1452,6 +1452,60 @@ class SmartPlaylistRepo:
         return [_row_to_track(r) for r in rows]
 
 
+DEFAULT_SMART_PLAYLISTS: list[dict] = [
+    {
+        "name": "Hi-Res Tracks",
+        "description": "Pistes ≥ 96 kHz",
+        "rules": [{"field": "sample_rate", "operator": "greater_than", "value": 95999}],
+        "sort_by": "title", "sort_order": "asc", "max_tracks": 200,
+    },
+    {
+        "name": "Live",
+        "description": "Pistes dont le titre contient « Live »",
+        "rules": [{"field": "title", "operator": "contains", "value": "Live"}],
+        "sort_by": "artist", "sort_order": "asc", "max_tracks": 200,
+    },
+    {
+        "name": "Jazz",
+        "description": "Pistes au genre Jazz",
+        "rules": [{"field": "genre", "operator": "contains", "value": "Jazz"}],
+        "sort_by": "artist", "sort_order": "asc", "max_tracks": 200,
+    },
+    {
+        "name": "Random 50",
+        "description": "50 pistes au hasard dans toute la bibliothèque",
+        "rules": [],
+        "sort_by": "random", "sort_order": "asc", "max_tracks": 50,
+    },
+]
+
+
+async def seed_default_smart_playlists(repo: SmartPlaylistRepo) -> int:
+    """Seed default smart playlists on first server start. Idempotent —
+    skip names that already exist (allows users to delete defaults
+    they don't want without them coming back)."""
+    import json
+    existing = {row["name"] for row in await repo.list()}
+    inserted = 0
+    for spec in DEFAULT_SMART_PLAYLISTS:
+        if spec["name"] in existing:
+            continue
+        try:
+            await repo.create(
+                name=spec["name"],
+                rules=json.dumps(spec["rules"]),
+                match_mode=spec.get("match_mode", "all"),
+                sort_by=spec.get("sort_by", "title"),
+                sort_order=spec.get("sort_order", "asc"),
+                max_tracks=spec.get("max_tracks", 200),
+                description=spec.get("description"),
+            )
+            inserted += 1
+        except Exception:
+            pass
+    return inserted
+
+
 class PartyVoteRepo:
     def __init__(self, db: Database) -> None:
         self._db = db
