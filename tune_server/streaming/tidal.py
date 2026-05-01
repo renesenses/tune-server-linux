@@ -515,8 +515,19 @@ class TidalService(StreamingService):
             except Exception as e:
                 logger.debug("tidal_track_cover_failed", error=str(e))
 
-        quality = getattr(t, "audio_quality", None)
-        fmt = AudioFormat.FLAC if quality in ("LOSSLESS", "HI_RES", "HI_RES_LOSSLESS") else AudioFormat.AAC
+        # Track.audio_quality ment (retourne toujours 'LOSSLESS' sur tidalapi
+        # 0.8.x). La vraie qualité est dans media_metadata_tags qui liste les
+        # niveaux dispo : ['LOSSLESS'] = CD 16/44, ['LOSSLESS', 'HIRES_LOSSLESS']
+        # = HiRes FLAC 24-bit (sample_rate variable 96k/192k, on prend 96k par
+        # défaut — la vraie valeur arrive via Stream.audio_quality au moment du
+        # get_stream() lors de la lecture).
+        tags = set(getattr(t, "media_metadata_tags", []) or [])
+        if "HIRES_LOSSLESS" in tags:
+            fmt, sample_rate, bit_depth = AudioFormat.FLAC, 96000, 24
+        elif "LOSSLESS" in tags:
+            fmt, sample_rate, bit_depth = AudioFormat.FLAC, 44100, 16
+        else:
+            fmt, sample_rate, bit_depth = AudioFormat.AAC, 44100, 16
 
         return Track(
             title=t.name or "Unknown",
@@ -526,8 +537,8 @@ class TidalService(StreamingService):
             disc_number=getattr(t, "volume_num", 1) or 1,
             duration_ms=duration,
             format=fmt,
-            sample_rate=44100,
-            bit_depth=16,
+            sample_rate=sample_rate,
+            bit_depth=bit_depth,
             channels=2,
             cover_path=cover_path,
             source=Source.TIDAL,
