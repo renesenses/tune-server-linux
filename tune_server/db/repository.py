@@ -661,7 +661,61 @@ class TrackRepo:
         await self._db.commit()
 
     async def deduplicate(self) -> int:
-        """Remove duplicate tracks (same audio_hash), keeping the lowest id."""
+        """Remove duplicate tracks (same audio_hash), keeping the lowest id.
+
+        Re-targets every reference to the about-to-be-deleted duplicate-track
+        rows onto the canonical (min-id) row BEFORE the DELETE. Without this,
+        the FK ``playlist_tracks.track_id ... ON DELETE CASCADE`` (and
+        play_queue.track_id idem) silently wipes every playlist entry that
+        pointed at a non-canonical duplicate — that's how Bertrand's "fip
+        select" playlist lost all 67 tracks during the v0.7.60 startup scan
+        on .18 (2026-05-01).
+        """
+        # 1. Re-target playlist_tracks at the canonical (min-id) row.
+        await self._db.execute(
+            """UPDATE playlist_tracks
+                  SET track_id = (
+                      SELECT MIN(id) FROM tracks
+                       WHERE audio_hash = (
+                           SELECT audio_hash FROM tracks WHERE id = playlist_tracks.track_id
+                       )
+                         AND audio_hash IS NOT NULL
+                         AND album_id IS NOT NULL
+                  )
+                WHERE track_id IN (
+                    SELECT t.id FROM tracks t
+                    JOIN (
+                        SELECT audio_hash
+                          FROM tracks
+                         WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
+                         GROUP BY audio_hash
+                        HAVING COUNT(*) > 1
+                    ) d ON t.audio_hash = d.audio_hash
+                )""",
+        )
+        # 2. Same for play_queue (now-playing references).
+        await self._db.execute(
+            """UPDATE play_queue
+                  SET track_id = (
+                      SELECT MIN(id) FROM tracks
+                       WHERE audio_hash = (
+                           SELECT audio_hash FROM tracks WHERE id = play_queue.track_id
+                       )
+                         AND audio_hash IS NOT NULL
+                         AND album_id IS NOT NULL
+                  )
+                WHERE track_id IN (
+                    SELECT t.id FROM tracks t
+                    JOIN (
+                        SELECT audio_hash
+                          FROM tracks
+                         WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
+                         GROUP BY audio_hash
+                        HAVING COUNT(*) > 1
+                    ) d ON t.audio_hash = d.audio_hash
+                )""",
+        )
+        # 3. Now safe to delete the non-canonical duplicates.
         cursor = await self._db.execute(
             """DELETE FROM tracks WHERE id NOT IN (
                 SELECT MIN(id) FROM tracks
