@@ -81,7 +81,16 @@ class FileSystemWatcher:
 
             # Inotify recurses into all subdirectories; a single unreadable
             # subdir (e.g. /mnt/recordings/lost+found owned by root) makes
-            # RustNotify raise PermissionError. Polling mode tolerates this.
+            # RustNotify raise an error. The Rust side raises
+            # `WatchfilesRustInternalError` (a RuntimeError subclass), NOT
+            # the Python `PermissionError`, so we have to match by class
+            # AND by message. Polling mode tolerates the unreadable subdir.
+            try:
+                from watchfiles._rust_notify import WatchfilesRustInternalError
+                _rust_err: tuple = (WatchfilesRustInternalError,)
+            except Exception:  # pragma: no cover — old watchfiles versions
+                _rust_err = ()
+
             force_polling = False
             while True:
                 try:
@@ -95,12 +104,14 @@ class FileSystemWatcher:
                             debounce_task.cancel()
                         debounce_task = asyncio.create_task(_flush_pending())
                     break
-                except PermissionError as exc:
-                    if force_polling:
+                except (PermissionError, *_rust_err) as exc:
+                    msg = str(exc)
+                    is_permission = isinstance(exc, PermissionError) or "Permission denied" in msg
+                    if force_polling or not is_permission:
                         raise
                     logger.warning(
                         "watcher_permission_fallback_polling",
-                        error=str(exc),
+                        error=msg,
                         hint="Some subdirectory is unreadable — falling back to polling mode",
                     )
                     force_polling = True
