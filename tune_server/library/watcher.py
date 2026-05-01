@@ -91,10 +91,46 @@ class FileSystemWatcher:
             except Exception:  # pragma: no cover — old watchfiles versions
                 _rust_err = ()
 
+            # Pre-walk: drop watch paths whose tree contains an unreadable
+            # subdir we can't even stat (e.g. /mnt/recordings/lost+found
+            # owned by root with mode 0700, an ext4 fsck artefact). Both
+            # inotify and polling walk recursively, so a single 0700 dir
+            # blows up the whole watch — we'd rather skip the music_dir
+            # cleanly and rely on /system/scan than crash silently.
+            import os
+            def _has_unreadable_subdir(root: str) -> str | None:
+                for dirpath, dirnames, _filenames in os.walk(root, onerror=lambda _: None):
+                    for name in list(dirnames):
+                        sub = Path(dirpath) / name
+                        if not os.access(sub, os.R_OK | os.X_OK):
+                            return str(sub)
+                return None
+
+            usable_paths: list[str] = []
+            for p in paths:
+                bad = _has_unreadable_subdir(p)
+                if bad:
+                    logger.warning(
+                        "watcher_skipping_path_unreadable_subdir",
+                        path=p,
+                        unreadable=bad,
+                        hint=("This directory has a subdirectory we can't "
+                              "read (often /lost+found owned by root). "
+                              "watchfiles walks recursively and would crash. "
+                              f"Run: sudo chmod 755 {bad}"),
+                    )
+                else:
+                    usable_paths.append(p)
+
+            if not usable_paths:
+                logger.warning("watcher_all_paths_skipped",
+                               hint="No watchable music dir; rely on /system/scan")
+                return
+
             force_polling = False
             while True:
                 try:
-                    async for changes in awatch(*paths, force_polling=force_polling):
+                    async for changes in awatch(*usable_paths, force_polling=force_polling):
                         for change_type, path_str in changes:
                             if Path(path_str).suffix.lower() not in SUPPORTED_EXTENSIONS:
                                 continue
@@ -108,7 +144,15 @@ class FileSystemWatcher:
                     msg = str(exc)
                     is_permission = isinstance(exc, PermissionError) or "Permission denied" in msg
                     if force_polling or not is_permission:
-                        raise
+                        # Even polling failed (or this isn't a permission
+                        # error). Log and give up watching — rely on
+                        # /system/scan rather than crash the task.
+                        logger.warning(
+                            "watcher_giving_up",
+                            error=msg,
+                            hint="Watcher disabled for this session; use POST /system/scan to refresh manually",
+                        )
+                        return
                     logger.warning(
                         "watcher_permission_fallback_polling",
                         error=msg,
