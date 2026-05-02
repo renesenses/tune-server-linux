@@ -42,23 +42,20 @@ def _detect_station(stream_url: str) -> str | None:
     return None
 
 
-async def _fetch_radiofrance(station: str) -> NowPlaying | None:
+async def _fetch_radiofrance(station: str, session: aiohttp.ClientSession) -> NowPlaying | None:
     """Fetch current track from RadioFrance livemeta API."""
     url = RADIOFRANCE_API.format(station=station)
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                now = data.get("now", {})
-                title = now.get("firstLine", "")
-                artist = now.get("secondLine", "")
-                if not title:
-                    return None
-                # RadioFrance S3 covers are 403-blocked — skip cover URL
-                # The station logo will be used as fallback by the player callback
-                return NowPlaying(title=title, artist=artist, cover_url=None)
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            now = data.get("now", {})
+            title = now.get("firstLine", "")
+            artist = now.get("secondLine", "")
+            if not title:
+                return None
+            return NowPlaying(title=title, artist=artist, cover_url=None)
     except Exception as e:
         logger.debug("radio_metadata_fetch_failed", error=str(e))
         return None
@@ -70,8 +67,9 @@ class RadioMetadataPoller:
     def __init__(self, event_bus: EventBus, zone_id: int, track_callback=None) -> None:
         self._event_bus = event_bus
         self._zone_id = zone_id
-        self._track_callback = track_callback  # _make_icy_callback result
+        self._track_callback = track_callback
         self._task: asyncio.Task | None = None
+        self._session: aiohttp.ClientSession | None = None
         self._last_title: str | None = None
 
     def start(self, stream_url: str) -> None:
@@ -80,6 +78,7 @@ class RadioMetadataPoller:
         if not station:
             logger.debug("radio_metadata_no_provider", url=stream_url[:60])
             return
+        self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
         self._task = asyncio.create_task(self._poll_loop(station))
         logger.info("radio_metadata_poller_started", station=station, zone_id=self._zone_id)
 
@@ -88,11 +87,15 @@ class RadioMetadataPoller:
             self._task.cancel()
             self._task = None
             self._last_title = None
+        if self._session and not self._session.closed:
+            asyncio.get_event_loop().create_task(self._session.close())
+            self._session = None
+        logger.info("radio_metadata_poller_stopped", zone_id=self._zone_id)
 
     async def _poll_loop(self, station: str) -> None:
         try:
             while True:
-                np = await _fetch_radiofrance(station)
+                np = await _fetch_radiofrance(station, self._session)
                 if np and np.title != self._last_title:
                     self._last_title = np.title
                     logger.info("radio_metadata_update",
