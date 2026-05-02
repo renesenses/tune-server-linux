@@ -35,12 +35,35 @@ class ZoneManager:
         # Map zone_id → bool remembering whether a zone was playing when
         # its device went offline, so we can resume on recovery.
         self._resume_on_recovery: dict[int, bool] = {}
+        # Plugin-contributed Player hooks: applied to every Player at zone
+        # creation. List of (PlayerHookEvent, callable). Empty = no hooks.
+        self._player_hooks: list = []
 
     def set_stream_url_resolver(self, resolver) -> None:
         self._stream_url_resolver = resolver
 
     def set_group_manager(self, group_manager) -> None:
         self._group_manager = group_manager
+
+    def set_player_hooks(self, hooks: list) -> None:
+        """Set the list of (PlayerHookEvent, callable) hooks plugins want
+        applied to every Player. Called once after plugin discovery, before
+        zone init. ZoneInstance applies them to its Player on construction.
+        """
+        self._player_hooks = list(hooks)
+
+    def _apply_player_hooks(self, zone) -> None:
+        """Apply registered plugin hooks to a freshly created zone's Player."""
+        if not self._player_hooks or zone is None:
+            return
+        player = getattr(zone, "player", None)
+        if player is None:
+            return
+        for event, fn in self._player_hooks:
+            try:
+                player.add_hook(event, fn)
+            except Exception:
+                logger.exception("apply_player_hook_failed", zone_id=zone.zone_id, event=str(event))
 
     def register_output_factory(
         self, output_type: OutputType | str, factory: callable
@@ -94,6 +117,7 @@ class ZoneManager:
                     # Restore persisted queue
                     await zone.restore_queue()
 
+                    self._apply_player_hooks(zone)
                     self._zones[zone_id] = zone
                     logger.info("zone_loaded", id=zone_id, name=row["name"])
                 else:
@@ -133,6 +157,7 @@ class ZoneManager:
                     if saved_volume is not None and saved_volume != 0.5:
                         await zone.player.set_volume(saved_volume)
                     await zone.restore_queue()
+                    self._apply_player_hooks(zone)
                     self._zones[zone_id] = zone
                     logger.info("zone_loaded_retry", id=zone_id, name=row["name"])
                 else:
@@ -185,6 +210,7 @@ class ZoneManager:
         zone.sync_delay_ms = sync_delay_ms
         if self._stream_url_resolver:
             zone.player.set_stream_url_resolver(self._stream_url_resolver)
+        self._apply_player_hooks(zone)
         self._zones[zone_id] = zone
 
         await self._event_bus.emit(Event(

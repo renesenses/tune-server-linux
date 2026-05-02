@@ -203,6 +203,13 @@ class TuneServer:
         self._ws_manager = None
         self._scan_task: asyncio.Task | None = None
         self._server_ip = get_local_ip()
+        self._api_app = None  # FastAPI created in start(), reused by run_server()
+        self._plugin_loader = None  # PluginLoader, instantiated in start()
+
+    @property
+    def api_app(self):
+        """FastAPI app — created in start(). None until then."""
+        return self._api_app
 
     async def start(self) -> None:
         _configure_logging()
@@ -308,6 +315,30 @@ class TuneServer:
 
         # Register output factories
         await self._register_output_factories()
+
+        # Create the FastAPI app early — plugins need it to register routes
+        # during setup(), before zones initialize. The same instance is
+        # reused by run_server() to spin up uvicorn.
+        self._api_app = create_api_app()
+
+        # Plugin discovery + setup. Each installed plugin (entry_point group
+        # ``tune_server.plugins``) gets a chance to register output types,
+        # router(s), event subscribers, and player hooks BEFORE zones spawn.
+        from tune_server.plugins import PluginContext, PluginLoader
+        self._plugin_loader = PluginLoader()
+        plugin_ctx = PluginContext(
+            event_bus=self._event_bus,
+            api_app=self._api_app,
+            db=self._db,
+            settings=settings,
+            _zone_manager=self._zone_manager,
+        )
+        await self._plugin_loader.discover_and_setup(plugin_ctx)
+
+        # Wire plugin-contributed Player hooks. ZoneManager applies them to
+        # every Player it creates (existing + future).
+        if self._plugin_loader.pending_player_hooks:
+            self._zone_manager.set_player_hooks(self._plugin_loader.pending_player_hooks)
 
         # Discovery — start BEFORE zone init so DLNA devices can be found
         self._discovery_manager = DiscoveryManager(self._event_bus)
@@ -704,6 +735,11 @@ class TuneServer:
             source="app",
         ))
 
+        # Tear down plugins first (their async resources may depend on the
+        # core: event_bus, db, etc. — drain them before tearing down core).
+        if self._plugin_loader:
+            await self._safe_stop("plugins", self._plugin_loader.teardown_all())
+
         if self._scan_task and not self._scan_task.done():
             self._scan_task.cancel()
             try:
@@ -764,7 +800,10 @@ async def run_server(shutdown_event: asyncio.Event | None = None) -> None:
         await server.stop()
         raise
 
-    app = create_api_app()
+    # Reuse the FastAPI app the server created during start() — that's the
+    # one plugins have already mounted their routes on. Falling back to a
+    # fresh app would lose the plugin-contributed routers.
+    app = server.api_app or create_api_app()
 
     config = uvicorn.Config(
         app,
