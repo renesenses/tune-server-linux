@@ -96,6 +96,7 @@ class HttpAudioStreamer:
         self._file_paths: dict[str, str] = {}  # stream_id -> file_path for passthrough
         self._proxy_urls: dict[str, str] = {}  # stream_id -> upstream HTTPS URL for proxy
         self._cleanup_task: asyncio.Task | None = None
+        self._http_session: aiohttp.ClientSession | None = None
 
     @property
     def app(self) -> web.Application | None:
@@ -156,6 +157,11 @@ class HttpAudioStreamer:
         ext = session.stream_info.format.value if hasattr(session.stream_info.format, 'value') else session.stream_info.format
         return f"http://{server_ip}:{self._port}/stream/{stream_id}.{ext}"
 
+    def _get_http_session(self) -> aiohttp.ClientSession:
+        if self._http_session is None or self._http_session.closed:
+            self._http_session = aiohttp.ClientSession()
+        return self._http_session
+
     async def start(self) -> None:
         self._app = web.Application()
         self._app.router.add_route("HEAD", "/stream/{stream_id}", self._handle_head)
@@ -194,8 +200,8 @@ class HttpAudioStreamer:
         proxy_url = self._proxy_urls.get(stream_id)
         if proxy_url:
             try:
-                async with aiohttp.ClientSession() as cs:
-                    async with cs.head(proxy_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                cs = self._get_http_session()
+                async with cs.head(proxy_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                         cl = resp.headers.get("Content-Length")
                         if cl:
                             headers["Content-Length"] = cl
@@ -352,8 +358,8 @@ class HttpAudioStreamer:
         session: StreamSession | None = None,
     ) -> web.StreamResponse:
         """Proxy an upstream HTTPS URL over HTTP with Content-Length."""
-        async with aiohttp.ClientSession() as cs:
-            async with cs.get(upstream_url, timeout=aiohttp.ClientTimeout(total=600)) as upstream:
+        cs = self._get_http_session()
+        async with cs.get(upstream_url, timeout=aiohttp.ClientTimeout(total=600)) as upstream:
                 headers = {
                     "Content-Type": upstream.headers.get("Content-Type", mime),
                     "Accept-Ranges": "bytes",
@@ -406,6 +412,10 @@ class HttpAudioStreamer:
             session.close()
         self._sessions.clear()
         self._file_paths.clear()
+
+        if self._http_session and not self._http_session.closed:
+            await self._http_session.close()
+            self._http_session = None
 
         if self._runner:
             await self._runner.cleanup()
