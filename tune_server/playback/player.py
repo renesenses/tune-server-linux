@@ -124,6 +124,17 @@ class Player:
         """
         self._hooks[event].append(fn)
 
+    def set_recording_hook(self, fn: Callable) -> None:
+        """Compatibility shim — superseded by ``add_hook(BEFORE_TRACK, fn)``.
+
+        Older callers (pre plugin-system) wired a single recording callback
+        through this method. We keep it for one release so existing code
+        keeps working; new code should use ``add_hook`` directly. The shim
+        appends to the same hook list so the ``BEFORE_TRACK`` dispatch
+        invokes ``fn`` exactly as before.
+        """
+        self._hooks[PlayerHookEvent.BEFORE_TRACK].append(fn)
+
     async def _fire_hook(self, event: PlayerHookEvent, *args, **kwargs) -> None:
         """Invoke all registered hooks for an event. Errors per-hook are isolated."""
         for fn in self._hooks.get(event, []):
