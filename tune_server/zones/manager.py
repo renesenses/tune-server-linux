@@ -25,7 +25,10 @@ class ZoneManager:
         self._zone_repo = ZoneRepo(db)
         self._queue_repo = PlayQueueRepo(db)
         self._zones: dict[int, ZoneInstance] = {}
-        self._output_factory: dict[OutputType, callable] = {}
+        # Output factory registry keyed by string output-type name (e.g.
+        # "local", "dlna", "airplay"). Plugins can register additional
+        # factories without modifying the OutputType enum.
+        self._output_factory: dict[str, callable] = {}
         self._pending_zones: list = []
         self._stream_url_resolver = None
         self._group_manager = None
@@ -39,8 +42,17 @@ class ZoneManager:
     def set_group_manager(self, group_manager) -> None:
         self._group_manager = group_manager
 
-    def register_output_factory(self, output_type: OutputType, factory: callable) -> None:
-        self._output_factory[output_type] = factory
+    def register_output_factory(
+        self, output_type: OutputType | str, factory: callable
+    ) -> None:
+        """Register an output factory keyed by its string name.
+
+        Accepts either an OutputType enum value (built-in: local, dlna,
+        airplay) or a free-form str (allows plugins to contribute new
+        output types without touching the core enum).
+        """
+        key = output_type.value if isinstance(output_type, OutputType) else str(output_type)
+        self._output_factory[key] = factory
 
     async def initialize(self) -> None:
         """Load persisted zones from DB and create instances."""
@@ -306,17 +318,19 @@ class ZoneManager:
         return list(self._zones.values())
 
     async def _create_output(
-        self, output_type: OutputType, device_id: str | None
+        self, output_type: OutputType | str, device_id: str | None
     ) -> OutputTarget | None:
-        # Check registered factories first
-        if output_type in self._output_factory:
-            return await self._output_factory[output_type](device_id)
+        # Lookup factory by string key (works for both built-in enum values
+        # and plugin-contributed types).
+        key = output_type.value if isinstance(output_type, OutputType) else str(output_type)
+        if key in self._output_factory:
+            return await self._output_factory[key](device_id)
 
-        # Default: local output
-        if output_type == OutputType.LOCAL:
+        # Default: local output (built-in fallback, still keyed via enum)
+        if key == OutputType.LOCAL.value:
             return LocalOutput(device_name=device_id)
 
-        logger.warning("no_output_factory", type=output_type)
+        logger.warning("no_output_factory", type=key)
         return None
 
     # -----------------------------------------------------------------

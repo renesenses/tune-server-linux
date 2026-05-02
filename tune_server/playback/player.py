@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import defaultdict
+from enum import StrEnum
 from typing import Any, Callable, Coroutine, Optional
 
 import structlog
@@ -19,6 +21,16 @@ from tune_server.playback.queue import PlayQueue
 
 StreamUrlResolver = Callable[[Track], Coroutine[Any, Any, Optional[str]]]
 QueuePersistCallback = Callable[[list[Track], int], Coroutine[Any, Any, None]]
+
+
+class PlayerHookEvent(StrEnum):
+    """Lifecycle events plugins can hook into via Player.add_hook()."""
+    BEFORE_TRACK = "before_track"   # fired with (zone_id, track) just before audio output starts
+    AFTER_TRACK = "after_track"     # fired with (zone_id, track) when a track ends naturally
+    PLAY = "play"                   # fired with (zone_id,) on resume / start
+    PAUSE = "pause"                 # fired with (zone_id,) on pause
+    STOP = "stop"                   # fired with (zone_id,) on stop
+
 
 logger = structlog.get_logger()
 
@@ -53,6 +65,10 @@ class Player:
         # Volume normalization
         self._normalization_enabled = False
         self._normalization_target = -14.0
+        # Plugin hooks: each PlayerHookEvent maps to a list of callables
+        # invoked in registration order. Sync OR async, exceptions are
+        # caught per-hook so a faulty plugin can't break playback.
+        self._hooks: dict[PlayerHookEvent, list[Callable]] = defaultdict(list)
 
     @property
     def state(self) -> PlaybackState:
@@ -96,6 +112,32 @@ class Player:
 
     def set_channel_filter(self, channel_filter: str | None) -> None:
         self._channel_filter = channel_filter
+
+    def add_hook(self, event: PlayerHookEvent, fn: Callable) -> None:
+        """Register a hook callable for a player lifecycle event.
+
+        Plugins use this to react to playback transitions without subclassing
+        Player. The callable receives positional args specific to the event
+        (see PlayerHookEvent docstrings). Both sync and async callables are
+        supported. Exceptions raised by hooks are logged and swallowed —
+        they never break playback.
+        """
+        self._hooks[event].append(fn)
+
+    async def _fire_hook(self, event: PlayerHookEvent, *args, **kwargs) -> None:
+        """Invoke all registered hooks for an event. Errors per-hook are isolated."""
+        for fn in self._hooks.get(event, []):
+            try:
+                if asyncio.iscoroutinefunction(fn):
+                    await fn(*args, **kwargs)
+                else:
+                    fn(*args, **kwargs)
+            except Exception:
+                logger.exception(
+                    "player_hook_error",
+                    hook_event=event.value,
+                    fn=getattr(fn, "__qualname__", repr(fn)),
+                )
 
     async def _check_crossfade(self):
         """Check if we should start crossfading to the next track."""
