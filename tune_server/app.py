@@ -7,7 +7,7 @@ import structlog
 import uvicorn
 
 from tune_server.api.deps import deps
-from tune_server.api.main import create_api_app, setup_websocket_manager
+from tune_server.api.main import create_api_app, setup_websocket_manager, wrap_for_serving
 from tune_server.config import settings
 from tune_server.db.factory import create_database
 from tune_server.db.repository import (
@@ -203,13 +203,19 @@ class TuneServer:
         self._ws_manager = None
         self._scan_task: asyncio.Task | None = None
         self._server_ip = get_local_ip()
-        self._api_app = None  # FastAPI created in start(), reused by run_server()
+        self._api_app = None  # bare FastAPI created in start() (plugins mount here)
+        self._serving_app = None  # SPA-wrapped ASGI app passed to uvicorn
         self._plugin_loader = None  # PluginLoader, instantiated in start()
 
     @property
     def api_app(self):
-        """FastAPI app — created in start(). None until then."""
+        """Bare FastAPI app — created in start(). Plugins use this."""
         return self._api_app
+
+    @property
+    def serving_app(self):
+        """SPA-wrapped ASGI app — what uvicorn serves. None until start() finishes."""
+        return self._serving_app
 
     async def start(self) -> None:
         _configure_logging()
@@ -339,6 +345,12 @@ class TuneServer:
         # every Player it creates (existing + future).
         if self._plugin_loader.pending_player_hooks:
             self._zone_manager.set_player_hooks(self._plugin_loader.pending_player_hooks)
+
+        # Now that plugins have registered their routers, wrap the FastAPI
+        # app with the SPA fallback middleware (if a web bundle exists).
+        # The wrapped object is what uvicorn serves; it must be the outermost
+        # layer so static SPA routing works.
+        self._serving_app = wrap_for_serving(self._api_app)
 
         # Discovery — start BEFORE zone init so DLNA devices can be found
         self._discovery_manager = DiscoveryManager(self._event_bus)
@@ -800,10 +812,10 @@ async def run_server(shutdown_event: asyncio.Event | None = None) -> None:
         await server.stop()
         raise
 
-    # Reuse the FastAPI app the server created during start() — that's the
-    # one plugins have already mounted their routes on. Falling back to a
-    # fresh app would lose the plugin-contributed routers.
-    app = server.api_app or create_api_app()
+    # Reuse the SPA-wrapped app the server created during start() — that's
+    # the one plugins have already mounted their routes on. Falling back to
+    # a fresh app would lose plugin-contributed routers + SPA fallback.
+    app = server.serving_app or wrap_for_serving(create_api_app())
 
     config = uvicorn.Config(
         app,

@@ -154,7 +154,7 @@ def mock_output():
 async def app_client(db, sample_artist, sample_album, sample_tracks, event_bus):
     import httpx
     from tune_server.api.deps import deps
-    from tune_server.api.main import create_api_app
+    from tune_server.api.main import create_api_app, wrap_for_serving
 
     # Wire up deps
     deps.db = db
@@ -166,7 +166,10 @@ async def app_client(db, sample_artist, sample_album, sample_tracks, event_bus):
     deps.queue_repo = PlayQueueRepo(db)
     deps.zone_repo = ZoneRepo(db)
 
-    app = create_api_app()
+    # Tests exercise the user-facing topology: bare FastAPI + SPA fallback
+    # wrap (matches what uvicorn serves at runtime). The wrap is a no-op
+    # when the project's web/ bundle doesn't exist.
+    app = wrap_for_serving(create_api_app())
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -231,7 +234,7 @@ def group_manager(event_bus):
 async def app_client_with_zones(db, sample_artist, sample_album, sample_tracks, event_bus):
     import httpx
     from tune_server.api.deps import deps
-    from tune_server.api.main import create_api_app
+    from tune_server.api.main import create_api_app, wrap_for_serving
     from tune_server.zones.group import GroupManager
     from tune_server.zones.manager import ZoneManager
 
@@ -257,7 +260,7 @@ async def app_client_with_zones(db, sample_artist, sample_album, sample_tracks, 
     deps.zone_manager = zm
     deps.group_manager = GroupManager(event_bus)
 
-    app = create_api_app()
+    app = wrap_for_serving(create_api_app())
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),

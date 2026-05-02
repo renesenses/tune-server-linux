@@ -103,79 +103,9 @@ def create_api_app() -> FastAPI:
         if _ws_manager:
             await _ws_manager.handle_websocket(websocket)
 
-    # Serve built web UI if configured
+    # Root info route (when no web bundle is served)
     web_dir = Path(settings.web_dir) if settings.web_dir else None
-    if web_dir and web_dir.is_dir():
-        # Serve /assets/ (Vite hashed files)
-        assets_dir = web_dir / "assets"
-        if assets_dir.is_dir():
-            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
-
-        index_html = web_dir / "index.html"
-
-        # SPA fallback middleware: serves index.html for non-API GET 404s
-        class _SPAFallback:
-            """Wraps the FastAPI app. For non-API GET requests that would 404,
-            serve index.html instead (SPA client-side routing)."""
-
-            def __init__(self, app: ASGIApp) -> None:
-                self.app = app
-
-            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-                if scope["type"] != "http":
-                    await self.app(scope, receive, send)
-                    return
-
-                path = scope["path"]
-                method = scope.get("method", "GET")
-
-                # Non-GET or API/docs/ws: always pass through
-                if method != "GET" or path.startswith(("/api/", "/docs", "/openapi.json", "/ws")):
-                    await self.app(scope, receive, send)
-                    return
-
-                # Serve static file from web_dir if it exists (favicon, etc.)
-                rel = path.lstrip("/")
-                if rel:
-                    file_path = web_dir / rel
-                    if file_path.is_file() and file_path.resolve().is_relative_to(web_dir.resolve()):
-                        response = FileResponse(file_path)
-                        await response(scope, receive, send)
-                        return
-
-                # Let FastAPI try first; if it 404s, serve index.html
-                status_code = 0
-                headers_sent = False
-                buffered: list = []
-
-                async def _intercept_send(message):
-                    nonlocal status_code, headers_sent
-                    if message["type"] == "http.response.start":
-                        status_code = message.get("status", 200)
-                        if status_code != 404:
-                            headers_sent = True
-                            await send(message)
-                        else:
-                            buffered.append(message)
-                    elif message["type"] == "http.response.body":
-                        if headers_sent:
-                            await send(message)
-                        else:
-                            buffered.append(message)
-
-                await self.app(scope, receive, _intercept_send)
-
-                if status_code == 404 and not headers_sent:
-                    # Serve SPA index.html instead of 404
-                    response = FileResponse(index_html)
-                    await response(scope, receive, send)
-                elif not headers_sent and buffered:
-                    # Flush buffered messages (shouldn't happen)
-                    for msg in buffered:
-                        await send(msg)
-
-        app = _SPAFallback(app)  # type: ignore[assignment]
-    else:
+    if not (web_dir and web_dir.is_dir()):
         @app.get("/")
         async def root():
             from tune_server import __version__
@@ -187,6 +117,90 @@ def create_api_app() -> FastAPI:
             }
 
     return app
+
+
+def wrap_for_serving(app: FastAPI) -> ASGIApp:
+    """Wrap the FastAPI app with the SPA fallback middleware (if a web bundle
+    exists). Called by TuneServer AFTER plugins have mounted their routers,
+    so the wrapper is the outermost layer for uvicorn to serve.
+
+    Plugins must NEVER receive the wrapped app — they need the bare FastAPI
+    so they can call ``include_router()``. ``create_api_app()`` returns the
+    bare app; this function is only used at the very end of boot.
+    """
+    web_dir = Path(settings.web_dir) if settings.web_dir else None
+    if not (web_dir and web_dir.is_dir()):
+        return app
+
+    # Serve /assets/ (Vite hashed files)
+    assets_dir = web_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    index_html = web_dir / "index.html"
+
+    # SPA fallback middleware: serves index.html for non-API GET 404s
+    class _SPAFallback:
+        """Wraps the FastAPI app. For non-API GET requests that would 404,
+        serve index.html instead (SPA client-side routing)."""
+
+        def __init__(self, app: ASGIApp) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            path = scope["path"]
+            method = scope.get("method", "GET")
+
+            # Non-GET or API/docs/ws: always pass through
+            if method != "GET" or path.startswith(("/api/", "/docs", "/openapi.json", "/ws")):
+                await self.app(scope, receive, send)
+                return
+
+            # Serve static file from web_dir if it exists (favicon, etc.)
+            rel = path.lstrip("/")
+            if rel:
+                file_path = web_dir / rel
+                if file_path.is_file() and file_path.resolve().is_relative_to(web_dir.resolve()):
+                    response = FileResponse(file_path)
+                    await response(scope, receive, send)
+                    return
+
+            # Let FastAPI try first; if it 404s, serve index.html
+            status_code = 0
+            headers_sent = False
+            buffered: list = []
+
+            async def _intercept_send(message):
+                nonlocal status_code, headers_sent
+                if message["type"] == "http.response.start":
+                    status_code = message.get("status", 200)
+                    if status_code != 404:
+                        headers_sent = True
+                        await send(message)
+                    else:
+                        buffered.append(message)
+                elif message["type"] == "http.response.body":
+                    if headers_sent:
+                        await send(message)
+                    else:
+                        buffered.append(message)
+
+            await self.app(scope, receive, _intercept_send)
+
+            if status_code == 404 and not headers_sent:
+                # Serve SPA index.html instead of 404
+                response = FileResponse(index_html)
+                await response(scope, receive, send)
+            elif not headers_sent and buffered:
+                # Flush buffered messages (shouldn't happen)
+                for msg in buffered:
+                    await send(msg)
+
+    return _SPAFallback(app)
 
 
 async def setup_websocket_manager(event_bus) -> WebSocketManager:

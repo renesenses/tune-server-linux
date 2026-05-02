@@ -39,8 +39,8 @@ class TestCORSMiddleware:
     async def test_wildcard_cors_disables_credentials(self):
         """With wildcard origins, credentials should be disabled on the app."""
         with _patch_settings(cors_origins=["*"]):
-            from tune_server.api.main import create_api_app
-            app = create_api_app()
+            from tune_server.api.main import create_api_app, wrap_for_serving
+            app = wrap_for_serving(create_api_app())
             # Verify CORS is configured by making a request
             import httpx
             async with httpx.AsyncClient(
@@ -56,8 +56,8 @@ class TestCORSMiddleware:
     async def test_specific_origins_enable_credentials(self):
         """With specific origins, credentials should be enabled."""
         with _patch_settings(cors_origins=["http://localhost:3000"]):
-            from tune_server.api.main import create_api_app
-            app = create_api_app()
+            from tune_server.api.main import create_api_app, wrap_for_serving
+            app = wrap_for_serving(create_api_app())
             import httpx
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -830,7 +830,7 @@ async def _make_test_client(with_deps=None):
     """Create a test client with optional dependency overrides."""
     import httpx
     from tune_server.api.deps import deps
-    from tune_server.api.main import create_api_app
+    from tune_server.api.main import create_api_app, wrap_for_serving
 
     # Set minimal deps for routes to work
     if with_deps:
@@ -855,7 +855,7 @@ async def _make_test_client(with_deps=None):
         deps.scanner = MagicMock()
         deps.scanner.is_scanning = False
 
-    app = create_api_app()
+    app = wrap_for_serving(create_api_app())
 
     client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
