@@ -178,6 +178,10 @@ jobs:
           cd dist && tar czf "../tune-server-${VERSION}-linux.tar.gz" tune-server/
           cd .. && sha256sum "tune-server-${VERSION}-linux.tar.gz" | awk '{print $1}' > "tune-server-${VERSION}-linux.tar.gz.sha256"
 
+      - name: Clean stale artifacts (macOS)
+        if: matrix.platform == 'macos'
+        run: rm -f tune-server-*.dmg tune-server-*.tar.gz tune-server-*.sha256
+
       - name: Package tarball (macOS)
         if: matrix.platform == 'macos'
         run: |
