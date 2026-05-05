@@ -38,7 +38,7 @@ CHECK_INTERVAL_HOURS = 6
 # in batch files).
 _WINDOWS_APPLY_UPDATE_BAT = r"""@echo off
 REM ===========================================================================
-REM Tune Server — staged-update applier (Windows)
+REM Tune Server -- staged-update applier (Windows)
 REM ===========================================================================
 REM Spawned detached by tune-server.exe right before the parent process exits
 REM (SIGTERM). Job: confirm the parent is gone, mirror _update_staging\ over
@@ -46,7 +46,7 @@ REM the install dir, then relaunch.
 REM
 REM Logs everything to _update.log so a tester can share it when the update
 REM ends in a bad state ("UI still says old version after restart" was the
-REM symptom Yves hit on 2026-04-30 going from 0.6.5 → 0.7.56 — file handles
+REM symptom Yves hit on 2026-04-30 going from 0.6.5 -> 0.7.56 -- file handles
 REM weren't released in time, robocopy retried, but start-tune-server.bat
 REM had already relaunched the OLD exe in parallel).
 REM ===========================================================================
@@ -59,12 +59,12 @@ echo [%DATE% %TIME%] cwd: %cd% >> "%LOGFILE%"
 
 REM Sanity: staging must exist + contain the new tune-server.exe.
 if not exist "_update_staging" (
-    echo [%DATE% %TIME%] [ERROR] _update_staging folder missing — aborting >> "%LOGFILE%"
+    echo [%DATE% %TIME%] [ERROR] _update_staging folder missing -- aborting >> "%LOGFILE%"
     echo [tune-update][ERROR] _update_staging folder missing. See _update.log
     exit /b 1
 )
 if not exist "_update_staging\tune-server.exe" (
-    echo [%DATE% %TIME%] [ERROR] _update_staging\tune-server.exe missing — aborting >> "%LOGFILE%"
+    echo [%DATE% %TIME%] [ERROR] _update_staging\tune-server.exe missing -- aborting >> "%LOGFILE%"
     echo [tune-update][ERROR] Staged update incomplete. See _update.log
     exit /b 1
 )
@@ -79,7 +79,7 @@ tasklist /FI "IMAGENAME eq tune-server.exe" /FO CSV /NH 2>nul | findstr /I "tune
 if errorlevel 1 goto :proc_gone
 set /a TRIES+=1
 if %TRIES% GEQ 15 (
-    echo [%DATE% %TIME%] tune-server.exe still alive after 30 s — force-killing >> "%LOGFILE%"
+    echo [%DATE% %TIME%] tune-server.exe still alive after 30 s -- force-killing >> "%LOGFILE%"
     taskkill /IM tune-server.exe /F >> "%LOGFILE%" 2>&1
     ping -n 4 127.0.0.1 >nul
     goto :proc_gone
@@ -92,16 +92,16 @@ REM 2. Backstop: kill librespot and any orphan helper too. Multiple cmd
 REM    windows from start-tune-server.bat can keep the dir locked.
 taskkill /IM librespot.exe /F >> "%LOGFILE%" 2>&1
 
-REM 3. Extra grace period — Windows takes ~1-2 s after process exit to
+REM 3. Extra grace period -- Windows takes ~1-2 s after process exit to
 REM    actually release file locks on the .exe.
 echo [%DATE% %TIME%] Process gone, waiting 3 s for file handle release... >> "%LOGFILE%"
 ping -n 4 127.0.0.1 >nul
 
 REM 4. Mirror the staged bundle on top of the install dir. /MIR removes
 REM    files no longer in the new build (clean upgrade) but excludes user
-REM    state. /R:10 /W:3 = 10 retries × 3 s wait each (30 s total grace
+REM    state. /R:10 /W:3 = 10 retries x 3 s wait each (30 s total grace
 REM    for any handle the OS hasn't released yet).
-echo [%DATE% %TIME%] robocopy _update_staging\ → . starting... >> "%LOGFILE%"
+echo [%DATE% %TIME%] robocopy _update_staging\ -> . starting... >> "%LOGFILE%"
 robocopy "_update_staging" "." /MIR ^
     /XF .env tune_server.db tune-server.log tune-server.log.1 _update.log ^
     /XD artwork_cache backups _update_staging _backup_* ^
@@ -112,19 +112,19 @@ echo [%DATE% %TIME%] robocopy returned %RC% >> "%LOGFILE%"
 
 REM robocopy success codes are 0-7; 8+ is failure.
 if %RC% GEQ 8 (
-    echo [%DATE% %TIME%] [ERROR] robocopy failed (code %RC%) — install dir may be partial >> "%LOGFILE%"
+    echo [%DATE% %TIME%] [ERROR] robocopy failed (code %RC%) -- install dir may be partial >> "%LOGFILE%"
     echo [tune-update][ERROR] robocopy failed with code %RC%. See _update.log
     exit /b 1
 )
 
 REM 5. Sanity-check: confirm the live tune-server.exe really got swapped.
-REM    Compare file sizes between staging and install — they should match.
+REM    Compare file sizes between staging and install -- they should match.
 for %%I in ("_update_staging\tune-server.exe") do set "STAGING_SIZE=%%~zI"
 for %%I in ("tune-server.exe") do set "LIVE_SIZE=%%~zI"
 echo [%DATE% %TIME%] sizes: staging=%STAGING_SIZE% live=%LIVE_SIZE% >> "%LOGFILE%"
 if not "%STAGING_SIZE%"=="%LIVE_SIZE%" (
-    echo [%DATE% %TIME%] [WARN] sizes differ — robocopy did NOT replace tune-server.exe (locked?) >> "%LOGFILE%"
-    echo [tune-update][WARN] tune-server.exe size mismatch — see _update.log
+    echo [%DATE% %TIME%] [WARN] sizes differ -- robocopy did NOT replace tune-server.exe (locked?) >> "%LOGFILE%"
+    echo [tune-update][WARN] tune-server.exe size mismatch -- see _update.log
     REM Try one more time directly with copy /Y as a fallback for the exe
     REM (robocopy can mis-handle a file held briefly by its own retry loop).
     copy /Y "_update_staging\tune-server.exe" "tune-server.exe" >> "%LOGFILE%" 2>&1
@@ -190,7 +190,7 @@ class UpdateChecker:
         """True when running from a git clone + venv (e.g. .18 dev/prod box).
 
         The release tarballs ship a PyInstaller bundle (`_internal/`,
-        `tune-server` binary, `librespot`, `install.sh`, …) and
+        `tune-server` binary, `librespot`, `install.sh`, ...) and
         unpacking that on top of a source checkout pollutes the repo and
         leaves the venv's installed `tune-server` package out of sync.
         Detect the case so we can refuse the in-app installer with a
@@ -260,7 +260,7 @@ class UpdateChecker:
             logger.warning("update_helper_missing", path=str(helper))
             return
         try:
-            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — keep the bat
+            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP -- keep the bat
             # alive after our exit and stop signal propagation.
             CREATE_FLAGS = 0x00000008 | 0x00000200
             subprocess.Popen(
