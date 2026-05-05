@@ -95,6 +95,7 @@ class HttpAudioStreamer:
         self._sessions: dict[str, StreamSession] = {}
         self._file_paths: dict[str, str] = {}  # stream_id -> file_path for passthrough
         self._proxy_urls: dict[str, str] = {}  # stream_id -> upstream HTTPS URL for proxy
+        self._radio_sessions: set[str] = set()  # stream_ids for infinite radio streams
         self._cleanup_task: asyncio.Task | None = None
         self._http_session: aiohttp.ClientSession | None = None
 
@@ -129,12 +130,20 @@ class HttpAudioStreamer:
         logger.info("proxy_session_created", stream_id=stream_id, url=upstream_url[:80])
         return stream_id
 
+    def create_radio_proxy_session(self, upstream_url: str, stream_info: AudioStreamInfo) -> str:
+        """Create a proxy session for an infinite radio stream (no timeout)."""
+        stream_id = self.create_proxy_session(upstream_url, stream_info)
+        self._radio_sessions.add(stream_id)
+        logger.info("radio_proxy_session_created", stream_id=stream_id, url=upstream_url[:80])
+        return stream_id
+
     def remove_session(self, stream_id: str) -> None:
         session = self._sessions.pop(stream_id, None)
         if session:
             session.close()
         self._file_paths.pop(stream_id, None)
         self._proxy_urls.pop(stream_id, None)
+        self._radio_sessions.discard(stream_id)
 
     def _resolve_mime(self, stream_id: str, session) -> str:
         """Return the correct MIME type, using file extension for DSD."""
@@ -358,8 +367,10 @@ class HttpAudioStreamer:
         session: StreamSession | None = None,
     ) -> web.StreamResponse:
         """Proxy an upstream HTTPS URL over HTTP with Content-Length."""
+        is_radio = stream_id in self._radio_sessions
+        timeout = aiohttp.ClientTimeout(total=None, sock_read=30) if is_radio else aiohttp.ClientTimeout(total=600)
         cs = self._get_http_session()
-        async with cs.get(upstream_url, timeout=aiohttp.ClientTimeout(total=600)) as upstream:
+        async with cs.get(upstream_url, timeout=timeout) as upstream:
                 headers = {
                     "Content-Type": upstream.headers.get("Content-Type", mime),
                     "Accept-Ranges": "bytes",

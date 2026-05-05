@@ -192,6 +192,39 @@ class DlnaOutput(OutputTarget):
         self._direct_url = False
 
         try:
+            # Radio proxy: buffer the infinite stream locally so the renderer
+            # fetches from LAN (absorbs CDN blips / network glitches)
+            if (
+                track
+                and track.source == Source.RADIO
+                and track.file_path
+                and track.file_path.startswith("http")
+            ):
+                fmt = AudioFormat(track.format) if track.format else AudioFormat.AAC
+                mime = mime_type_for_format(fmt)
+                proxy_info = AudioStreamInfo(
+                    format=fmt,
+                    sample_rate=track.sample_rate or 44100,
+                    bit_depth=track.bit_depth or 16,
+                    channels=track.channels or 2,
+                )
+                self._stream_id = self._streamer.create_radio_proxy_session(track.file_path, proxy_info)
+                stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+                metadata = _build_didl_lite(track, stream_url, mime)
+
+                dmr = self._device
+                title = track.title or "Unknown"
+                await asyncio.wait_for(
+                    dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
+                )
+                await asyncio.wait_for(dmr.async_play(), timeout=10)
+
+                self._direct_url = True
+                self._last_uri = stream_url
+                self._available = True
+                logger.info("radio_proxy_playback", device=self.name, url=track.file_path[:80])
+                return
+
             # Direct URL passthrough: let the DLNA renderer fetch from the CDN
             if track and self.supports_direct_url(track):
                 url = track.file_path
@@ -223,7 +256,6 @@ class DlnaOutput(OutputTarget):
                 and track
                 and track.file_path
                 and (track.file_path.startswith("https://") or track.file_path.startswith("http://"))
-                and track.source != Source.RADIO
             ):
                 fmt = AudioFormat(track.format) if track.format else AudioFormat.FLAC
                 mime = mime_type_for_format(fmt)
