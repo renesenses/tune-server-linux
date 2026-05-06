@@ -154,7 +154,7 @@ class MetadataEnricher:
             from tune_server.config import settings as _s
             if _s.discogs_token:
                 no_image = await self._db.fetchall(
-                    "SELECT id, name FROM artists WHERE (image_path IS NULL OR image_path = '') LIMIT 20",
+                    "SELECT id, name FROM artists WHERE (image_path IS NULL OR image_path = '') LIMIT 200",
                 )
                 enriched_count = 0
                 for row in no_image:
@@ -333,4 +333,4 @@ class MetadataEnricher:
                 logger.exception("enrichment_loop_error")
 
             # Wait before next enrichment pass
-            await asyncio.sleep(300)  # 5 minutes
+            await asyncio.sleep(60)
