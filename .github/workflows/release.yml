@@ -216,7 +216,7 @@ jobs:
           echo "Available signing identities (search list):"
           security find-identity -v -p codesigning
 
-      - name: Build menubar wrapper .app + DMG staging (macOS)
+      - name: Build .app bundle + DMG staging (macOS)
         if: matrix.platform == 'macos'
         env:
           TUNE_VERSION: ${{ steps.version.outputs.version }}
@@ -224,45 +224,58 @@ jobs:
           VERSION="${TUNE_VERSION}"
           APP_NAME="Tune Server"
           APP_DIR="${APP_NAME}.app"
-          rm -rf "${APP_DIR}" dist/Tune\ Server.app
+          rm -rf "${APP_DIR}"
 
-          # rumps + pyobjc are macOS-only deps for the menubar wrapper
-          pip install rumps
+          # Build the .app bundle manually — no PyInstaller/rumps wrapper.
+          # The old rumps-based wrapper pulled all of PyObjC, triggering
+          # 2GB+ of libffi struct registrations and 5-minute startup freezes.
+          # The shell launcher starts instantly and is trivial to sign.
+          mkdir -p "${APP_DIR}/Contents/MacOS"
+          mkdir -p "${APP_DIR}/Contents/Resources"
 
-          # Build the menubar wrapper as a windowed .app bundle. PyInstaller
-          # creates dist/Tune Server.app with the wrapper as CFBundleExecutable.
-          # --windowed = no console window, --icon = our branded AppIcon,
-          # --osx-bundle-identifier sets the bundle id used by codesign and
-          # notarization.
-          pyinstaller --windowed \
-            --name "Tune Server" \
-            --icon scripts/AppIcon.icns \
-            --osx-bundle-identifier fr.mozaiklabs.tune-server \
-            --collect-all rumps \
-            --hidden-import rumps \
-            --noconfirm \
-            scripts/macos_menubar.py
+          # Main executable: shell launcher
+          cp scripts/macos_launcher.sh "${APP_DIR}/Contents/MacOS/Tune Server"
+          chmod +x "${APP_DIR}/Contents/MacOS/Tune Server"
 
-          # Move the produced .app to the workflow root for downstream steps.
-          mv "dist/${APP_DIR}" "${APP_DIR}"
+          # App icon
+          cp scripts/AppIcon.icns "${APP_DIR}/Contents/Resources/AppIcon.icns"
 
-          # Embed the tune-server runtime as a sibling subdirectory in
-          # Resources/. The wrapper subprocess.Popen()s it. Apple only
-          # signs/notarizes the wrapper's process tree; the embedded
-          # runtime is signed separately later in the Sign step.
+          # Embed the tune-server runtime
           cp -R dist/tune-server "${APP_DIR}/Contents/Resources/runtime"
 
-          # Patch Info.plist: add LSUIElement so the app runs as a menubar
-          # accessory (no Dock icon), set version + display name.
-          # PlistBuddy 'Set' fails if the key is missing — try Set first,
-          # fall back to Add. Some keys exist on PyInstaller's template,
-          # others don't.
-          PB() { /usr/libexec/PlistBuddy -c "$1" "${APP_DIR}/Contents/Info.plist" 2>/dev/null; }
-          PB "Set :CFBundleVersion ${VERSION}" || PB "Add :CFBundleVersion string ${VERSION}"
-          PB "Set :CFBundleShortVersionString ${VERSION}" || PB "Add :CFBundleShortVersionString string ${VERSION}"
-          PB "Set :CFBundleDisplayName Tune Server" || PB "Add :CFBundleDisplayName string Tune Server"
-          PB "Set :LSUIElement true" || PB "Add :LSUIElement bool true"
-          PB "Set :LSMinimumSystemVersion 11.0" || PB "Add :LSMinimumSystemVersion string 11.0"
+          # Generate Info.plist
+          cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDisplayName</key>
+            <string>Tune Server</string>
+            <key>CFBundleExecutable</key>
+            <string>Tune Server</string>
+            <key>CFBundleIconFile</key>
+            <string>AppIcon.icns</string>
+            <key>CFBundleIdentifier</key>
+            <string>fr.mozaiklabs.tune-server</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>Tune Server</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${VERSION}</string>
+            <key>CFBundleVersion</key>
+            <string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>11.0</string>
+            <key>LSUIElement</key>
+            <true/>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
 
           # Stage DMG contents: .app + symlink to /Applications + README
           rm -rf dmg-stage
@@ -276,12 +289,9 @@ jobs:
           depuis Launchpad ou /Applications.
 
           Au lancement :
-            • Une icône 🎵 apparaît dans la barre des menus (en haut à droite)
-            • Le serveur démarre en arrière-plan sur http://localhost:8888
+            • Le serveur démarre en arrière-plan
+            • Votre navigateur s'ouvre sur http://localhost:8888
             • Pas de fenêtre Terminal, pas d'icône Dock
-
-          Le menu permet d'ouvrir l'interface web, voir les logs, redémarrer
-          ou quitter le serveur.
 
           Premier lancement : si macOS bloque "Apple ne peut vérifier", faire
           clic droit sur l'app puis Ouvrir → Ouvrir dans la fenêtre de
