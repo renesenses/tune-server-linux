@@ -43,8 +43,13 @@ class SsdpAdvertiser:
 
         # Join multicast group on the correct interface
         mreq = struct.pack("4s4s", socket.inet_aton(SSDP_ADDR), socket.inet_aton(self._ip))
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(self._ip))
+        try:
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(self._ip))
+        except OSError as exc:
+            logger.warning("ssdp_multicast_unavailable", error=str(exc))
+            sock.close()
+            return
         sock.setblocking(False)
 
         self._transport, _ = await loop.create_datagram_endpoint(

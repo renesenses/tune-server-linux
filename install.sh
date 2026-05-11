@@ -118,6 +118,7 @@ if [[ "$MODE" == "binary" ]]; then
 else
     # Source: copy code + (re)build venv.
     cp -r "$SCRIPT_DIR/tune_server" "$SCRIPT_DIR/pyproject.toml" "$INSTALL_DIR/"
+    [[ -d "$SCRIPT_DIR/web" ]] && cp -r "$SCRIPT_DIR/web" "$INSTALL_DIR/"
     python3 -m venv "$INSTALL_DIR/.venv"
     "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
     "$INSTALL_DIR/.venv/bin/pip" install --quiet -e "$INSTALL_DIR"
