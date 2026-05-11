@@ -170,6 +170,25 @@ jobs:
           Copy-Item "scripts/start-tune-server.bat" "dist/tune-server/start-tune-server.bat"
           Copy-Item "scripts/_open_browser_when_ready.bat" "dist/tune-server/_open_browser_when_ready.bat"
 
+      - name: Build Windows installer (NSIS)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          TUNE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Generate .ico from the web client PNG icon
+          $iconSrc = "dist/tune-server/_internal/web/icons/icon-512.png"
+          if (Test-Path $iconSrc) {
+            magick $iconSrc -define icon:auto-resize=256,128,64,48,32,16 "dist/tune-server/AppIcon.ico"
+            Copy-Item "dist/tune-server/AppIcon.ico" "AppIcon.ico"
+          } else {
+            Write-Host "::warning::icon-512.png not found, installer will have no icon"
+          }
+          # Copy NSIS script to build root
+          Copy-Item "scripts/installer.nsi" "installer.nsi"
+          # Build installer
+          makensis /DVERSION=$env:TUNE_VERSION installer.nsi
+
       - name: Package (Linux)
         if: matrix.platform == 'linux'
         run: |
@@ -494,6 +513,12 @@ jobs:
           Compress-Archive -Path "dist/tune-server" -DestinationPath "tune-server-${VERSION}-windows.zip"
           $hash = (Get-FileHash -Algorithm SHA256 "tune-server-${VERSION}-windows.zip").Hash.ToLower()
           Set-Content -Path "tune-server-${VERSION}-windows.zip.sha256" -Value $hash -NoNewline
+          # NSIS installer
+          $setup = "tune-server-${VERSION}-windows-setup.exe"
+          if (Test-Path $setup) {
+            $hash2 = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
+            Set-Content -Path "${setup}.sha256" -Value $hash2 -NoNewline
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -504,6 +529,8 @@ jobs:
             tune-server-*.tar.gz.sha256
             tune-server-*.zip
             tune-server-*.zip.sha256
+            tune-server-*-setup.exe
+            tune-server-*-setup.exe.sha256
             tune-server-*.dmg
             tune-server-*.dmg.sha256
           retention-days: 30
