@@ -20,7 +20,7 @@ logger = structlog.get_logger()
 
 QOBUZ_API_BASE = "https://www.qobuz.com/api.json/0.2"
 QOBUZ_API_PROXY = "https://mozaiklabs.fr/qobuz-api"
-QOBUZ_LOGIN_APP_ID = "425621600"
+QOBUZ_LOGIN_APP_ID = "312369995"
 
 
 class QobuzService(StreamingService):
