@@ -1,4 +1,5 @@
 @echo off
+title Tune Server
 setlocal enabledelayedexpansion
 
 REM ===========================================================================
@@ -8,17 +9,24 @@ REM ===========================================================================
 cd /d "%~dp0"
 
 echo.
-echo === Tune Server ===
-echo Working directory: %cd%
+echo ============================================================
+echo   Tune Server
+echo ============================================================
+echo.
+echo   Dossier : %cd%
+echo   Ne fermez pas cette fenetre pendant l'utilisation.
 echo.
 
 REM ---------------------------------------------------------------------------
 REM Pre-flight 1: required binary exists
 REM ---------------------------------------------------------------------------
 if not exist "tune-server.exe" (
-    echo [ERROR] tune-server.exe is missing in this folder.
-    echo The install zip extraction was incomplete or corrupted.
-    echo Re-download from https://github.com/renesenses/tune-server-linux/releases
+    echo [ERREUR] tune-server.exe est introuvable dans ce dossier.
+    echo.
+    echo Verifiez que vous avez bien extrait TOUT le contenu du zip
+    echo dans un dossier, et que vous lancez le .bat depuis ce dossier.
+    echo.
+    echo Telechargement : https://mozaiklabs.fr/download
     echo.
     pause
     exit /b 1
@@ -28,9 +36,9 @@ REM ---------------------------------------------------------------------------
 REM Pre-flight 2: ffmpeg.exe needed for transcoding (optional but warn)
 REM ---------------------------------------------------------------------------
 if not exist "ffmpeg.exe" (
-    echo [WARN] ffmpeg.exe missing — audio transcoding will be unavailable.
-    echo Some streaming services (Tidal, Qobuz, etc.) may fail.
-    echo Re-extract the zip to restore it.
+    echo [ATTENTION] ffmpeg.exe manquant — le transcodage audio sera indisponible.
+    echo Certains services de streaming pourraient ne pas fonctionner.
+    echo Re-extrayez le zip pour le restaurer.
     echo.
 )
 
@@ -65,10 +73,11 @@ REM ---------------------------------------------------------------------------
 set MAX_ATTEMPTS=3
 set ATTEMPT=1
 
-echo Starting Tune Server...
-echo Web UI will open at http://localhost:8888 once ready.
-echo Logs are written to: %cd%\tune-server.log
-echo Close this window to stop the server (the watchdog will not restart it).
+echo Demarrage de Tune Server...
+echo L'interface web s'ouvrira sur http://localhost:8888
+echo Logs : %cd%\tune-server.log
+echo.
+echo   Pour arreter le serveur, fermez cette fenetre.
 echo.
 
 :RUN_LOOP
