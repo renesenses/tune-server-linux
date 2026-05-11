@@ -20,6 +20,7 @@ logger = structlog.get_logger()
 
 QOBUZ_API_BASE = "https://www.qobuz.com/api.json/0.2"
 QOBUZ_API_PROXY = "https://mozaiklabs.fr/qobuz-api"
+QOBUZ_LOGIN_APP_ID = "425621600"
 
 
 class QobuzService(StreamingService):
@@ -133,10 +134,11 @@ class QobuzService(StreamingService):
         try:
             session = await self._ensure_session()
             url = f"{self._api_base}/user/login"
+            login_app_id = QOBUZ_LOGIN_APP_ID if QOBUZ_LOGIN_APP_ID else self._app_id
             data = {
                 "email": username,
                 "password": password,
-                "app_id": self._app_id,
+                "app_id": login_app_id,
             }
             async with session.post(url, data=data) as resp:
                 if resp.status == 403 and not self._use_proxy:
