@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 QOBUZ_API_BASE = "https://www.qobuz.com/api.json/0.2"
+QOBUZ_API_PROXY = "https://mozaiklabs.fr/qobuz-api"
 
 
 class QobuzService(StreamingService):
@@ -33,6 +34,7 @@ class QobuzService(StreamingService):
         self._session: aiohttp.ClientSession | None = None
         self._url_cache = StreamUrlCache(ttl_seconds=240)
         self._credentials_refreshed = False
+        self._use_proxy = False
 
     @property
     def name(self) -> str:
@@ -60,13 +62,17 @@ class QobuzService(StreamingService):
             self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._session
 
+    @property
+    def _api_base(self) -> str:
+        return QOBUZ_API_PROXY if self._use_proxy else QOBUZ_API_BASE
+
     async def _api_get(self, endpoint: str, params: dict = None, _retry: bool = True) -> dict:
         session = await self._ensure_session()
         headers = {"X-App-Id": self._app_id}
         if self._user_auth_token:
             headers["X-User-Auth-Token"] = self._user_auth_token
 
-        url = f"{QOBUZ_API_BASE}/{endpoint}"
+        url = f"{self._api_base}/{endpoint}"
         try:
             resp = await http_request_with_retry(
                 session, "GET", url,
@@ -77,9 +83,11 @@ class QobuzService(StreamingService):
             if exc.status == 401:
                 logger.warning("qobuz_token_expired")
                 self._user_auth_token = None
+            elif exc.status == 403 and not self._use_proxy:
+                logger.warning("qobuz_blocked_switching_to_proxy", endpoint=endpoint)
+                self._use_proxy = True
+                return await self._api_get(endpoint, params, _retry=_retry)
             elif exc.status == 403 and _retry:
-                # 403 often means rotated app_id/app_secret. Force re-fetch
-                # remote credentials and retry once.
                 logger.warning("qobuz_forbidden_refreshing_credentials", endpoint=endpoint)
                 self._credentials_refreshed = False
                 await self._refresh_credentials()
@@ -124,19 +132,23 @@ class QobuzService(StreamingService):
 
         try:
             session = await self._ensure_session()
-            url = f"{QOBUZ_API_BASE}/user/login"
+            url = f"{self._api_base}/user/login"
             data = {
                 "email": username,
                 "password": password,
                 "app_id": self._app_id,
             }
             async with session.post(url, data=data) as resp:
+                if resp.status == 403 and not self._use_proxy:
+                    logger.warning("qobuz_auth_blocked_switching_to_proxy")
+                    self._use_proxy = True
+                    return await self.authenticate(**kwargs)
                 if resp.status != 200:
                     logger.warning("qobuz_auth_failed", status=resp.status)
                     return False
                 data = await resp.json()
                 self._user_auth_token = data.get("user_auth_token")
-                logger.info("qobuz_authenticated")
+                logger.info("qobuz_authenticated", proxy=self._use_proxy)
                 return True
 
         except Exception:
