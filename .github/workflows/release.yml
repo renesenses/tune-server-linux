@@ -577,6 +577,8 @@ jobs:
             artifacts/tune-server-*.tar.gz.sha256
             artifacts/tune-server-*.zip
             artifacts/tune-server-*.zip.sha256
+            artifacts/tune-server-*-setup.exe
+            artifacts/tune-server-*-setup.exe.sha256
             artifacts/tune-server-*.dmg
             artifacts/tune-server-*.dmg.sha256
 
