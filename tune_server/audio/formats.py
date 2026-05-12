@@ -162,6 +162,8 @@ _DSD_CAPABLE_PATTERNS = [
     "lumin",      # Lumin streamers
     "auralic",    # Auralic Aries
     "micromega",  # Micromega M-One (ESS Sabre DAC)
+    "diretta",    # DirettaRendererUPnP (DSD64-DSD1024)
+    "wiim",       # WiiM Ultra/Pro
 ]
 
 
