@@ -391,4 +391,6 @@ class LibraryScanner:
         return await self._process_new_file(file_path)
 
     async def scan_single(self, file_path: str) -> bool:
+        if self._scanning:
+            return False
         return await self._rescan_file(file_path)

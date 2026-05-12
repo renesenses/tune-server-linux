@@ -264,6 +264,30 @@ class MetadataEnricher:
                     # Rate limit: MusicBrainz allows 1 request per second
                     await asyncio.sleep(1.5)
 
+                # Enrich artist images from Discogs
+                from tune_server.config import settings as _s
+                if _s.discogs_token:
+                    no_image = await self._db.fetchall(
+                        "SELECT id, name FROM artists WHERE (image_path IS NULL OR image_path = '') LIMIT 200",
+                    )
+                    enriched_count = 0
+                    for row in no_image:
+                        if not self._running:
+                            break
+                        img_path = await _fetch_discogs_artist_image(
+                            row["name"], _s.discogs_token, _s.artwork_cache_dir
+                        )
+                        if img_path:
+                            await self._db.execute(
+                                "UPDATE artists SET image_path = ? WHERE id = ?",
+                                (img_path, row["id"]),
+                            )
+                            await self._db.commit()
+                            enriched_count += 1
+                        await asyncio.sleep(1.5)
+                    if enriched_count:
+                        logger.info("artist_images_enriched", count=enriched_count)
+
                 # Enrich albums without year or genre
                 albums = await self._db.fetchall(
                     "SELECT id, title, artist_id FROM albums WHERE (year IS NULL OR genre IS NULL) LIMIT 10",

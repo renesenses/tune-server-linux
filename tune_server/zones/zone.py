@@ -187,11 +187,13 @@ class ZoneInstance:
         # Backward compat: also write local track IDs to play_queue table
         track_ids = [t.id for t in tracks if t.id is not None]
         if track_ids:
-            await self._queue_repo.set_queue(self._zone_id, track_ids)
-            # Map position to local-only index
-            local_pos = sum(1 for t in tracks[:position] if t.id is not None)
-            if 0 <= local_pos < len(track_ids):
-                await self._queue_repo.set_current(self._zone_id, local_pos)
+            try:
+                await self._queue_repo.set_queue(self._zone_id, track_ids)
+                local_pos = sum(1 for t in tracks[:position] if t.id is not None)
+                if 0 <= local_pos < len(track_ids):
+                    await self._queue_repo.set_current(self._zone_id, local_pos)
+            except Exception:
+                logger.warning("play_queue_persist_failed", zone_id=self._zone_id, exc_info=True)
 
     async def restore_queue(self) -> None:
         """Restore queue from DB on startup. Tries JSON first, falls back to play_queue."""
