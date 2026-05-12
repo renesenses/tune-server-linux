@@ -179,13 +179,12 @@ class DlnaOutput(OutputTarget):
         return fmt in _DLNA_DIRECT_FORMATS
 
     async def start(self, stream_info: AudioStreamInfo, track: Track | None = None) -> None:
-        # Stop current playback first — Micromega ignores new URI without explicit Stop
-        # Skip for other renderers (DMP-A8 drops connection after 30s if Stop precedes Play)
-        if self._is_micromega:
-            try:
-                await self._dmr_call("async_stop")
-            except Exception as e:
-                logger.debug("dlna_pre_start_stop_failed", device=self.name, error=str(e))
+        # Stop current playback before setting a new URI — many renderers
+        # (Micromega, Wiim, Denon) ignore a new URI without explicit Stop.
+        try:
+            await self._dmr_call("async_stop")
+        except Exception:
+            logger.debug("dlna_pre_start_stop_failed", device=self.name)
         if self._stream_id:
             self._streamer.remove_session(self._stream_id)
             self._stream_id = None

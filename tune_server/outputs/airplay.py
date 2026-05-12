@@ -72,7 +72,8 @@ class AirPlayOutput(OutputTarget):
                 logger.debug("airplay_metadata_build_failed", error=str(e))
 
             # stream_file handles encoding + RAOP streaming internally
-            logger.info("airplay_streaming", device=self._device_name, track=track.title)
+            logger.info("airplay_streaming", device=self._device_name, track=track.title,
+                        file=track.file_path[:80])
             self._stream_task = asyncio.create_task(
                 stream.stream_file(track.file_path, metadata=metadata)
             )
@@ -91,6 +92,16 @@ class AirPlayOutput(OutputTarget):
                     ) from exc
 
             self._available = True
+
+            # Push volume after stream starts — some AirPlay receivers
+            # default to 0 or ignore volume set before playback begins.
+            try:
+                audio = self._atv.audio
+                await asyncio.wait_for(
+                    audio.set_volume(self._volume * 100), timeout=5
+                )
+            except Exception:
+                logger.debug("airplay_post_start_volume_failed", device=self._device_name)
 
         except RuntimeError:
             raise
