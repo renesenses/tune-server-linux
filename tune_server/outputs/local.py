@@ -84,23 +84,47 @@ class LocalOutput(OutputTarget):
                 except Exception:
                     logger.debug("local_exclusive_mode_detection_failed")
 
-            self._stream = sd.OutputStream(
-                samplerate=stream_info.sample_rate,
-                channels=stream_info.channels,
-                dtype=dtype,
-                device=device,
-                blocksize=blocksize,
-                latency="low" if exclusive else "high",
-                extra_settings=extra_settings,
-            )
+            out_rate = stream_info.sample_rate
+            self._resample_ratio: float | None = None
+
+            try:
+                self._stream = sd.OutputStream(
+                    samplerate=out_rate,
+                    channels=stream_info.channels,
+                    dtype=dtype,
+                    device=device,
+                    blocksize=blocksize,
+                    latency="low" if exclusive else "high",
+                    extra_settings=extra_settings,
+                )
+            except sd.PortAudioError:
+                dev_info = sd.query_devices(device if device is not None else sd.default.device[1])
+                default_rate = int(dev_info.get("default_samplerate", 48000))
+                logger.warning("local_output_resample",
+                               source_rate=out_rate, device_rate=default_rate)
+                self._resample_ratio = default_rate / out_rate
+                out_rate = default_rate
+                blocksize = max(256, int(out_rate * latency_s / 4))
+                self._stream = sd.OutputStream(
+                    samplerate=out_rate,
+                    channels=stream_info.channels,
+                    dtype=dtype,
+                    device=device,
+                    blocksize=blocksize,
+                    latency="low" if exclusive else "high",
+                    extra_settings=extra_settings,
+                )
+
             self._stream.start()
             self._available = True
             self._exclusive = exclusive
             logger.info(
                 "local_output_started",
-                sample_rate=stream_info.sample_rate,
+                sample_rate=out_rate,
+                source_rate=stream_info.sample_rate,
                 channels=stream_info.channels,
                 bit_depth=stream_info.bit_depth,
+                resampled=self._resample_ratio is not None,
                 exclusive=exclusive,
                 blocksize=blocksize,
                 latency_ms=_s.local_latency_ms,
@@ -136,6 +160,19 @@ class LocalOutput(OutputTarget):
                 if remainder:
                     arr = arr[:-remainder]
                 arr = arr.reshape(-1, info.channels)
+
+            # Resample if device doesn't support the source sample rate
+            if self._resample_ratio is not None and self._resample_ratio != 1.0:
+                n_out = int(len(arr) * self._resample_ratio)
+                if n_out > 0:
+                    indices = np.linspace(0, len(arr) - 1, n_out)
+                    if arr.ndim == 2:
+                        arr = np.column_stack([
+                            np.interp(indices, np.arange(len(arr)), arr[:, ch].astype(np.float64)).astype(arr.dtype)
+                            for ch in range(arr.shape[1])
+                        ])
+                    else:
+                        arr = np.interp(indices, np.arange(len(arr)), arr.astype(np.float64)).astype(arr.dtype)
 
             await asyncio.to_thread(self._stream.write, arr)
         except sd.PortAudioError:
