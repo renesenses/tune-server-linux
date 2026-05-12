@@ -5,21 +5,21 @@ from datetime import datetime
 
 from fastapi import APIRouter
 
-from tune_server.api.deps import get_deps
+from tune_server.api.deps import deps as _deps
 
 router = APIRouter(prefix="/alarms", tags=["alarms"])
 
 
 @router.get("/")
 async def list_alarms():
-    deps = get_deps()
+    deps = _deps
     rows = await deps.db.fetchall("SELECT * FROM alarms ORDER BY time")
     return [dict(r) for r in rows]
 
 
 @router.post("/")
 async def create_alarm(body: dict):
-    deps = get_deps()
+    deps = _deps
     await deps.db.execute(
         "INSERT INTO alarms (name, time, days, skip_holidays, holiday_country, "
         "zone_id, source_type, source_id, source_name, volume, fade_in_seconds, enabled) "
@@ -46,7 +46,7 @@ async def create_alarm(body: dict):
 
 @router.put("/{alarm_id}")
 async def update_alarm(alarm_id: int, body: dict):
-    deps = get_deps()
+    deps = _deps
     sets = []
     vals = []
     for key in ("name", "time", "days", "skip_holidays", "holiday_country",
@@ -74,7 +74,7 @@ async def update_alarm(alarm_id: int, body: dict):
 
 @router.delete("/{alarm_id}")
 async def delete_alarm(alarm_id: int):
-    deps = get_deps()
+    deps = _deps
     await deps.db.execute("DELETE FROM alarms WHERE id = ?", (alarm_id,))
     await deps.db.commit()
     return {"deleted": alarm_id}
