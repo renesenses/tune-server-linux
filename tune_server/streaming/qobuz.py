@@ -36,6 +36,7 @@ class QobuzService(StreamingService):
         self._url_cache = StreamUrlCache(ttl_seconds=240)
         self._credentials_refreshed = False
         self._use_proxy = False
+        self._login_app_id: str | None = None
 
     @property
     def name(self) -> str:
@@ -69,7 +70,7 @@ class QobuzService(StreamingService):
 
     async def _api_get(self, endpoint: str, params: dict = None, _retry: bool = True) -> dict:
         session = await self._ensure_session()
-        headers = {"X-App-Id": self._app_id}
+        headers = {"X-App-Id": self._login_app_id or self._app_id}
         if self._user_auth_token:
             headers["X-User-Auth-Token"] = self._user_auth_token
 
@@ -150,7 +151,8 @@ class QobuzService(StreamingService):
                     return False
                 data = await resp.json()
                 self._user_auth_token = data.get("user_auth_token")
-                logger.info("qobuz_authenticated", proxy=self._use_proxy)
+                self._login_app_id = login_app_id
+                logger.info("qobuz_authenticated", proxy=self._use_proxy, app_id=login_app_id[:4])
                 return True
 
         except Exception:
@@ -386,7 +388,7 @@ class QobuzService(StreamingService):
         if not self._user_auth_token:
             return
         try:
-            token_data = json.dumps({"user_auth_token": self._user_auth_token})
+            token_data = json.dumps({"user_auth_token": self._user_auth_token, "login_app_id": self._login_app_id})
             await db.execute(
                 "INSERT INTO streaming_auth (service, token_data, updated_at) "
                 "VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT (service) DO UPDATE SET token_data = EXCLUDED.token_data, updated_at = CURRENT_TIMESTAMP",
@@ -410,7 +412,8 @@ class QobuzService(StreamingService):
             token = data.get("user_auth_token")
             if token:
                 self._user_auth_token = token
-                logger.info("qobuz_auth_restored")
+                self._login_app_id = data.get("login_app_id") or QOBUZ_LOGIN_APP_ID
+                logger.info("qobuz_auth_restored", app_id=(self._login_app_id or "")[:4])
                 return True
             return False
         except Exception:
