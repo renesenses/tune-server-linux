@@ -312,6 +312,30 @@ class QobuzService(StreamingService):
             logger.exception("qobuz_user_favorites_error", type=fav_type)
             return {}
 
+    async def add_favorite(self, fav_type: str, item_id: str) -> bool:
+        try:
+            id_key = {"tracks": "track_ids", "albums": "album_ids", "artists": "artist_ids"}.get(fav_type)
+            if not id_key:
+                return False
+            await self._api_get("favorite/create", {id_key: item_id})
+            logger.info("qobuz_favorite_added", type=fav_type, id=item_id)
+            return True
+        except Exception:
+            logger.exception("qobuz_favorite_add_error", type=fav_type, id=item_id)
+            return False
+
+    async def remove_favorite(self, fav_type: str, item_id: str) -> bool:
+        try:
+            id_key = {"tracks": "track_ids", "albums": "album_ids", "artists": "artist_ids"}.get(fav_type)
+            if not id_key:
+                return False
+            await self._api_get("favorite/delete", {id_key: item_id})
+            logger.info("qobuz_favorite_removed", type=fav_type, id=item_id)
+            return True
+        except Exception:
+            logger.exception("qobuz_favorite_remove_error", type=fav_type, id=item_id)
+            return False
+
     async def get_user_playlists(self) -> list[StreamingPlaylist]:
         try:
             data = await self._api_get("playlist/getUserPlaylists")

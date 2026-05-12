@@ -257,6 +257,24 @@ async def get_user_favorites(service_name: str, fav_type: str):
     return await service.get_user_favorites(fav_type)
 
 
+@router.post("/{service_name}/favorites/{fav_type}/{item_id}")
+async def add_favorite(service_name: str, fav_type: str, item_id: str):
+    service = _get_service(service_name)
+    if not hasattr(service, "add_favorite"):
+        return {"ok": False}
+    ok = await service.add_favorite(fav_type, item_id)
+    return {"ok": ok}
+
+
+@router.delete("/{service_name}/favorites/{fav_type}/{item_id}")
+async def remove_favorite(service_name: str, fav_type: str, item_id: str):
+    service = _get_service(service_name)
+    if not hasattr(service, "remove_favorite"):
+        return {"ok": False}
+    ok = await service.remove_favorite(fav_type, item_id)
+    return {"ok": ok}
+
+
 @router.get("/spotify/callback")
 async def spotify_callback(code: str):
     """OAuth PKCE callback for Spotify. Spotify redirects here with ?code=..."""
