@@ -24,6 +24,7 @@ class DiscoveryManager:
 
     def __init__(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
+        self._shared_zc = None
         self._ssdp = SsdpDiscovery(event_bus) if settings.ssdp_enabled else None
         self._mdns = MdnsDiscovery(event_bus) if settings.mdns_enabled else None
         self._cast = CastDiscovery(event_bus) if getattr(settings, 'cast_enabled', True) else None
@@ -63,12 +64,21 @@ class DiscoveryManager:
             logger.info("discovery_disabled")
             return
 
+        # Create a shared Zeroconf instance for mDNS + Cast discovery
+        # to avoid port 5353 conflicts from multiple instances.
+        if self._mdns or self._cast:
+            try:
+                from zeroconf import Zeroconf
+                self._shared_zc = Zeroconf()
+            except Exception:
+                logger.warning("shared_zeroconf_init_failed")
+
         if self._ssdp:
             await self._ssdp.start()
         if self._mdns:
-            await self._mdns.start()
+            await self._mdns.start(shared_zc=self._shared_zc)
         if self._cast:
-            await self._cast.start()
+            await self._cast.start(shared_zc=self._shared_zc)
         if self._network_shares:
             await self._network_shares.start()
         if self._media_servers:
@@ -83,6 +93,9 @@ class DiscoveryManager:
             await self._mdns.stop()
         if self._cast:
             await self._cast.stop()
+        if self._shared_zc:
+            self._shared_zc.close()
+            self._shared_zc = None
         if self._network_shares:
             await self._network_shares.stop()
         if self._media_servers:

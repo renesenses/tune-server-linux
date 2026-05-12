@@ -29,7 +29,7 @@ class CastDiscovery:
     def get_cast_device(self, device_id: str):
         return self._cast_devices.get(device_id)
 
-    async def start(self) -> None:
+    async def start(self, shared_zc=None) -> None:
         try:
             import pychromecast
             from pychromecast.discovery import CastBrowser, SimpleCastListener
@@ -37,12 +37,17 @@ class CastDiscovery:
             logger.warning("pychromecast_not_installed")
             return
 
-        try:
-            from zeroconf import Zeroconf
-            self._zc = Zeroconf()
-        except Exception:
-            logger.warning("cast_zeroconf_init_failed")
-            return
+        if shared_zc:
+            self._zc = shared_zc
+            self._owns_zc = False
+        else:
+            try:
+                from zeroconf import Zeroconf
+                self._zc = Zeroconf()
+                self._owns_zc = True
+            except Exception:
+                logger.warning("cast_zeroconf_init_failed")
+                return
 
         listener = SimpleCastListener(
             add_callback=lambda uuid, name: asyncio.get_event_loop().call_soon_threadsafe(
@@ -122,7 +127,7 @@ class CastDiscovery:
                 pass
         self._cast_devices.clear()
         self._devices.clear()
-        if self._zc:
+        if self._zc and getattr(self, '_owns_zc', False):
             self._zc.close()
-            self._zc = None
+        self._zc = None
         logger.info("cast_discovery_stopped")

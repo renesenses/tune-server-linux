@@ -39,17 +39,17 @@ class MdnsDiscovery:
     def get_atv_config(self, device_id: str) -> Optional[object]:
         return self._atv_configs.get(device_id)
 
-    async def start(self) -> None:
+    async def start(self, shared_zc=None) -> None:
         self._running = True
         self._task = asyncio.create_task(self._discovery_loop())
-        # Passive zeroconf browser: receive remove_service callbacks in
-        # real time when AirPlay devices disappear (instead of waiting up
-        # to 30s for the next pyatv scan).
         try:
             from zeroconf import ServiceStateChange
             from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
 
-            self._passive_zc = AsyncZeroconf()
+            if shared_zc:
+                self._passive_zc = AsyncZeroconf(zc=shared_zc)
+            else:
+                self._passive_zc = AsyncZeroconf()
 
             def _on_state_change(zeroconf, service_type, name, state_change):
                 # Only react to removals — additions are handled by pyatv scan
@@ -117,7 +117,7 @@ class MdnsDiscovery:
                 await self._passive_zc.async_close()
             except Exception as e:
                 logger.debug("mdns_passive_zc_close_error", error=str(e))
-            self._passive_zc = None
+        self._passive_zc = None
 
         if self._zeroconf:
             try:
