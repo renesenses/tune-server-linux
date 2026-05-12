@@ -51,8 +51,8 @@ class LocalOutput(OutputTarget):
         dtype_map = {
             8: "int8",
             16: "int16",
-            24: "int32",  # 24-bit stored as 32-bit
-            32: "int32",
+            24: "float32",  # 24-bit → float32 for universal DAC compatibility
+            32: "float32",
         }
         dtype = dtype_map.get(stream_info.bit_depth, "int16")
 
@@ -149,6 +149,8 @@ class LocalOutput(OutputTarget):
             else:
                 trim = len(data) % 4
                 arr = np.frombuffer(data[:len(data) - trim] if trim else data, dtype=np.int32)
+                # Convert int32 → float32 [-1.0, 1.0] for DAC compatibility
+                arr = arr.astype(np.float32) / 2147483648.0
 
             # Apply volume (skip in exclusive mode for bit-perfect output)
             if self._volume < 1.0 and not self._exclusive:
