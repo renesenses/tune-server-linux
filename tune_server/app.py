@@ -576,11 +576,10 @@ class TuneServer:
 
                 # Load saved credentials from DB
                 if self._db:
-                    row = await self._db.execute(
+                    cred_row = await self._db.fetchone(
                         "SELECT credentials FROM device_credentials WHERE device_id = ?",
                         (device_id,),
                     )
-                    cred_row = await row.fetchone()
                     if cred_row and cred_row[0]:
                         creds = cred_row[0]
                         for protocol in [pyatv.Protocol.AirPlay, pyatv.Protocol.RAOP, pyatv.Protocol.Companion]:
