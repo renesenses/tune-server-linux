@@ -178,6 +178,8 @@ class SQLiteDatabase:
             "ALTER TABLE tracks ADD COLUMN waveform_data TEXT",
             "ALTER TABLE tracks ADD COLUMN waveform_generated_at TIMESTAMP",
             "ALTER TABLE tracks ADD COLUMN loudness_lufs REAL",
+            # Disc subtitle (multi-disc album sub-names)
+            "ALTER TABLE tracks ADD COLUMN disc_subtitle TEXT",
         ]
         for sql in migrations:
             try:

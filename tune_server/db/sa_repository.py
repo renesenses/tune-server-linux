@@ -813,6 +813,7 @@ class SATrackRepo:
                 artist_name=track.artist_name or "",
                 album_title=track.album_title or "",
                 disc_number=track.disc_number,
+                disc_subtitle=track.disc_subtitle,
                 track_number=track.track_number,
                 duration_ms=track.duration_ms,
                 format=track.format,
