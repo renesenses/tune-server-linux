@@ -181,8 +181,10 @@ class DlnaOutput(OutputTarget):
     async def start(self, stream_info: AudioStreamInfo, track: Track | None = None) -> None:
         # Stop current playback before setting a new URI — many renderers
         # (Micromega, Wiim, Denon) ignore a new URI without explicit Stop.
+        from tune_server.config import settings as _s
         try:
             await self._dmr_call("async_stop")
+            await asyncio.sleep(_s.dlna_settle_ms / 1000.0)
         except Exception:
             logger.debug("dlna_pre_start_stop_failed", device=self.name)
         if self._stream_id:
@@ -213,10 +215,7 @@ class DlnaOutput(OutputTarget):
 
                 dmr = self._device
                 title = track.title or "Unknown"
-                await asyncio.wait_for(
-                    dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
-                )
-                await asyncio.wait_for(dmr.async_play(), timeout=10)
+                await self._set_and_play(dmr, stream_url, title, metadata)
 
                 self._direct_url = True
                 self._last_uri = stream_url
@@ -237,10 +236,7 @@ class DlnaOutput(OutputTarget):
 
                     dmr = self._device
                     title = track.title or "Unknown"
-                    await asyncio.wait_for(
-                        dmr.async_set_transport_uri(url, title, meta_data=metadata), timeout=10
-                    )
-                    await asyncio.wait_for(dmr.async_play(), timeout=10)
+                    await self._set_and_play(dmr, url, title, metadata)
 
                     self._direct_url = True
                     self._last_uri = url
@@ -270,10 +266,7 @@ class DlnaOutput(OutputTarget):
 
                 dmr = self._device
                 title = track.title or "Unknown"
-                await asyncio.wait_for(
-                    dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
-                )
-                await asyncio.wait_for(dmr.async_play(), timeout=10)
+                await self._set_and_play(dmr, stream_url, title, metadata)
 
                 self._direct_url = True
                 self._available = True
@@ -295,10 +288,7 @@ class DlnaOutput(OutputTarget):
 
                 dmr = self._device
                 title = track.title or "Unknown"
-                await asyncio.wait_for(
-                    dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
-                )
-                await asyncio.wait_for(dmr.async_play(), timeout=10)
+                await self._set_and_play(dmr, stream_url, title, metadata)
 
                 self._available = True
                 logger.info(
@@ -325,10 +315,7 @@ class DlnaOutput(OutputTarget):
 
             title = track.title if track else "Unknown"
             dmr = self._device
-            await asyncio.wait_for(
-                dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
-            )
-            await asyncio.wait_for(dmr.async_play(), timeout=10)
+            await self._set_and_play(dmr, stream_url, title, metadata)
 
             self._last_uri = stream_url
             self._available = True
@@ -349,6 +336,14 @@ class DlnaOutput(OutputTarget):
 
     async def flush(self) -> None:
         pass
+
+    async def _set_and_play(self, dmr, stream_url: str, title: str, metadata: str) -> None:
+        from tune_server.config import settings as _s
+        await asyncio.wait_for(
+            dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
+        )
+        await asyncio.sleep(_s.dlna_play_delay_ms / 1000.0)
+        await asyncio.wait_for(dmr.async_play(), timeout=10)
 
     async def _dmr_call(self, method: str, *args, **kwargs) -> bool:
         """Call DMR method with timeout."""
