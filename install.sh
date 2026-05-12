@@ -73,7 +73,8 @@ echo "==> Detected install mode: $MODE"
 # drift, but old binaries from earlier releases will still crash on
 # Ubuntu < 22.04 / CentOS 7 / Debian 11. Fail-fast with a clear hint.
 if [[ "$MODE" == "binary" ]]; then
-    if ! /sbin/ldconfig -p | grep -q libstdc++.so.6; then
+    _ldconfig=$(command -v ldconfig || echo /sbin/ldconfig)
+    if ! "$_ldconfig" -p 2>/dev/null | grep -q libstdc++.so.6 && ! find /usr/lib* /lib* -name "libstdc++.so.6" -print -quit 2>/dev/null | grep -q .; then
         echo "Error: libstdc++.so.6 missing on this system."
         echo "  apt install libstdc++6       (Debian/Ubuntu)"
         echo "  dnf install libstdc++        (Fedora/RHEL)"
