@@ -95,6 +95,12 @@ class QobuzService(StreamingService):
                 await self._refresh_credentials()
                 return await self._api_get(endpoint, params, _retry=False)
             raise
+        except Exception:
+            if self._use_proxy:
+                logger.warning("qobuz_proxy_failed_falling_back_to_direct", endpoint=endpoint)
+                self._use_proxy = False
+                return await self._api_get(endpoint, params, _retry=_retry)
+            raise
 
         async with resp:
             resp.raise_for_status()
