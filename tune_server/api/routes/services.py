@@ -65,7 +65,7 @@ SERVICE_CATALOG: dict[str, dict] = {
         "pricing_note": "API gratuite pour usage non commercial. Scrobbling = lecture suivie sur Last.fm — gratuit aussi.",
         "fields": [
             {"key": "api_key", "label": "API Key", "type": "text"},
-            {"key": "api_secret", "label": "API Secret (optionnel, pour scrobbling)", "type": "password"},
+            {"key": "api_secret", "label": "API Secret (pour scrobbling)", "type": "password"},
         ],
         "help_url": "https://www.last.fm/api/account/create",
         "help_steps": [
@@ -73,6 +73,7 @@ SERVICE_CATALOG: dict[str, dict] = {
             "Renseigne un nom d'application (ex: 'Tune Server') — le reste peut rester vide.",
             "Récupère 'API key' et (si tu veux scrobbler) 'Shared secret'.",
             "Colle les valeurs ici, puis Enregistrer.",
+            "Ensuite, clique 'Connecter mon compte Last.fm' pour autoriser le scrobbling.",
         ],
     },
     "tidal": {
@@ -255,7 +256,7 @@ async def list_service_tokens():
         payload = await _load_token(sid)
         env_fallback = _env_credential(sid)  # for legacy users who haven't migrated yet
         configured = bool(payload) or bool(env_fallback)
-        out.append({
+        entry = {
             "id": sid,
             "name": info["name"],
             "kind": info["kind"],
@@ -270,7 +271,18 @@ async def list_service_tokens():
             "valid": payload.get("valid") if payload else None,
             "validated_at": payload.get("validated_at") if payload else None,
             "validation_message": payload.get("validation_message") if payload else None,
-        })
+        }
+        # Extra Last.fm scrobbling fields
+        if sid == "lastfm":
+            has_sk = bool((payload or {}).get("session_key")) or bool(
+                getattr(settings, "lastfm_session_key", "")
+            )
+            entry["scrobble_enabled"] = (payload or {}).get(
+                "scrobble_enabled", getattr(settings, "lastfm_scrobble_enabled", False)
+            )
+            entry["scrobble_authenticated"] = has_sk
+            entry["lastfm_username"] = (payload or {}).get("lastfm_username", "") or ""
+        out.append(entry)
     return out
 
 
@@ -349,3 +361,172 @@ async def delete_service_token(service: str):
         raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
     await _delete_token(service)
     return {"ok": True, "service": service}
+
+
+# ---------------------------------------------------------------------------
+# Last.fm scrobbling — auth flow + toggle
+# ---------------------------------------------------------------------------
+
+@router.get("/lastfm/status")
+async def lastfm_scrobble_status():
+    """Return the current Last.fm scrobbling status."""
+    payload = await _load_token("lastfm")
+    api_key = (payload or {}).get("api_key", "").strip() if payload else ""
+    api_secret = (payload or {}).get("api_secret", "").strip() if payload else ""
+    session_key = (payload or {}).get("session_key", "").strip() if payload else ""
+    scrobble_enabled = (payload or {}).get("scrobble_enabled", False) if payload else False
+    lastfm_username = (payload or {}).get("lastfm_username", "") if payload else ""
+
+    # Fallback to env vars
+    if not api_key:
+        api_key = getattr(settings, "lastfm_api_key", "") or ""
+    if not api_secret:
+        api_secret = getattr(settings, "lastfm_api_secret", "") or ""
+    if not session_key:
+        session_key = getattr(settings, "lastfm_session_key", "") or ""
+    if not scrobble_enabled:
+        scrobble_enabled = getattr(settings, "lastfm_scrobble_enabled", False)
+
+    return {
+        "has_api_key": bool(api_key),
+        "has_api_secret": bool(api_secret),
+        "has_session_key": bool(session_key),
+        "scrobble_enabled": scrobble_enabled,
+        "authenticated": bool(session_key),
+        "username": lastfm_username or None,
+    }
+
+
+@router.post("/lastfm/auth/token")
+async def lastfm_get_auth_token():
+    """Step 1: Get a request token from Last.fm and return the auth URL."""
+    payload = await _load_token("lastfm")
+    api_key = (payload or {}).get("api_key", "").strip() if payload else ""
+    api_secret = (payload or {}).get("api_secret", "").strip() if payload else ""
+
+    # Fallback to env
+    if not api_key:
+        api_key = getattr(settings, "lastfm_api_key", "") or ""
+    if not api_secret:
+        api_secret = getattr(settings, "lastfm_api_secret", "") or ""
+
+    if not api_key or not api_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="API Key et API Secret requis pour l'authentification Last.fm.",
+        )
+
+    from tune_server.metadata.lastfm_scrobbler import LastfmScrobbler
+    scrobbler = LastfmScrobbler(api_key=api_key, api_secret=api_secret)
+    token = await scrobbler.get_auth_token()
+    if not token:
+        raise HTTPException(status_code=502, detail="Impossible d'obtenir un token Last.fm.")
+
+    auth_url = scrobbler.get_auth_url(token)
+    return {"token": token, "auth_url": auth_url}
+
+
+@router.post("/lastfm/auth/session")
+async def lastfm_get_session(body: dict):
+    """Step 2: Exchange the authorized token for a session key."""
+    token = body.get("token", "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Token manquant.")
+
+    payload = await _load_token("lastfm")
+    api_key = (payload or {}).get("api_key", "").strip() if payload else ""
+    api_secret = (payload or {}).get("api_secret", "").strip() if payload else ""
+
+    if not api_key:
+        api_key = getattr(settings, "lastfm_api_key", "") or ""
+    if not api_secret:
+        api_secret = getattr(settings, "lastfm_api_secret", "") or ""
+
+    if not api_key or not api_secret:
+        raise HTTPException(status_code=400, detail="API Key et Secret requis.")
+
+    from tune_server.metadata.lastfm_scrobbler import LastfmScrobbler
+    scrobbler = LastfmScrobbler(api_key=api_key, api_secret=api_secret)
+    session_key = await scrobbler.get_session(token)
+    if not session_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Impossible d'obtenir la session — as-tu bien autorisé l'app sur Last.fm ?",
+        )
+
+    # Fetch the username for display
+    username = ""
+    try:
+        async with aiohttp.ClientSession() as s:
+            import hashlib
+            params = {
+                "method": "user.getInfo",
+                "api_key": api_key,
+                "sk": session_key,
+            }
+            sig_str = "".join(f"{k}{params[k]}" for k in sorted(params)) + api_secret
+            api_sig = hashlib.md5(sig_str.encode()).hexdigest()
+            params["api_sig"] = api_sig
+            params["format"] = "json"
+            async with s.get("https://ws.audioscrobbler.com/2.0/", params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    username = data.get("user", {}).get("name", "")
+    except Exception:
+        pass  # non-critical
+
+    # Persist session key into the token payload
+    if not payload:
+        payload = {"api_key": api_key, "api_secret": api_secret}
+    payload["session_key"] = session_key
+    payload["scrobble_enabled"] = True
+    payload["lastfm_username"] = username
+    payload["valid"] = True
+    payload["validation_message"] = f"Connecté à Last.fm{f' ({username})' if username else ''} — scrobbling activé."
+    payload["validated_at"] = int(time.time())
+    await _save_token("lastfm", payload)
+
+    return {
+        "ok": True,
+        "session_key": session_key,
+        "username": username,
+        "scrobble_enabled": True,
+    }
+
+
+@router.post("/lastfm/scrobble/toggle")
+async def lastfm_toggle_scrobble(body: dict):
+    """Enable or disable scrobbling."""
+    enabled = body.get("enabled", False)
+    payload = await _load_token("lastfm")
+    if not payload:
+        raise HTTPException(status_code=404, detail="Aucun token Last.fm enregistré.")
+
+    payload["scrobble_enabled"] = bool(enabled)
+    if enabled and not payload.get("session_key"):
+        raise HTTPException(
+            status_code=400,
+            detail="Session key manquante — connecte d'abord ton compte Last.fm.",
+        )
+    username = payload.get("lastfm_username", "")
+    suffix = f" ({username})" if username else ""
+    payload["validation_message"] = f"Scrobbling {'activé' if enabled else 'désactivé'}{suffix}."
+    payload["validated_at"] = int(time.time())
+    await _save_token("lastfm", payload)
+    return {"ok": True, "scrobble_enabled": enabled}
+
+
+@router.post("/lastfm/disconnect")
+async def lastfm_disconnect():
+    """Remove session key (disconnect Last.fm scrobbling account)."""
+    payload = await _load_token("lastfm")
+    if not payload:
+        raise HTTPException(status_code=404, detail="Aucun token Last.fm enregistré.")
+
+    payload.pop("session_key", None)
+    payload.pop("lastfm_username", None)
+    payload["scrobble_enabled"] = False
+    payload["validation_message"] = "Compte Last.fm déconnecté."
+    payload["validated_at"] = int(time.time())
+    await _save_token("lastfm", payload)
+    return {"ok": True}
