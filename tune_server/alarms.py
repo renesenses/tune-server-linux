@@ -76,26 +76,21 @@ class AlarmScheduler:
         logger.info("alarm_scheduler_stopped")
 
     async def _ensure_table(self) -> None:
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS alarms (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                time TEXT NOT NULL,
-                days TEXT DEFAULT '1,2,3,4,5',
-                skip_holidays INTEGER DEFAULT 0,
-                holiday_country TEXT DEFAULT 'FR',
-                zone_id INTEGER,
-                source_type TEXT NOT NULL,
-                source_id TEXT NOT NULL,
-                source_name TEXT,
-                volume INTEGER DEFAULT 50,
-                fade_in_seconds INTEGER DEFAULT 30,
-                enabled INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        try:
+            await self._db.fetchall("SELECT 1 FROM alarms LIMIT 1")
+        except Exception:
+            await self._db.execute(
+                "CREATE TABLE IF NOT EXISTS alarms ("
+                "id SERIAL PRIMARY KEY, name TEXT NOT NULL, time TEXT NOT NULL, "
+                "days TEXT DEFAULT '1,2,3,4,5', skip_holidays INTEGER DEFAULT 0, "
+                "holiday_country TEXT DEFAULT 'FR', zone_id INTEGER, "
+                "source_type TEXT NOT NULL, source_id TEXT NOT NULL, "
+                "source_name TEXT, volume INTEGER DEFAULT 50, "
+                "fade_in_seconds INTEGER DEFAULT 30, enabled INTEGER DEFAULT 1, "
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             )
-        """)
-        await self._db.commit()
+            await self._db.commit()
 
     async def _loop(self) -> None:
         while self._running:
