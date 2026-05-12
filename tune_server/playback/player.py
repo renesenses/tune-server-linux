@@ -854,8 +854,26 @@ class Player:
         # Fallback: full pipeline restart
         self._skip_in_progress = True
         try:
+            self._state = PlaybackState.BUFFERING
+            self._position_ms = position_ms
+            self._position_start_time = time.monotonic()
+
+            # Re-resolve stream URL for streaming tracks (CDN tokens expire)
+            if (track.source and track.source != Source.LOCAL
+                    and track.source != Source.RADIO
+                    and track.source_id and self._stream_url_resolver):
+                try:
+                    url = await asyncio.wait_for(
+                        self._stream_url_resolver(track),
+                        timeout=settings.stream_url_resolve_timeout,
+                    )
+                    if url:
+                        track.file_path = url
+                except Exception:
+                    logger.debug("seek_url_refresh_failed", track=track.title)
+
             async with self._lock:
-                was_playing = self._state == PlaybackState.PLAYING
+                was_playing = self._state == PlaybackState.BUFFERING
                 await self._stop_pipeline()
             if was_playing:
                 await self._start_track(track, seek_ms=position_ms)

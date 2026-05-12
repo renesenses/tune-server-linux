@@ -1,6 +1,7 @@
 ; Tune Server — NSIS Installer
 ; Built by CI, version injected via /DVERSION=x.y.z
 
+Unicode true
 !include "MUI2.nsh"
 
 Name "Tune Server ${VERSION}"
