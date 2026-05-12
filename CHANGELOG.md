@@ -2,6 +2,24 @@
 
 All notable changes to Tune Server.
 
+## v0.7.68 — 2026-05-12
+
+### Added
+- **Google Cast (Chromecast)** — new output type for Nest Mini, Chromecast Audio, Samsung soundbars and Cast groups. Auto-discovery via mDNS, volume, seek, gapless, cover art on Cast screens.
+- **Search source filter** — filter chips (Local/Qobuz/Tidal/etc.) to restrict federated search by source.
+- **Scan progress** — real-time counter (files scanned / tracks added) via WebSocket during library scan.
+- **Multi-distro install.sh** — auto-detects apt (Debian/Ubuntu), dnf (Fedora/RHEL) or pacman (Arch).
+
+### Fixed
+- **Deezer tracks skip at ~1m10** — proxy session used the 60s API timeout; now 900s for streaming.
+- **DLNA NEXT without sound** (Wiim, Denon) — explicit Stop before SetAVTransportURI for all renderers.
+- **AirPlay no sound** — push volume after stream_file() starts (some receivers default to 0).
+- **Seek on streaming tracks** — re-resolve CDN URL (expired tokens), BUFFERING state for UI feedback.
+- **Seek in mini player** — progress bar now clickable for seek.
+- **Search: albums/artists not clickable** — streaming results now navigate to StreamingView.
+- **Windows installer encoding** — `Unicode true` in NSIS script (DÃ©marrer → Démarrer).
+- **CI: web/ missing in Linux archive** — deploy key SSH for private tune-web-client clone.
+
 ## v0.7.50 — 2026-04-29
 
 ### Added (listening dashboard + multi-platform update notices)
