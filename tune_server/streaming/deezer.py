@@ -80,6 +80,9 @@ class DeezerService(StreamingService):
         """Public API GET (no auth needed for catalog data)."""
         session = await self._ensure_session()
         url = f"{DEEZER_API}/{endpoint}"
+        if params is None:
+            params = {}
+        params.setdefault("lang", "fr")
         try:
             resp = await http_request_with_retry(
                 session, "GET", url,

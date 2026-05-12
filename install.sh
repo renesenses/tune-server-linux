@@ -75,13 +75,13 @@ echo "==> Installing system dependencies..."
 apt-get update -qq
 if [[ "$MODE" == "source" ]]; then
     # Source mode needs Python toolchain to build the venv.
-    apt-get install -y -qq python3 python3-pip python3-venv ffmpeg \
+    apt-get install -y -qq python3 python3-pip python3-venv ffmpeg curl \
         libasound2-dev libportaudio2 portaudio19-dev \
         avahi-daemon
 else
     # Binary mode: PyInstaller bundle ships its own Python + dyn libs.
     # Only ffmpeg + portaudio runtime + avahi remain as runtime deps.
-    apt-get install -y -qq ffmpeg libportaudio2 avahi-daemon
+    apt-get install -y -qq ffmpeg curl libportaudio2 avahi-daemon
 fi
 
 echo "==> Creating service user..."
