@@ -9,7 +9,7 @@ import aiohttp
 import structlog
 
 from tune_server.config import settings
-from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, StreamingPlaylist, Track
+from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, StreamingGenre, StreamingPlaylist, Track
 from tune_server.streaming.base import StreamingService, http_request_with_retry
 from tune_server.streaming.cache import StreamUrlCache
 
@@ -282,6 +282,44 @@ class QobuzService(StreamingService):
             return [self._map_album(a) for a in albums]
         except Exception:
             logger.exception("qobuz_get_featured_error", section=section)
+            return []
+
+    async def get_genres(self, parent_id: str | None = None) -> list[StreamingGenre]:
+        """Fetch genre list from Qobuz. If parent_id is given, returns sub-genres."""
+        try:
+            params: dict = {}
+            if parent_id:
+                params["parent_id"] = parent_id
+            data = await self._api_get("genre/list", params or None)
+            genres_data = data.get("genres", {}).get("items", [])
+            result: list[StreamingGenre] = []
+            for g in genres_data:
+                slug = g.get("slug", "")
+                # Qobuz sub-genres have a path like "parent/child"
+                has_children = bool(g.get("subgenresCount", 0)) or len(slug.split("/")) == 1
+                result.append(StreamingGenre(
+                    id=str(g.get("id", "")),
+                    name=g.get("name", "Unknown"),
+                    has_children=has_children,
+                    image_url=g.get("image", {}).get("large") if isinstance(g.get("image"), dict) else None,
+                ))
+            return result
+        except Exception:
+            logger.exception("qobuz_get_genres_error", parent_id=parent_id)
+            return []
+
+    async def get_genre_albums(self, genre_id: str, limit: int = 50) -> list[Album]:
+        """Fetch albums for a given Qobuz genre."""
+        try:
+            data = await self._api_get("album/getFeatured", {
+                "type": "new-releases",
+                "genre_id": genre_id,
+                "limit": limit,
+            })
+            albums = data.get("albums", {}).get("items", [])
+            return [self._map_album(a) for a in albums]
+        except Exception:
+            logger.exception("qobuz_get_genre_albums_error", genre_id=genre_id)
             return []
 
     async def get_user_favorites(self, fav_type: str = "tracks", limit: int = 500) -> dict:

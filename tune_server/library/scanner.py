@@ -316,6 +316,7 @@ class LibraryScanner:
                 artist_name=artist_name,
                 album_title=base_title,
                 disc_number=metadata.disc_number,
+                disc_subtitle=metadata.disc_subtitle,
                 track_number=metadata.track_number,
                 duration_ms=metadata.duration_ms,
                 file_path=file_path,

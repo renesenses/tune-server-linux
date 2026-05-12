@@ -81,6 +81,7 @@ def _row_to_track(row) -> Track:
         artist_id=row["artist_id"],
         artist_name=row["artist_name"] if "artist_name" in keys else None,
         disc_number=row["disc_number"],
+        disc_subtitle=row["disc_subtitle"] if "disc_subtitle" in keys else None,
         track_number=row["track_number"],
         duration_ms=row["duration_ms"],
         file_path=row["file_path"],
@@ -640,12 +641,12 @@ class TrackRepo:
     async def create(self, track: Track) -> int:
         result = await self._db.execute(
             """INSERT INTO tracks (title, album_id, artist_id, disc_number,
-               track_number, duration_ms, file_path, format, sample_rate,
-               bit_depth, channels, source, source_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+               disc_subtitle, track_number, duration_ms, file_path, format,
+               sample_rate, bit_depth, channels, source, source_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (track.title, track.album_id, track.artist_id, track.disc_number,
-             track.track_number, track.duration_ms, track.file_path,
-             track.format, track.sample_rate, track.bit_depth,
+             track.disc_subtitle, track.track_number, track.duration_ms,
+             track.file_path, track.format, track.sample_rate, track.bit_depth,
              track.channels, track.source, track.source_id),
         )
         await self._db.commit()
@@ -654,12 +655,12 @@ class TrackRepo:
     async def update(self, track: Track) -> None:
         await self._db.execute(
             """UPDATE tracks SET title=?, album_id=?, artist_id=?, disc_number=?,
-               track_number=?, duration_ms=?, file_path=?, format=?, sample_rate=?,
-               bit_depth=?, channels=?, source=?, source_id=?,
-               updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+               disc_subtitle=?, track_number=?, duration_ms=?, file_path=?,
+               format=?, sample_rate=?, bit_depth=?, channels=?, source=?,
+               source_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
             (track.title, track.album_id, track.artist_id, track.disc_number,
-             track.track_number, track.duration_ms, track.file_path,
-             track.format, track.sample_rate, track.bit_depth,
+             track.disc_subtitle, track.track_number, track.duration_ms,
+             track.file_path, track.format, track.sample_rate, track.bit_depth,
              track.channels, track.source, track.source_id, track.id),
         )
         await self._db.commit()

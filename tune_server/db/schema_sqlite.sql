@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     album_id INTEGER REFERENCES albums(id) ON DELETE SET NULL,
     artist_id INTEGER REFERENCES artists(id) ON DELETE SET NULL,
     disc_number INTEGER DEFAULT 1,
+    disc_subtitle TEXT,
     track_number INTEGER DEFAULT 0,
     duration_ms INTEGER DEFAULT 0,
     file_path TEXT UNIQUE,

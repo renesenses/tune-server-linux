@@ -106,6 +106,7 @@ class Track(BaseModel):
     artist_id: Optional[int] = None
     artist_name: Optional[str] = None
     disc_number: int = 1
+    disc_subtitle: Optional[str] = None
     track_number: int = 0
     duration_ms: int = 0
     file_path: Optional[str] = None
@@ -665,6 +666,13 @@ class BackupInfo(BaseModel):
 class FeaturedSection(BaseModel):
     id: str
     name: str
+
+
+class StreamingGenre(BaseModel):
+    id: str
+    name: str
+    has_children: bool = False
+    image_url: str | None = None
 
 
 class StreamingServiceStatus(BaseModel):

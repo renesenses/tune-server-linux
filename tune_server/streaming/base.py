@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 import aiohttp
 import structlog
 
-from tune_server.models import Album, Artist, FeaturedSection, SearchResult, StreamingPlaylist, Track
+from tune_server.models import Album, Artist, FeaturedSection, SearchResult, StreamingGenre, StreamingPlaylist, Track
 
 if TYPE_CHECKING:
     from tune_server.db.engine import Database
@@ -195,6 +195,14 @@ class StreamingService(ABC):
 
     async def get_featured(self, section: str, limit: int = 20) -> list[Album]:
         """Return featured albums for a given section. Override in subclasses."""
+        return []
+
+    async def get_genres(self, parent_id: str | None = None) -> list[StreamingGenre]:
+        """Return available genres, optionally filtered by parent. Override in subclasses."""
+        return []
+
+    async def get_genre_albums(self, genre_id: str, limit: int = 50) -> list[Album]:
+        """Return albums for a given genre. Override in subclasses."""
         return []
 
     async def get_user_playlists(self) -> list[StreamingPlaylist]:

@@ -89,6 +89,7 @@ tracks = sa.Table(
         sa.ForeignKey("artists.id", ondelete="SET NULL"),
     ),
     sa.Column("disc_number", sa.Integer, server_default="1"),
+    sa.Column("disc_subtitle", sa.Text),
     sa.Column("track_number", sa.Integer, server_default="0"),
     sa.Column("duration_ms", sa.Integer, server_default="0"),
     sa.Column("file_path", sa.Text, unique=True),

@@ -11,6 +11,7 @@ from tune_server.models import (
     SearchResult,
     StreamingAuthRequest,
     StreamingAuthResponse,
+    StreamingGenre,
     StreamingPlaylist,
     StreamingServiceStatus,
     Track,
@@ -184,6 +185,18 @@ async def get_featured_sections(service_name: str):
 async def get_featured(service_name: str, section: str, limit: int = Query(20, ge=1, le=100)):
     service = _get_service(service_name)
     return await service.get_featured(section, limit=limit)
+
+
+@router.get("/{service_name}/genres", response_model=list[StreamingGenre])
+async def get_genres(service_name: str, parent_id: str | None = Query(None)):
+    service = _get_service(service_name)
+    return await service.get_genres(parent_id)
+
+
+@router.get("/{service_name}/genres/{genre_id}/albums", response_model=list[Album])
+async def get_genre_albums(service_name: str, genre_id: str, limit: int = Query(50, ge=1, le=200)):
+    service = _get_service(service_name)
+    return await service.get_genre_albums(genre_id, limit=limit)
 
 
 @router.get("/{service_name}/search", response_model=SearchResult)
