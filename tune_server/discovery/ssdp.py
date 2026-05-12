@@ -172,10 +172,15 @@ class SsdpDiscovery:
                                     await dmr.async_get_protocol_info()
                                     sink_protocols = dmr.sink_protocol_info or []
                                     if sink_protocols:
-                                        logger.debug("ssdp_sink_protocols", name=name, count=len(sink_protocols),
-                                                     sample=sink_protocols[:5])
-                            except Exception:
-                                logger.debug("ssdp_protocol_info_error", name=name)
+                                        dsd_entries = [p for p in sink_protocols if "dsd" in p.lower() or "dsf" in p.lower() or "dff" in p.lower()]
+                                        logger.info("ssdp_sink_protocols", name=name, count=len(sink_protocols),
+                                                    dsd_entries=len(dsd_entries), sample=sink_protocols[:5])
+                                    else:
+                                        logger.info("ssdp_sink_protocols_empty", name=name)
+                                else:
+                                    logger.info("ssdp_no_protocol_info", name=name)
+                            except Exception as exc:
+                                logger.warning("ssdp_protocol_info_error", name=name, error=str(exc))
 
                             disc_device = DiscoveredDevice(
                                 id=dev_id,

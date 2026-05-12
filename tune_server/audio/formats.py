@@ -141,11 +141,13 @@ def mime_type_for_format(fmt: AudioFormat) -> str:
 # MIME types that indicate DSD/DSF/DFF support in DLNA sink protocols
 DSD_MIME_TYPES = {
     "application/x-dsd",
+    "audio/dsd",
     "audio/x-dsd",
-    "audio/x-dsf",
     "audio/dsf",
-    "audio/x-dff",
+    "audio/x-dsf",
     "audio/dff",
+    "audio/x-dff",
+    "audio/l24",
 }
 
 
@@ -170,12 +172,10 @@ _DSD_CAPABLE_PATTERNS = [
 def detect_dsd_from_sink_protocols(sink_protocols: list[str]) -> bool:
     """Check if any DLNA sink protocol entry indicates DSD support."""
     for entry in sink_protocols:
-        # Format: "http-get:*:audio/x-dsf:*" or similar
         lower = entry.lower()
         if any(mime in lower for mime in DSD_MIME_TYPES):
             return True
-        # Some renderers use generic patterns — check for dsf/dsd/dff keywords
-        if "dsf" in lower or "dff" in lower:
+        if "dsf" in lower or "dff" in lower or "dsd" in lower:
             return True
     return False
 
