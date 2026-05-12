@@ -43,18 +43,20 @@ class CastDiscovery:
         else:
             try:
                 from zeroconf import Zeroconf
-                self._zc = Zeroconf()
+                self._zc = Zeroconf(interfaces=['0.0.0.0'])
                 self._owns_zc = True
             except Exception:
-                logger.warning("cast_zeroconf_init_failed")
+                logger.warning("cast_zeroconf_init_failed", exc_info=True)
                 return
 
+        loop = asyncio.get_running_loop()
+
         listener = SimpleCastListener(
-            add_callback=lambda uuid, name: asyncio.get_event_loop().call_soon_threadsafe(
-                asyncio.ensure_future, self._on_cast_added(uuid, name)
+            add_callback=lambda uuid, name: loop.call_soon_threadsafe(
+                loop.create_task, self._on_cast_added(uuid, name)
             ),
-            remove_callback=lambda uuid, name, _: asyncio.get_event_loop().call_soon_threadsafe(
-                asyncio.ensure_future, self._on_cast_removed(uuid)
+            remove_callback=lambda uuid, name, _: loop.call_soon_threadsafe(
+                loop.create_task, self._on_cast_removed(uuid)
             ),
         )
         self._browser = CastBrowser(listener, self._zc)

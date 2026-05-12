@@ -119,8 +119,11 @@ jobs:
           pyinstaller --name tune-server --onedir \
             --add-data "web:web" \
             --collect-all tune_server \
+            --exclude-module _bootlocale \
             --noconfirm \
             tune_server/__main__.py
+          # Remove bundled libstdc++ — use system version to avoid GLIBCXX conflicts
+          rm -f dist/tune-server/_internal/libstdc++.so* 2>/dev/null || true
 
       - name: Build binary with PyInstaller (Windows)
         if: matrix.platform == 'windows'
