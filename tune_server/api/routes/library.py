@@ -1621,51 +1621,57 @@ async def offline_status():
 
 @router.get("/duplicates/smart")
 async def smart_duplicates(limit: int = 50):
-    """Detect albums that exist both locally and on streaming services.
-    Suggests the best version based on quality."""
-    # Find local albums
-    local_albums = await deps.db.fetchall(
-        """SELECT id, title, artist_name, format, sample_rate, bit_depth, source
-           FROM albums WHERE source = 'local' OR source IS NULL
-           ORDER BY title LIMIT 500""")
+    """Detect albums that exist both locally and on streaming services."""
+    try:
+        rows = await deps.db.fetchall(
+            """SELECT a.id, a.title, a.artist_name, a.format, a.sample_rate, a.bit_depth, a.source,
+                      a.source_id, a.cover_path
+               FROM albums a
+               INNER JOIN albums b ON LOWER(a.title) = LOWER(b.title)
+               WHERE (a.source = 'local' OR a.source IS NULL)
+                 AND b.source != 'local' AND b.source IS NOT NULL
+               ORDER BY a.title
+               LIMIT ?""",
+            (limit * 2,))
 
-    duplicates = []
-    for album in local_albums:
-        title = album["title"]
-        artist = album["artist_name"] or ""
+        seen = set()
+        duplicates = []
+        for row in rows:
+            title_key = row["title"].lower()
+            if title_key in seen:
+                continue
+            seen.add(title_key)
 
-        # Search for streaming versions
-        streaming_matches = await deps.db.fetchall(
-            """SELECT id, title, artist_name, format, sample_rate, bit_depth, source, source_id, cover_path
-               FROM albums
-               WHERE title LIKE ? AND source != 'local' AND source IS NOT NULL
-               LIMIT 5""",
-            (f"%{title}%",))
+            streaming = await deps.db.fetchone(
+                """SELECT id, title, artist_name, format, sample_rate, bit_depth, source, source_id, cover_path
+                   FROM albums WHERE LOWER(title) = ? AND source != 'local' AND source IS NOT NULL LIMIT 1""",
+                (title_key,))
+            if not streaming:
+                continue
 
-        for match in streaming_matches:
-            # Compare quality
-            local_quality = (album["sample_rate"] or 44100) * (album["bit_depth"] or 16)
-            streaming_quality = (match["sample_rate"] or 44100) * (match["bit_depth"] or 16)
-
-            best = "local" if local_quality >= streaming_quality else "streaming"
+            local_quality = (row["sample_rate"] or 44100) * (row["bit_depth"] or 16)
+            streaming_quality = (streaming["sample_rate"] or 44100) * (streaming["bit_depth"] or 16)
 
             duplicates.append({
                 "local": {
-                    "id": album["id"], "title": album["title"], "artist": artist,
-                    "format": album["format"], "sample_rate": album["sample_rate"],
-                    "bit_depth": album["bit_depth"],
+                    "id": row["id"], "title": row["title"], "artist": row["artist_name"] or "",
+                    "format": row["format"], "sample_rate": row["sample_rate"],
+                    "bit_depth": row["bit_depth"],
                 },
                 "streaming": {
-                    "id": match["id"], "title": match["title"], "artist": match["artist_name"],
-                    "source": match["source"], "format": match["format"],
-                    "sample_rate": match["sample_rate"], "bit_depth": match["bit_depth"],
-                    "cover_path": match["cover_path"],
+                    "id": streaming["id"], "title": streaming["title"], "artist": streaming["artist_name"],
+                    "source": streaming["source"], "format": streaming["format"],
+                    "sample_rate": streaming["sample_rate"], "bit_depth": streaming["bit_depth"],
+                    "cover_path": streaming["cover_path"],
                 },
-                "best_version": best,
-                "reason": f"Local: {album['format']} {album['sample_rate']}Hz/{album['bit_depth']}bit vs Streaming: {match['format']} {match['sample_rate']}Hz/{match['bit_depth']}bit"
+                "best_version": "local" if local_quality >= streaming_quality else "streaming",
             })
+            if len(duplicates) >= limit:
+                break
 
-    return {"duplicates": duplicates[:limit], "total": len(duplicates)}
+        return {"duplicates": duplicates, "total": len(duplicates)}
+    except Exception:
+        return {"duplicates": [], "total": 0}
 
 
 # --- Collections (Album Grouping) ---
