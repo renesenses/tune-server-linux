@@ -854,6 +854,7 @@ class Player:
         # Fallback: full pipeline restart
         self._skip_in_progress = True
         try:
+            was_playing = self._state == PlaybackState.PLAYING
             self._state = PlaybackState.BUFFERING
             self._position_ms = position_ms
             self._position_start_time = time.monotonic()
@@ -873,10 +874,11 @@ class Player:
                     logger.debug("seek_url_refresh_failed", track=track.title)
 
             async with self._lock:
-                was_playing = self._state == PlaybackState.BUFFERING
                 await self._stop_pipeline()
             if was_playing:
                 await self._start_track(track, seek_ms=position_ms)
+            else:
+                self._state = PlaybackState.STOPPED
         finally:
             self._skip_in_progress = False
 
