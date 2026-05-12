@@ -805,3 +805,26 @@ smart_playlists = sa.Table(
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
 )
+
+# ---------------------------------------------------------------------------
+# alarms (scheduled playback / wake-up)
+# ---------------------------------------------------------------------------
+alarms = sa.Table(
+    "alarms",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("time", sa.Text, nullable=False),  # HH:MM
+    sa.Column("days", sa.Text, server_default="1,2,3,4,5"),  # 0=Sun..6=Sat
+    sa.Column("skip_holidays", sa.Integer, server_default="0"),
+    sa.Column("holiday_country", sa.Text, server_default="FR"),
+    sa.Column("zone_id", sa.Integer),
+    sa.Column("source_type", sa.Text, nullable=False),  # playlist, radio, album, favorites
+    sa.Column("source_id", sa.Text, nullable=False),
+    sa.Column("source_name", sa.Text),
+    sa.Column("volume", sa.Integer, server_default="50"),
+    sa.Column("fade_in_seconds", sa.Integer, server_default="30"),
+    sa.Column("enabled", sa.Integer, server_default="1"),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
+)

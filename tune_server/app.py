@@ -492,6 +492,11 @@ class TuneServer:
                 await self._enricher.enrich_now()
             self._event_bus.on(EventType.LIBRARY_SCAN_COMPLETED, _on_scan_complete)
 
+        # Alarm scheduler
+        from tune_server.alarms import AlarmScheduler
+        self._alarm_scheduler = AlarmScheduler(self._db, self._trigger_alarm)
+        await self._alarm_scheduler.start()
+
         # Initial scan
         if settings.scan_on_startup:
             self._scan_task = asyncio.create_task(self._scanner.scan(settings.music_dirs))
@@ -737,6 +742,39 @@ class TuneServer:
             logger.warning("component_shutdown_cancelled", component=name)
         except Exception:
             logger.exception("component_shutdown_error", component=name)
+
+    async def _trigger_alarm(self, zone_id, source_type, source_id, volume=50, fade_in=30):
+        """Called by AlarmScheduler when an alarm fires."""
+        zone = self._zone_manager.get_zone(zone_id) if zone_id else None
+        if not zone:
+            zones = self._zone_manager.list_zones()
+            zone = zones[0] if zones else None
+        if not zone:
+            logger.warning("alarm_no_zone")
+            return
+
+        if source_type == "radio":
+            await zone.play_radio(source_id, volume=volume / 100.0)
+        elif source_type == "playlist":
+            tracks = await self._db.fetchall(
+                "SELECT t.* FROM tracks t JOIN playlist_tracks pt ON pt.track_id = t.id "
+                "WHERE pt.playlist_id = ? ORDER BY pt.position",
+                (int(source_id),),
+            )
+            if tracks:
+                from tune_server.models import Track
+                track_list = [Track.from_db_row(r) for r in tracks]
+                await zone.play_tracks(track_list, shuffle=False, volume=volume / 100.0)
+        elif source_type == "album":
+            tracks = await self._db.fetchall(
+                "SELECT * FROM tracks WHERE album_id = ? ORDER BY disc_number, track_number",
+                (int(source_id),),
+            )
+            if tracks:
+                from tune_server.models import Track
+                track_list = [Track.from_db_row(r) for r in tracks]
+                await zone.play_tracks(track_list, volume=volume / 100.0)
+        logger.info("alarm_playback_started", zone=zone.name, source_type=source_type)
 
     async def stop(self) -> None:
         logger.info("tune_server_stopping")
