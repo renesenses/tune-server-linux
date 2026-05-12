@@ -249,6 +249,14 @@ async def get_playlist_tracks(service_name: str, playlist_id: str):
     return await service.get_playlist_tracks(playlist_id)
 
 
+@router.get("/{service_name}/favorites/{fav_type}")
+async def get_user_favorites(service_name: str, fav_type: str):
+    service = _get_service(service_name)
+    if not hasattr(service, "get_user_favorites"):
+        return {}
+    return await service.get_user_favorites(fav_type)
+
+
 @router.get("/spotify/callback")
 async def spotify_callback(code: str):
     """OAuth PKCE callback for Spotify. Spotify redirects here with ?code=..."""

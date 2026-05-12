@@ -282,6 +282,36 @@ class QobuzService(StreamingService):
             logger.exception("qobuz_get_featured_error", section=section)
             return []
 
+    async def get_user_favorites(self, fav_type: str = "tracks", limit: int = 500) -> dict:
+        """Fetch user favorites (tracks, albums, or artists) from Qobuz."""
+        try:
+            all_items: list[dict] = []
+            offset = 0
+            while True:
+                data = await self._api_get("favorite/getUserFavorites", {
+                    "type": fav_type,
+                    "limit": limit,
+                    "offset": offset,
+                })
+                container = data.get(fav_type, {})
+                items = container.get("items", [])
+                all_items.extend(items)
+                total = container.get("total", 0)
+                offset += len(items)
+                if offset >= total or not items:
+                    break
+
+            if fav_type == "tracks":
+                return {"tracks": [self._map_track(t) for t in all_items]}
+            elif fav_type == "albums":
+                return {"albums": [self._map_album(a) for a in all_items]}
+            elif fav_type == "artists":
+                return {"artists": [self._map_artist(a) for a in all_items]}
+            return {}
+        except Exception:
+            logger.exception("qobuz_user_favorites_error", type=fav_type)
+            return {}
+
     async def get_user_playlists(self) -> list[StreamingPlaylist]:
         try:
             data = await self._api_get("playlist/getUserPlaylists")
