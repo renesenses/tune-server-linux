@@ -92,13 +92,13 @@ if exist "_update_staging" (
     echo.
     echo Update in progress, watchdog stepping aside.
     echo The applier will restart Tune Server when the swap is complete.
-    goto :END
+    goto :END_NOPAUSE
 )
 
 if !EXIT_CODE! equ 0 (
     echo.
     echo Tune Server exited cleanly. Closing watchdog.
-    goto :END
+    goto :END_NOPAUSE
 )
 
 echo.
@@ -133,4 +133,6 @@ echo.
 
 :END
 pause
+
+:END_NOPAUSE
 endlocal
