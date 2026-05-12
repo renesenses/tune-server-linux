@@ -734,4 +734,4 @@ tune_server/
 
 ## License
 
-Private — All rights reserved.
+MIT — see [LICENSE](LICENSE)
