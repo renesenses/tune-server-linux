@@ -314,7 +314,8 @@ class SAAlbumRepo:
 
     async def list(self, limit: int = 100, offset: int = 0,
                    quality: str | None = None, format: str | None = None,
-                   sample_rate: int | None = None) -> list[Album]:
+                   sample_rate: int | None = None,
+                   sort: str = "title", order: str = "asc") -> list[Album]:
         stmt = self._album_select()
 
         # Quality/format/sample_rate filters via track subquery
@@ -367,7 +368,17 @@ class SAAlbumRepo:
                 )
                 stmt = stmt.where(has_cd)
 
-        stmt = stmt.order_by(albums.c.title).limit(limit).offset(offset)
+        _sort_cols = {
+            "title": albums.c.title,
+            "release_date": albums.c.year,
+            "added_date": albums.c.created_at,
+        }
+        sort_col = _sort_cols.get(sort, albums.c.title)
+        if order.lower() == "desc":
+            sort_expr = sa.nullslast(sort_col.desc())
+        else:
+            sort_expr = sa.nullslast(sort_col.asc())
+        stmt = stmt.order_by(sort_expr).limit(limit).offset(offset)
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_album(r) for r in rows]
 

@@ -251,10 +251,13 @@ async def list_albums(
     quality: str | None = Query(None, description="Filter by quality: hi-res, cd, lossy, dsd"),
     format: str | None = Query(None, description="Filter by format: flac, mp3, aac, wav, dsd"),
     sample_rate: int | None = Query(None, description="Filter by min sample rate in Hz (e.g. 96000)"),
+    sort: str = Query("title", description="Sort field: title, release_date, added_date"),
+    order: str = Query("asc", description="Sort direction: asc, desc"),
 ):
     albums = await deps.album_repo.list(
         limit=limit, offset=offset, quality=quality,
         format=format, sample_rate=sample_rate,
+        sort=sort, order=order,
     )
     result = [a.model_dump(exclude_none=False) for a in albums]
 

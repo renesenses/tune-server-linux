@@ -247,8 +247,15 @@ class AlbumRepo:
         )
         return _row_to_album(row) if row else None
 
+    _SORT_COLUMNS = {
+        "title": "al.title",
+        "release_date": "al.year",
+        "added_date": "al.created_at",
+    }
+
     async def list(self, limit: int = 100, offset: int = 0, quality: str | None = None,
-                   format: str | None = None, sample_rate: int | None = None) -> list[Album]:
+                   format: str | None = None, sample_rate: int | None = None,
+                   sort: str = "title", order: str = "asc") -> list[Album]:
         where_clauses = []
         params: list = []
         if format:
@@ -260,9 +267,14 @@ class AlbumRepo:
         where = ""
         if where_clauses:
             where = " WHERE " + " AND ".join(where_clauses)
+        sort_col = self._SORT_COLUMNS.get(sort, "al.title")
+        sort_dir = "DESC" if order.lower() == "desc" else "ASC"
+        # Put NULLs last regardless of direction
+        null_order = f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, "
+        order_clause = f" ORDER BY {null_order}{sort_col} {sort_dir}"
         params.extend([limit, offset])
         rows = await self._db.fetchall(
-            f"{self._SELECT}{where} ORDER BY al.title LIMIT ? OFFSET ?",
+            f"{self._SELECT}{where}{order_clause} LIMIT ? OFFSET ?",
             tuple(params),
         )
         albums = [_row_to_album(r) for r in rows]
