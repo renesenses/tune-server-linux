@@ -209,6 +209,7 @@ class Settings(BaseSettings):
     discovery_enabled: bool = True
     ssdp_enabled: bool = True
     mdns_enabled: bool = True
+    cast_enabled: bool = True
 
     # UPnP MediaServer
     upnp_server_enabled: bool = True

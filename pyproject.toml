@@ -16,6 +16,7 @@ dependencies = [
     "python3-discogs-client>=2.7",
     "async-upnp-client>=0.38",
     "pyatv>=0.14",
+    "pychromecast>=14.0",
     "zeroconf>=0.131",
     "sounddevice>=0.4",
     # Pin to <2.0 so the wheel comes from manylinux_2_17 (gcc 7 baseline,

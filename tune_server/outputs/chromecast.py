@@ -1,8 +1,7 @@
 """Chromecast (Google Cast) audio output.
 
 Requires: pychromecast (pip install pychromecast)
-Discovery is handled via zeroconf (already a dependency).
-Audio is cast via HTTP URL (same mechanism as DLNA).
+Audio is cast via HTTP URL (same pull model as DLNA).
 """
 
 from __future__ import annotations
@@ -12,122 +11,197 @@ from typing import Optional
 
 import structlog
 
+from tune_server.audio.formats import AudioCapabilities, AudioFormat, CHROMECAST_CAPABILITIES
+from tune_server.models import AudioStreamInfo, Track
+from tune_server.outputs.base import OutputTarget
+
 logger = structlog.get_logger()
 
+_CAST_DIRECT_FORMATS = {AudioFormat.FLAC, AudioFormat.MP3, AudioFormat.AAC, AudioFormat.OGG, AudioFormat.WAV}
 
-class ChromecastOutput:
-    """Cast audio to a Chromecast device via HTTP streaming URL."""
+_MIME_MAP = {
+    "flac": "audio/flac",
+    "mp3": "audio/mpeg",
+    "aac": "audio/mp4",
+    "wav": "audio/wav",
+    "ogg": "audio/ogg",
+    "opus": "audio/opus",
+}
 
-    def __init__(self, cast_device, http_streamer, server_ip: str, device_name: str = "Chromecast"):
+
+class ChromecastOutput(OutputTarget):
+    """Cast audio to a Google Cast device via HTTP URL."""
+
+    def __init__(
+        self,
+        cast_device,
+        streamer,
+        server_ip: str,
+        device_name: str = "Chromecast",
+    ) -> None:
         self._cast = cast_device
-        self._streamer = http_streamer
+        self._streamer = streamer
         self._server_ip = server_ip
         self._name = device_name
         self._available = True
+        self._stream_id: str | None = None
+        self._direct_url: bool = False
 
     @property
     def name(self) -> str:
         return self._name
 
     @property
-    def available(self) -> bool:
+    def capabilities(self) -> AudioCapabilities:
+        return CHROMECAST_CAPABILITIES
+
+    @property
+    def is_available(self) -> bool:
         return self._available
 
-    async def start(self, stream_info, track=None) -> None:
-        """Start casting audio."""
-        try:
-            mc = self._cast.media_controller
+    @property
+    def is_direct_url(self) -> bool:
+        return self._direct_url
 
-            # Build stream URL
-            if hasattr(stream_info, 'stream_id'):
-                url = self._streamer.get_stream_url(stream_info.stream_id, self._server_ip)
-            elif track and track.file_path and track.file_path.startswith("http"):
-                url = track.file_path
+    def supports_direct_url(self, track: Track) -> bool:
+        if not track or not track.file_path:
+            return False
+        if not track.file_path.startswith(("http://", "https://")):
+            return False
+        fmt = AudioFormat(track.format) if track.format else None
+        return fmt in _CAST_DIRECT_FORMATS
+
+    async def _cast_call(self, fn, *args, timeout: float = 10, **kwargs):
+        return await asyncio.wait_for(
+            asyncio.to_thread(fn, *args, **kwargs),
+            timeout=timeout,
+        )
+
+    async def start(self, stream_info: AudioStreamInfo, track: Optional[Track] = None) -> None:
+        if self._stream_id:
+            self._streamer.remove_session(self._stream_id)
+            self._stream_id = None
+        self._direct_url = False
+
+        mc = self._cast.media_controller
+
+        # Determine URL and content type
+        if track and self.supports_direct_url(track):
+            url = track.file_path
+            self._direct_url = True
+        elif track and track.file_path and track.file_path.startswith(("http://", "https://")):
+            url = track.file_path
+            self._direct_url = True
+        else:
+            self._stream_id = self._streamer.create_session(stream_info)
+            url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+
+        content_type = "audio/flac"
+        if track and track.format:
+            fmt = track.format.value if hasattr(track.format, "value") else str(track.format)
+            content_type = _MIME_MAP.get(fmt, "audio/flac")
+
+        title = track.title if track else "Audio"
+        artist = track.artist_name if track else None
+        album = track.album_title if track else None
+
+        thumb = None
+        if track and track.cover_path:
+            if track.cover_path.startswith("http"):
+                thumb = track.cover_path
             else:
-                logger.warning("chromecast_no_url")
-                return
+                thumb = f"http://{self._server_ip}:8888/api/v1/artwork/{track.cover_path}"
 
-            content_type = "audio/flac"
-            if track and track.format:
-                fmt = track.format.value if hasattr(track.format, 'value') else str(track.format)
-                mime_map = {
-                    "flac": "audio/flac", "mp3": "audio/mpeg", "aac": "audio/mp4",
-                    "wav": "audio/wav", "ogg": "audio/ogg", "opus": "audio/opus",
-                }
-                content_type = mime_map.get(fmt, "audio/flac")
-
-            title = track.title if track else "Audio"
-            artist = track.artist_name if track else None
-
-            await asyncio.to_thread(
+        try:
+            await self._cast_call(
                 mc.play_media, url, content_type,
-                title=title, artist=artist,
+                title=title, artist=artist, album_name=album,
+                thumb=thumb,
             )
-            await asyncio.to_thread(mc.block_until_active, timeout=10)
-            logger.info("chromecast_playing", device=self._name, title=title)
-
+            await self._cast_call(mc.block_until_active, timeout=15)
+            logger.info("chromecast_playing", device=self._name, title=title, url=url[:80])
         except Exception:
             logger.exception("chromecast_start_error", device=self._name)
-            self._available = False
+            raise
 
-    async def stop(self) -> None:
-        try:
-            mc = self._cast.media_controller
-            await asyncio.to_thread(mc.stop)
-        except Exception:
-            pass
+    async def write(self, data: bytes) -> None:
+        if self._stream_id:
+            self._streamer.write_to_session(self._stream_id, data)
+
+    async def flush(self) -> None:
+        pass
 
     async def pause(self) -> None:
         try:
-            await asyncio.to_thread(self._cast.media_controller.pause)
+            await self._cast_call(self._cast.media_controller.pause)
         except Exception:
-            pass
+            logger.debug("chromecast_pause_error", device=self._name)
 
     async def resume(self) -> None:
         try:
-            await asyncio.to_thread(self._cast.media_controller.play)
+            await self._cast_call(self._cast.media_controller.play)
+        except Exception:
+            logger.debug("chromecast_resume_error", device=self._name)
+
+    async def stop(self) -> None:
+        try:
+            await self._cast_call(self._cast.media_controller.stop)
         except Exception:
             pass
+        if self._stream_id:
+            self._streamer.remove_session(self._stream_id)
+            self._stream_id = None
+        self._direct_url = False
 
     async def set_volume(self, volume: float) -> None:
         try:
-            await asyncio.to_thread(self._cast.set_volume, volume)
+            await self._cast_call(self._cast.set_volume, max(0.0, min(1.0, volume)))
         except Exception:
-            pass
+            logger.debug("chromecast_volume_error", device=self._name)
 
     async def seek(self, position_ms: int) -> bool:
         try:
-            await asyncio.to_thread(self._cast.media_controller.seek, position_ms / 1000)
+            await self._cast_call(self._cast.media_controller.seek, position_ms / 1000.0)
+            logger.info("chromecast_seek", device=self._name, position_ms=position_ms)
             return True
         except Exception:
+            logger.debug("chromecast_seek_error", device=self._name)
             return False
 
-    def supports_direct_url(self, track=None) -> bool:
-        return True
+    async def get_position_ms(self) -> int:
+        try:
+            status = self._cast.media_controller.status
+            if status and status.current_time is not None:
+                return int(status.current_time * 1000)
+        except Exception:
+            pass
+        return -1
 
+    async def set_next_track(self, stream_info: AudioStreamInfo, track: Track) -> bool:
+        try:
+            mc = self._cast.media_controller
+            if track.file_path and track.file_path.startswith(("http://", "https://")):
+                url = track.file_path
+            else:
+                sid = self._streamer.create_session(stream_info)
+                url = self._streamer.get_stream_url(sid, self._server_ip)
 
-async def discover_chromecasts(timeout: int = 5) -> list[dict]:
-    """Discover Chromecast devices on the network."""
-    try:
-        import pychromecast
-        casts, browser = await asyncio.to_thread(
-            pychromecast.get_chromecasts, timeout=timeout
-        )
-        devices = []
-        for cast in casts:
-            devices.append({
-                "id": str(cast.uuid),
-                "name": cast.cast_info.friendly_name,
-                "model": cast.cast_info.model_name,
-                "host": str(cast.cast_info.host),
-                "port": cast.cast_info.port,
-                "type": "chromecast",
-            })
-        browser.stop_discovery()
-        return devices
-    except ImportError:
-        logger.debug("pychromecast_not_installed")
-        return []
-    except Exception:
-        logger.debug("chromecast_discovery_error", exc_info=True)
-        return []
+            fmt = track.format.value if track.format and hasattr(track.format, "value") else "flac"
+            content_type = _MIME_MAP.get(fmt, "audio/flac")
+
+            await self._cast_call(
+                mc.play_media, url, content_type,
+                title=track.title, artist=track.artist_name,
+                enqueue=True,
+            )
+            return True
+        except Exception:
+            logger.debug("chromecast_set_next_error", device=self._name)
+            return False
+
+    async def close(self) -> None:
+        await self.stop()
+        try:
+            await self._cast_call(self._cast.disconnect)
+        except Exception:
+            pass

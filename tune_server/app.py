@@ -516,6 +516,7 @@ class TuneServer:
         from tune_server.models import OutputType
         from tune_server.outputs.dlna import DlnaOutput
         from tune_server.outputs.airplay import AirPlayOutput
+        from tune_server.outputs.chromecast import ChromecastOutput
         from tune_server.outputs.local import LocalOutput
 
         async def create_dlna_output(device_id: str | None):
@@ -607,8 +608,26 @@ class TuneServer:
         async def create_local_output(device_id: str | None):
             return LocalOutput(device_name=device_id)
 
+        async def create_chromecast_output(device_id: str | None):
+            if not device_id:
+                raise RuntimeError("Chromecast: no device_id specified")
+            if not self._discovery_manager or not self._discovery_manager.cast:
+                raise RuntimeError("Chromecast: Cast discovery is not running")
+            cast = self._discovery_manager.cast.get_cast_device(device_id)
+            if not cast:
+                known = list(self._discovery_manager.cast.devices.keys())
+                raise RuntimeError(
+                    f"Chromecast: device '{device_id}' not found. "
+                    f"Discovered: {known or 'none'}."
+                )
+            await asyncio.to_thread(cast.wait, timeout=10)
+            device = self._discovery_manager.get_device(device_id)
+            name = device.name if device else "Chromecast"
+            return ChromecastOutput(cast, self._http_streamer, self._server_ip, device_name=name)
+
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
         self._zone_manager.register_output_factory(OutputType.AIRPLAY, create_airplay_output)
+        self._zone_manager.register_output_factory(OutputType.CHROMECAST, create_chromecast_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
 
     def _setup_playback_history(self, history_repo) -> None:

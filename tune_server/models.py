@@ -47,6 +47,7 @@ class OutputType(str, Enum):
     LOCAL = "local"
     DLNA = "dlna"
     AIRPLAY = "airplay"
+    CHROMECAST = "chromecast"
 
 
 # --- Domain models ---
