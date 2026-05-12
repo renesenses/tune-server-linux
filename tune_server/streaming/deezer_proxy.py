@@ -71,8 +71,9 @@ class DeezerProxy:
 
         key = compute_blowfish_key(sng_id)
         try:
-            session = await self._service._ensure_session()
-            async with session.get(upstream) as upstream_resp:
+            stream_timeout = aiohttp.ClientTimeout(total=900, connect=15, sock_read=120)
+            session = aiohttp.ClientSession(timeout=stream_timeout)
+            async with session, session.get(upstream) as upstream_resp:
                 if upstream_resp.status != 200:
                     logger.warning("deezer_proxy_upstream_status",
                                    sng_id=sng_id, status=upstream_resp.status)
