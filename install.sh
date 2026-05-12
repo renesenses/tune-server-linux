@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Tune Server installer for Debian/Ubuntu
+# Tune Server installer for Linux (Debian/Ubuntu, Fedora/RHEL, Arch)
 # Detects whether the script runs from a PyInstaller binary tarball
 # (the GitHub release artifact, default since v0.7.x) or from a source
 # checkout, and installs accordingly.
@@ -35,10 +35,20 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-if ! command -v apt-get &> /dev/null; then
-    echo "Error: This installer requires apt-get (Debian/Ubuntu)"
+# Detect package manager
+PKG_MANAGER=""
+if command -v apt-get &> /dev/null; then
+    PKG_MANAGER="apt"
+elif command -v dnf &> /dev/null; then
+    PKG_MANAGER="dnf"
+elif command -v pacman &> /dev/null; then
+    PKG_MANAGER="pacman"
+else
+    echo "Error: No supported package manager found."
+    echo "  This installer supports: apt (Debian/Ubuntu), dnf (Fedora/RHEL), pacman (Arch)"
     exit 1
 fi
+echo "==> Detected package manager: $PKG_MANAGER"
 
 # Detect mode: PyInstaller binary tarball ships a `tune-server` Mach-O/ELF
 # in the same directory plus an `_internal/` folder. Source checkout has
@@ -65,23 +75,60 @@ echo "==> Detected install mode: $MODE"
 if [[ "$MODE" == "binary" ]]; then
     if ! /sbin/ldconfig -p | grep -q libstdc++.so.6; then
         echo "Error: libstdc++.so.6 missing on this system."
-        echo "  apt install libstdc++6  (Debian/Ubuntu)"
+        echo "  apt install libstdc++6       (Debian/Ubuntu)"
+        echo "  dnf install libstdc++        (Fedora/RHEL)"
+        echo "  pacman -S gcc-libs           (Arch)"
         echo "  or use the source install: git clone + pip install -e ."
         exit 1
     fi
 fi
 
 echo "==> Installing system dependencies..."
-apt-get update -qq
+if [[ "$PKG_MANAGER" == "apt" ]]; then
+    apt-get update -qq
+fi
+
+install_packages() {
+    case "$PKG_MANAGER" in
+        apt)    apt-get install -y -qq "$@" ;;
+        dnf)    dnf install -y -q "$@" ;;
+        pacman) pacman -S --noconfirm --needed "$@" ;;
+    esac
+}
+
 if [[ "$MODE" == "source" ]]; then
     # Source mode needs Python toolchain to build the venv.
-    apt-get install -y -qq python3 python3-pip python3-venv ffmpeg curl \
-        libasound2-dev libportaudio2 portaudio19-dev \
-        avahi-daemon
+    case "$PKG_MANAGER" in
+        apt)
+            install_packages python3 python3-pip python3-venv ffmpeg curl \
+                libasound2-dev libportaudio2 portaudio19-dev \
+                avahi-daemon
+            ;;
+        dnf)
+            install_packages python3 python3-pip python3-devel ffmpeg curl \
+                alsa-lib-devel portaudio portaudio-devel \
+                avahi
+            ;;
+        pacman)
+            install_packages python python-pip ffmpeg curl \
+                alsa-lib portaudio \
+                avahi
+            ;;
+    esac
 else
     # Binary mode: PyInstaller bundle ships its own Python + dyn libs.
     # Only ffmpeg + portaudio runtime + avahi remain as runtime deps.
-    apt-get install -y -qq ffmpeg curl libportaudio2 avahi-daemon
+    case "$PKG_MANAGER" in
+        apt)
+            install_packages ffmpeg curl libportaudio2 avahi-daemon
+            ;;
+        dnf)
+            install_packages ffmpeg curl portaudio avahi
+            ;;
+        pacman)
+            install_packages ffmpeg curl portaudio avahi
+            ;;
+    esac
 fi
 
 echo "==> Creating service user..."
