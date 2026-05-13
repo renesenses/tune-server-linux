@@ -77,6 +77,9 @@ def _row_to_album(row) -> Album:
         bio=row.get("bio") if "bio" in keys else None,
         label=row.get("label") if "label" in keys else None,
         catalog_number=row.get("catalog_number") if "catalog_number" in keys else None,
+        musicbrainz_release_id=row.get("musicbrainz_release_id") if "musicbrainz_release_id" in keys else None,
+        musicbrainz_release_group_id=row.get("musicbrainz_release_group_id") if "musicbrainz_release_group_id" in keys else None,
+        original_year=row.get("original_year") if "original_year" in keys else None,
     )
 
 
@@ -112,6 +115,7 @@ def _row_to_track(row) -> Track:
         bpm=row.get("bpm") if "bpm" in keys else None,
         waveform_data=row.get("waveform_data") if "waveform_data" in keys else None,
         waveform_generated_at=str(row["waveform_generated_at"]) if "waveform_generated_at" in keys and row.get("waveform_generated_at") else None,
+        musicbrainz_recording_id=row.get("musicbrainz_recording_id") if "musicbrainz_recording_id" in keys else None,
     )
 
 

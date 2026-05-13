@@ -53,6 +53,8 @@ albums = sa.Table(
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("musicbrainz_release_id", sa.Text),
+    sa.Column("musicbrainz_release_group_id", sa.Text),
+    sa.Column("original_year", sa.Integer),
     sa.Column("label", sa.Text),
     sa.Column("catalog_number", sa.Text),
     sa.Column("barcode", sa.Text),
