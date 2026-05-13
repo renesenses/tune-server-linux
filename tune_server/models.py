@@ -87,6 +87,8 @@ class Album(BaseModel):
     bio: Optional[str] = None
     label: Optional[str] = None
     catalog_number: Optional[str] = None
+    musicbrainz_release_id: Optional[str] = None
+    musicbrainz_release_group_id: Optional[str] = None
 
 
 class TrackCredit(BaseModel):
@@ -124,6 +126,7 @@ class Track(BaseModel):
     waveform_generated_at: Optional[str] = None
     loudness_lufs: Optional[float] = None
     credits: list[TrackCredit] | None = None
+    musicbrainz_recording_id: Optional[str] = None
 
 
 class Playlist(BaseModel):

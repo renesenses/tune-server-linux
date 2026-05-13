@@ -68,6 +68,8 @@ def _row_to_album(row) -> Album:
         bio=row["bio"] if "bio" in keys else None,
         label=row["label"] if "label" in keys else None,
         catalog_number=row["catalog_number"] if "catalog_number" in keys else None,
+        musicbrainz_release_id=row["musicbrainz_release_id"] if "musicbrainz_release_id" in keys else None,
+        musicbrainz_release_group_id=row["musicbrainz_release_group_id"] if "musicbrainz_release_group_id" in keys else None,
     )
 
 
@@ -97,6 +99,7 @@ def _row_to_track(row) -> Track:
         waveform_data=row["waveform_data"] if "waveform_data" in keys else None,
         waveform_generated_at=str(row["waveform_generated_at"]) if "waveform_generated_at" in keys and row["waveform_generated_at"] else None,
         loudness_lufs=row["loudness_lufs"] if "loudness_lufs" in keys else None,
+        musicbrainz_recording_id=row["musicbrainz_recording_id"] if "musicbrainz_recording_id" in keys else None,
     )
 
 
@@ -169,12 +172,26 @@ class ArtistRepo:
         await self._db.commit()
         return result.lastrowid
 
-    async def get_or_create(self, name: str) -> Artist:
+    async def get_by_musicbrainz_id(self, mbid: str) -> Artist | None:
+        row = await self._db.fetchone(
+            "SELECT * FROM artists WHERE musicbrainz_id = ?", (mbid,),
+        )
+        return _row_to_artist(row) if row else None
+
+    async def get_or_create(self, name: str, musicbrainz_id: str | None = None) -> Artist:
+        if musicbrainz_id:
+            existing = await self.get_by_musicbrainz_id(musicbrainz_id)
+            if existing:
+                return existing
         existing = await self.get_by_name(name)
         if existing:
+            if musicbrainz_id and not existing.musicbrainz_id:
+                existing.musicbrainz_id = musicbrainz_id
+                await self.update(existing)
             return existing
-        artist_id = await self.create(Artist(name=name, sort_name=name))
-        return Artist(id=artist_id, name=name, sort_name=name)
+        artist = Artist(name=name, sort_name=name, musicbrainz_id=musicbrainz_id)
+        artist_id = await self.create(artist)
+        return Artist(id=artist_id, name=name, sort_name=name, musicbrainz_id=musicbrainz_id)
 
     async def update(self, artist: Artist) -> None:
         await self._db.execute(
@@ -245,6 +262,13 @@ class AlbumRepo:
         row = await self._db.fetchone(
             f"{self._SELECT} WHERE al.title = ? LIMIT 1",
             (title,),
+        )
+        return _row_to_album(row) if row else None
+
+    async def get_by_musicbrainz_release_id(self, release_id: str) -> Album | None:
+        row = await self._db.fetchone(
+            f"{self._SELECT} WHERE al.musicbrainz_release_id = ?",
+            (release_id,),
         )
         return _row_to_album(row) if row else None
 
@@ -345,11 +369,13 @@ class AlbumRepo:
     async def create(self, album: Album) -> int:
         result = await self._db.execute(
             """INSERT INTO albums (title, artist_id, year, genre, disc_count,
-               track_count, cover_path, source, source_id, label, catalog_number)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+               track_count, cover_path, source, source_id, label, catalog_number,
+               musicbrainz_release_id, musicbrainz_release_group_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (album.title, album.artist_id, album.year, album.genre,
              album.disc_count, album.track_count, album.cover_path,
-             album.source, album.source_id, album.label, album.catalog_number),
+             album.source, album.source_id, album.label, album.catalog_number,
+             album.musicbrainz_release_id, album.musicbrainz_release_group_id),
         )
         await self._db.commit()
         return result.lastrowid
@@ -371,9 +397,37 @@ class AlbumRepo:
         )
         await self._db.commit()
 
+    async def update_musicbrainz_ids(self, album_id: int,
+                                       release_id: str | None = None,
+                                       release_group_id: str | None = None) -> None:
+        if release_id:
+            await self._db.execute(
+                """UPDATE albums SET musicbrainz_release_id = ?
+                   WHERE id = ? AND (musicbrainz_release_id IS NULL OR musicbrainz_release_id = '')""",
+                (release_id, album_id),
+            )
+        if release_group_id:
+            await self._db.execute(
+                """UPDATE albums SET musicbrainz_release_group_id = ?
+                   WHERE id = ? AND (musicbrainz_release_group_id IS NULL OR musicbrainz_release_group_id = '')""",
+                (release_group_id, album_id),
+            )
+        if release_id or release_group_id:
+            await self._db.commit()
+
     async def get_or_create(self, title: str, artist_id: int, **kwargs) -> Album:
+        mb_release_id = kwargs.get("musicbrainz_release_id")
+        if mb_release_id:
+            existing = await self.get_by_musicbrainz_release_id(mb_release_id)
+            if existing:
+                return existing
         existing = await self.get_by_title_and_artist(title, artist_id)
         if existing:
+            if mb_release_id and not existing.musicbrainz_release_id:
+                await self.update_musicbrainz_ids(
+                    existing.id, mb_release_id,
+                    kwargs.get("musicbrainz_release_group_id"),
+                )
             return existing
         album = Album(title=title, artist_id=artist_id, **kwargs)
         album_id = await self.create(album)
@@ -642,12 +696,14 @@ class TrackRepo:
         result = await self._db.execute(
             """INSERT INTO tracks (title, album_id, artist_id, disc_number,
                disc_subtitle, track_number, duration_ms, file_path, format,
-               sample_rate, bit_depth, channels, source, source_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+               sample_rate, bit_depth, channels, source, source_id,
+               musicbrainz_recording_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (track.title, track.album_id, track.artist_id, track.disc_number,
              track.disc_subtitle, track.track_number, track.duration_ms,
              track.file_path, track.format, track.sample_rate, track.bit_depth,
-             track.channels, track.source, track.source_id),
+             track.channels, track.source, track.source_id,
+             track.musicbrainz_recording_id),
         )
         await self._db.commit()
         return result.lastrowid

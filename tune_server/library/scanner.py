@@ -262,19 +262,37 @@ class LibraryScanner:
                 if not artist_name:
                     artist_name = "Unknown Artist"
                 logger.debug("artist_from_path", path=file_path, artist=artist_name)
-            artist = await self._artist_repo.get_or_create(artist_name)
+            artist_mbid = metadata.musicbrainz_album_artist_id or metadata.musicbrainz_artist_id
+            artist = await self._artist_repo.get_or_create(artist_name, musicbrainz_id=artist_mbid)
 
             # Get or create album — separate albums when sample rates differ
+            # or when MusicBrainz Release IDs differ
             base_title = metadata.album
             if not base_title:
                 # Fallback to folder name
                 parts = file_path.replace("\\", "/").split("/")
                 base_title = parts[-2] if len(parts) >= 3 else "Unknown Album"
                 logger.debug("album_from_path", path=file_path, album=base_title)
-            if metadata.album_artist:
-                album = await self._album_repo.get_by_title_and_artist(base_title, artist.id)
-            else:
-                album = await self._album_repo.get_by_title(base_title)
+
+            mb_release_id = metadata.musicbrainz_release_id
+            mb_release_group_id = metadata.musicbrainz_release_group_id
+            album_kwargs = dict(
+                year=metadata.year, genre=metadata.genre,
+                label=metadata.label, catalog_number=metadata.catalog_number,
+                musicbrainz_release_id=mb_release_id,
+                musicbrainz_release_group_id=mb_release_group_id,
+            )
+
+            # MBID-first lookup: authoritative discriminant
+            album = None
+            if mb_release_id:
+                album = await self._album_repo.get_by_musicbrainz_release_id(mb_release_id)
+
+            if not album:
+                if metadata.album_artist:
+                    album = await self._album_repo.get_by_title_and_artist(base_title, artist.id)
+                else:
+                    album = await self._album_repo.get_by_title(base_title)
 
             if album:
                 # Check if existing album has a different sample rate
@@ -286,10 +304,7 @@ class LibraryScanner:
                     album = await self._album_repo.get_or_create(
                         title=qualified_title,
                         artist_id=artist.id,
-                        year=metadata.year,
-                        genre=metadata.genre,
-                        label=metadata.label,
-                        catalog_number=metadata.catalog_number,
+                        **album_kwargs,
                     )
                     logger.info("album_quality_split", base=base_title, new_title=qualified_title)
                 # Backfill label/catalog_number if the album was created
@@ -298,14 +313,16 @@ class LibraryScanner:
                     await self._album_repo.update_label(
                         album.id, metadata.label, metadata.catalog_number,
                     )
+                # Backfill MusicBrainz IDs
+                if mb_release_id or mb_release_group_id:
+                    await self._album_repo.update_musicbrainz_ids(
+                        album.id, mb_release_id, mb_release_group_id,
+                    )
             else:
                 album = await self._album_repo.get_or_create(
                     title=base_title,
                     artist_id=artist.id,
-                    year=metadata.year,
-                    genre=metadata.genre,
-                    label=metadata.label,
-                    catalog_number=metadata.catalog_number,
+                    **album_kwargs,
                 )
 
             # Create track
@@ -324,6 +341,7 @@ class LibraryScanner:
                 sample_rate=metadata.sample_rate,
                 bit_depth=metadata.bit_depth,
                 channels=metadata.channels,
+                musicbrainz_recording_id=metadata.musicbrainz_recording_id,
             )
             track_id = await self._track_repo.create(track)
 

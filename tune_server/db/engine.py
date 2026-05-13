@@ -180,6 +180,10 @@ class SQLiteDatabase:
             "ALTER TABLE tracks ADD COLUMN loudness_lufs REAL",
             # Disc subtitle (multi-disc album sub-names)
             "ALTER TABLE tracks ADD COLUMN disc_subtitle TEXT",
+            # MusicBrainz IDs from audio tags
+            "ALTER TABLE albums ADD COLUMN musicbrainz_release_id TEXT",
+            "ALTER TABLE albums ADD COLUMN musicbrainz_release_group_id TEXT",
+            "ALTER TABLE tracks ADD COLUMN musicbrainz_recording_id TEXT",
         ]
         for sql in migrations:
             try:

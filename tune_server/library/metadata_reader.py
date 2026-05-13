@@ -46,6 +46,11 @@ class TrackMetadata:
     label: Optional[str] = None
     catalog_number: Optional[str] = None
     disc_subtitle: Optional[str] = None
+    musicbrainz_recording_id: Optional[str] = None
+    musicbrainz_release_id: Optional[str] = None
+    musicbrainz_artist_id: Optional[str] = None
+    musicbrainz_album_artist_id: Optional[str] = None
+    musicbrainz_release_group_id: Optional[str] = None
 
 
 def _clean_text(value: str) -> str:
@@ -206,6 +211,41 @@ def _extract_credits(audio, tags) -> list[dict]:
         logger.debug("credit_extraction_error", exc_info=True)
 
     return credits
+
+
+_MB_VORBIS_KEYS = {
+    "recording_id": ["musicbrainz_trackid"],
+    "release_id": ["musicbrainz_albumid"],
+    "artist_id": ["musicbrainz_artistid"],
+    "album_artist_id": ["musicbrainz_albumartistid"],
+    "release_group_id": ["musicbrainz_releasegroupid"],
+}
+_MB_ID3_KEYS = {
+    "recording_id": ["TXXX:MusicBrainz Recording Id", "TXXX:MUSICBRAINZ_TRACKID"],
+    "release_id": ["TXXX:MusicBrainz Album Id", "TXXX:MUSICBRAINZ_ALBUMID"],
+    "artist_id": ["TXXX:MusicBrainz Artist Id", "TXXX:MUSICBRAINZ_ARTISTID"],
+    "album_artist_id": ["TXXX:MusicBrainz Album Artist Id", "TXXX:MUSICBRAINZ_ALBUMARTISTID"],
+    "release_group_id": ["TXXX:MusicBrainz Release Group Id", "TXXX:MUSICBRAINZ_RELEASEGROUPID"],
+}
+_MB_MP4_KEYS = {
+    "recording_id": ["----:com.apple.iTunes:MusicBrainz Track Id"],
+    "release_id": ["----:com.apple.iTunes:MusicBrainz Album Id"],
+    "artist_id": ["----:com.apple.iTunes:MusicBrainz Artist Id"],
+    "album_artist_id": ["----:com.apple.iTunes:MusicBrainz Album Artist Id"],
+    "release_group_id": ["----:com.apple.iTunes:MusicBrainz Release Group Id"],
+}
+
+
+def _extract_musicbrainz_ids(audio, tags) -> dict[str, str | None]:
+    if isinstance(audio, (FLAC, OggVorbis)):
+        key_map = _MB_VORBIS_KEYS
+    elif isinstance(audio, MP3) or (DSF and isinstance(audio, DSF)):
+        key_map = _MB_ID3_KEYS
+    elif isinstance(audio, MP4):
+        key_map = _MB_MP4_KEYS
+    else:
+        key_map = _MB_VORBIS_KEYS  # generic fallback
+    return {k: (_get_first(tags, keys) or None) for k, keys in key_map.items()}
 
 
 def read_metadata(file_path: str) -> Optional[TrackMetadata]:
@@ -375,6 +415,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
         except (ValueError, TypeError):
             bpm_value = None
 
+        mb_ids = _extract_musicbrainz_ids(audio, tags)
+
         return TrackMetadata(
             title=str(title) if title else "",
             artist=str(artist) if artist else None,
@@ -395,6 +437,11 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             bpm=bpm_value,
             credits=extracted_credits if extracted_credits else None,
             disc_subtitle=_clean_text(str(disc_subtitle)) if disc_subtitle else None,
+            musicbrainz_recording_id=mb_ids.get("recording_id"),
+            musicbrainz_release_id=mb_ids.get("release_id"),
+            musicbrainz_artist_id=mb_ids.get("artist_id"),
+            musicbrainz_album_artist_id=mb_ids.get("album_artist_id"),
+            musicbrainz_release_group_id=mb_ids.get("release_group_id"),
         )
 
     except Exception:
