@@ -831,7 +831,12 @@ class Player:
         next_track = self._queue.next()
         if next_track:
             await self._persist_queue()
-            logger.info("advancing_track", title=next_track.title)
+            logger.info("advance_track_path",
+                        zone_id=self._zone_id,
+                        has_next=self._renderer_has_next,
+                        state=self._state.value,
+                        crossfade_active=self._crossfade_original_volume is not None,
+                        track=next_track.title)
             await self._event_bus.emit(Event(
                 type=EventType.PLAYBACK_TRACK_CHANGED,
                 data={
