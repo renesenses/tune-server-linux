@@ -31,6 +31,11 @@ RequestExecutionLevel user
 
 ; --- Install ---
 Section "Install"
+    ; Kill running instance before overwriting files
+    nsExec::ExecToLog 'taskkill /F /IM tune-server.exe'
+    nsExec::ExecToLog 'taskkill /F /IM librespot.exe'
+    Sleep 2000
+
     SetOutPath "$INSTDIR"
 
     ; Core files

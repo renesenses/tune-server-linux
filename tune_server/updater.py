@@ -153,7 +153,7 @@ def _get_platform_asset_name(version: str) -> str:
     """Return the expected asset filename for this platform."""
     system = platform.system().lower()
     if system == "windows":
-        return f"tune-server-{version}-windows.zip"
+        return f"tune-server-{version}-windows-setup.exe"
     elif system == "darwin":
         # Check if ARM or Intel
         machine = platform.machine().lower()
@@ -249,23 +249,60 @@ class UpdateChecker:
         os.kill(os.getpid(), signal.SIGTERM)
 
     def _spawn_windows_apply_helper(self) -> None:
-        """Launch the staged update applier as a detached process so it
-        outlives the current tune-server.exe."""
+        """Launch the NSIS setup.exe silently as a detached process.
+        The installer waits for tune-server.exe to release file locks,
+        overwrites the install, then start-tune-server.bat relaunches."""
         import subprocess
         if not getattr(sys, "frozen", False):
             return
-        exe_dir = Path(sys.executable).resolve().parent
-        helper = exe_dir / "_apply_update.bat"
-        if not helper.is_file():
-            logger.warning("update_helper_missing", path=str(helper))
+
+        installer_path = getattr(self, "_windows_installer_path", None)
+        if not installer_path or not Path(installer_path).is_file():
+            logger.warning("update_installer_missing", path=str(installer_path))
             return
+
+        exe_dir = Path(sys.executable).resolve().parent
+        install_dir = str(exe_dir)
+
+        # Write a small helper bat that:
+        # 1. Waits for tune-server.exe to exit
+        # 2. Runs the NSIS installer silently with /S /D=install_dir
+        # 3. Relaunches start-tune-server.bat
+        # 4. Cleans up the installer
+        helper_script = f"""@echo off
+setlocal
+set "LOGFILE={install_dir}\\_update.log"
+echo [%DATE% %TIME%] NSIS silent update starting > "%LOGFILE%"
+
+:wait_exit
+tasklist /FI "IMAGENAME eq tune-server.exe" /FO CSV /NH 2>nul | findstr /I "tune-server.exe" >nul
+if errorlevel 1 goto :proc_gone
+ping -n 3 127.0.0.1 >nul
+goto :wait_exit
+:proc_gone
+ping -n 4 127.0.0.1 >nul
+
+echo [%DATE% %TIME%] Running installer silently >> "%LOGFILE%"
+"{installer_path}" /S /D={install_dir}
+echo [%DATE% %TIME%] Installer finished (exit code %errorlevel%) >> "%LOGFILE%"
+
+if exist "{install_dir}\\start-tune-server.bat" (
+    start "" "{install_dir}\\start-tune-server.bat"
+) else (
+    start "" "{install_dir}\\tune-server.exe"
+)
+echo [%DATE% %TIME%] Relaunched >> "%LOGFILE%"
+endlocal
+exit /b 0
+"""
+        helper = exe_dir / "_apply_update.bat"
+        helper.write_text(helper_script, encoding="ascii")
+
         try:
-            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP -- keep the bat
-            # alive after our exit and stop signal propagation.
             CREATE_FLAGS = 0x00000008 | 0x00000200
             subprocess.Popen(
                 ["cmd.exe", "/c", str(helper)],
-                cwd=str(exe_dir),
+                cwd=install_dir,
                 creationflags=CREATE_FLAGS,
                 close_fds=True,
             )
@@ -380,12 +417,12 @@ class UpdateChecker:
             else:
                 exe_dir = Path.cwd()
 
-            # Windows: cannot overwrite the running tune-server.exe, so we
-            # stage the new files in a sibling folder and let a detached
-            # .bat helper swap them in after we exit.
+            # Windows: run the NSIS setup.exe silently. The installer
+            # handles file replacement, registry, and shortcuts. We just
+            # need to stop the server, run the installer, and relaunch.
             if platform.system().lower() == "windows":
-                self._stage_windows_update(exe_dir, source_dir)
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+                self._windows_installer_path = archive_path
+                self._tmp_dir = tmp_dir
                 if self._event_bus:
                     from tune_server.event_bus import Event, EventType
                     await self._event_bus.emit(Event(
@@ -396,7 +433,8 @@ class UpdateChecker:
                             "windows_staged": True,
                         },
                     ))
-                logger.info("update_staged_windows", version=self._latest_version)
+                logger.info("update_ready_windows", version=self._latest_version,
+                            installer=str(archive_path))
                 return True
 
             backup_dir = exe_dir / f"_backup_{self.current_version}"
