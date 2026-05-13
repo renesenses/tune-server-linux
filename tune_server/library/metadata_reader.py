@@ -46,6 +46,7 @@ class TrackMetadata:
     label: Optional[str] = None
     catalog_number: Optional[str] = None
     disc_subtitle: Optional[str] = None
+    original_year: Optional[int] = None
     musicbrainz_recording_id: Optional[str] = None
     musicbrainz_release_id: Optional[str] = None
     musicbrainz_artist_id: Optional[str] = None
@@ -276,6 +277,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE"]) or None
+            original_year_str = _get_first(tags, ["originaldate", "originalyear", "ORIGINALDATE", "ORIGINALYEAR"])
             year_str = _get_first(tags, ["date", "year"])
             genre = _get_first(tags, ["genre"]) or None
             label = _get_first(tags, ["label", "publisher", "organization"]) or None
@@ -292,7 +294,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             track_num = _parse_int(_get_first(tags, ["TRCK"]))
             disc_num = _parse_int(_get_first(tags, ["TPOS"]), 1)
             disc_subtitle = _get_first(tags, ["TSST", "TXXX:DISCSUBTITLE"]) or None
-            year_str = _get_first(tags, ["TDRC", "TYER"])
+            original_year_str = _get_first(tags, ["TDOR"])
+            year_str = _get_first(tags, ["TDRL", "TDRC", "TYER"])
             genre = _get_first(tags, ["TCON"]) or None
             label = _get_first(tags, ["TPUB"]) or None
             catalog_number = _get_first(tags, ["TXXX:CATALOGNUMBER", "TXXX:CATALOGNO"]) or None
@@ -310,6 +313,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             disk = tags.get("disk", [(1, 1)])[0]
             disc_num = disk[0] if isinstance(disk, tuple) else 1
             disc_subtitle = _get_first(tags, ["----:com.apple.iTunes:DISCSUBTITLE"]) or None
+            original_year_str = ""
             year_str = _get_first(tags, ["\xa9day"])
             genre = _get_first(tags, ["\xa9gen"]) or None
             label = _get_first(tags, ["----:com.apple.iTunes:LABEL"]) or None
@@ -326,6 +330,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE"]) or None
+            original_year_str = _get_first(tags, ["originaldate", "originalyear", "ORIGINALDATE", "ORIGINALYEAR"])
             year_str = _get_first(tags, ["date"])
             genre = _get_first(tags, ["genre"]) or None
             label = _get_first(tags, ["label", "publisher", "organization"]) or None
@@ -343,7 +348,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             track_num = _parse_int(_get_first(tags, ["TRCK"])) if tags else 0
             disc_num = _parse_int(_get_first(tags, ["TPOS"]), 1) if tags else 1
             disc_subtitle = (_get_first(tags, ["TSST", "TXXX:DISCSUBTITLE"]) or None) if tags else None
-            year_str = (_get_first(tags, ["TDRC", "TYER"]) if tags else "")
+            original_year_str = (_get_first(tags, ["TDOR"]) if tags else "")
+            year_str = (_get_first(tags, ["TDRL", "TDRC", "TYER"]) if tags else "")
             genre = (_get_first(tags, ["TCON"]) or None) if tags else None
             label = (_get_first(tags, ["TPUB"]) or None) if tags else None
             catalog_number = (_get_first(tags, ["TXXX:CATALOGNUMBER", "TXXX:CATALOGNO"]) or None) if tags else None
@@ -363,7 +369,10 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
                 "discsubtitle", "DISCSUBTITLE", "TSST", "TXXX:DISCSUBTITLE",
                 "----:com.apple.iTunes:DISCSUBTITLE",
             ]) or None
-            year_str = _get_first(tags, ["date", "TDRC", "TYER", "\xa9day"])
+            original_year_str = _get_first(tags, [
+                "originaldate", "ORIGINALDATE", "originalyear", "ORIGINALYEAR", "TDOR",
+            ])
+            year_str = _get_first(tags, ["date", "TDRL", "TDRC", "TYER", "\xa9day"])
             genre = _get_first(tags, ["genre", "TCON", "\xa9gen"]) or None
             # Label/publisher: VorbisComment uses LABEL/PUBLISHER/ORGANIZATION,
             # ID3v2 uses TPUB, MP4 has its own iTunes atom but mutagen
@@ -382,13 +391,19 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             bit_depth = getattr(info, "bits_per_sample", 16)
             has_cover = False
 
-        # Parse year
+        # Parse years
         year = None
         if year_str:
             try:
                 year = int(str(year_str)[:4])
             except (ValueError, TypeError) as e:
                 logger.debug("metadata_year_parse_failed", value=str(year_str)[:20], error=str(e))
+        original_year = None
+        if original_year_str:
+            try:
+                original_year = int(str(original_year_str)[:4])
+            except (ValueError, TypeError):
+                pass
 
         duration_ms = int(info.length * 1000) if hasattr(info, "length") else 0
         channels = getattr(info, "channels", 2)
@@ -425,6 +440,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             track_number=track_num,
             disc_number=disc_num,
             year=year,
+            original_year=original_year,
             genre=str(genre) if genre else None,
             duration_ms=duration_ms,
             format=_detect_format(path),

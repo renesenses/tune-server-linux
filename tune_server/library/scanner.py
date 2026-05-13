@@ -277,7 +277,8 @@ class LibraryScanner:
             mb_release_id = metadata.musicbrainz_release_id
             mb_release_group_id = metadata.musicbrainz_release_group_id
             album_kwargs = dict(
-                year=metadata.year, genre=metadata.genre,
+                year=metadata.year, original_year=metadata.original_year,
+                genre=metadata.genre,
                 label=metadata.label, catalog_number=metadata.catalog_number,
                 musicbrainz_release_id=mb_release_id,
                 musicbrainz_release_group_id=mb_release_group_id,

@@ -74,6 +74,7 @@ class Album(BaseModel):
     artist_id: Optional[int] = None
     artist_name: Optional[str] = None
     year: Optional[int] = None
+    original_year: Optional[int] = None
     genre: Optional[str] = None
     disc_count: int = 1
     track_count: int = 0

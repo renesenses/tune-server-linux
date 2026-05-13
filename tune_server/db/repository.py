@@ -55,6 +55,7 @@ def _row_to_album(row) -> Album:
         artist_name=(row["joined_artist_name"] if "joined_artist_name" in keys
                      else row["artist_name"] if "artist_name" in keys else None),
         year=row["year"],
+        original_year=row["original_year"] if "original_year" in keys else None,
         genre=row["genre"],
         disc_count=row["disc_count"],
         track_count=row["track_count"],
@@ -368,11 +369,11 @@ class AlbumRepo:
 
     async def create(self, album: Album) -> int:
         result = await self._db.execute(
-            """INSERT INTO albums (title, artist_id, year, genre, disc_count,
+            """INSERT INTO albums (title, artist_id, year, original_year, genre, disc_count,
                track_count, cover_path, source, source_id, label, catalog_number,
                musicbrainz_release_id, musicbrainz_release_group_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
-            (album.title, album.artist_id, album.year, album.genre,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+            (album.title, album.artist_id, album.year, album.original_year, album.genre,
              album.disc_count, album.track_count, album.cover_path,
              album.source, album.source_id, album.label, album.catalog_number,
              album.musicbrainz_release_id, album.musicbrainz_release_group_id),
