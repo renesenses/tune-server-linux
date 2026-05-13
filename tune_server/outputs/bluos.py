@@ -106,7 +106,8 @@ class BluosOutput(OutputTarget):
             url = track.file_path
             self._direct_url = True
         else:
-            self._stream_id = self._streamer.create_session(stream_info)
+            file_path = track.file_path if track else None
+            self._stream_id = self._streamer.create_session(stream_info, file_path)
             url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
 
         title = track.title if track else "Audio"
@@ -119,8 +120,12 @@ class BluosOutput(OutputTarget):
             raise
 
     async def write(self, data: bytes) -> None:
+        if self._direct_url:
+            return
         if self._stream_id:
-            self._streamer.write_to_session(self._stream_id, data)
+            session = self._streamer.get_session(self._stream_id)
+            if session:
+                await session.put(data)
 
     async def flush(self) -> None:
         pass
