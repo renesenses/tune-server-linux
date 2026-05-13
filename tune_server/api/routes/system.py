@@ -260,7 +260,10 @@ async def clear_library():
 
 
 @router.post("/scan", status_code=202)
-async def trigger_scan(path: Optional[str] = Query(None, description="Scan a single directory instead of all music_dirs")):
+async def trigger_scan(
+    path: Optional[str] = Query(None, description="Scan a single directory instead of all music_dirs"),
+    full: bool = Query(False, description="Force full rescan of all files (re-read tags)"),
+):
     if not deps.scanner:
         raise HTTPException(status_code=503, detail="Scanner not available")
 
@@ -276,10 +279,14 @@ async def trigger_scan(path: Optional[str] = Query(None, description="Scan a sin
     else:
         scan_dirs = settings.music_dirs
 
+    if full:
+        await deps.db.execute("UPDATE tracks SET mtime = 0 WHERE mtime IS NOT NULL")
+        await deps.db.commit()
+
     # Run scan in background
     task = asyncio.create_task(deps.scanner.scan(scan_dirs))
     task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
-    return {"status": "scan_started", "music_dirs": scan_dirs}
+    return {"status": "scan_started", "music_dirs": scan_dirs, "full": full}
 
 
 @router.get("/scan/status", response_model=ScanStatusResponse)
