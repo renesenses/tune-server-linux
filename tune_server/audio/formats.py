@@ -35,6 +35,13 @@ CHROMECAST_CAPABILITIES = AudioCapabilities(
     supports_gapless=True,
 )
 
+BLUOS_CAPABILITIES = AudioCapabilities(
+    formats={AudioFormat.FLAC, AudioFormat.WAV, AudioFormat.MP3, AudioFormat.AAC, AudioFormat.OGG},
+    max_sample_rate=192000,
+    max_bit_depth=24,
+    supports_gapless=False,
+)
+
 LOCAL_CAPABILITIES = AudioCapabilities(
     formats={AudioFormat.WAV},  # sounddevice only accepts raw PCM; always decode
     max_sample_rate=384000,

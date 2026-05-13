@@ -48,6 +48,7 @@ class OutputType(str, Enum):
     DLNA = "dlna"
     AIRPLAY = "airplay"
     CHROMECAST = "chromecast"
+    BLUOS = "bluos"
 
 
 # --- Domain models ---

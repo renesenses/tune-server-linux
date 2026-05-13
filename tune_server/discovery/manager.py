@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from tune_server.config import settings
+from tune_server.discovery.bluos import BluosDiscovery
 from tune_server.discovery.cast import CastDiscovery
 from tune_server.discovery.mdns import MdnsDiscovery
 from tune_server.discovery.ssdp import SsdpDiscovery
@@ -28,6 +29,7 @@ class DiscoveryManager:
         self._ssdp = SsdpDiscovery(event_bus) if settings.ssdp_enabled else None
         self._mdns = MdnsDiscovery(event_bus) if settings.mdns_enabled else None
         self._cast = CastDiscovery(event_bus) if getattr(settings, 'cast_enabled', True) else None
+        self._bluos = BluosDiscovery(event_bus) if getattr(settings, 'bluos_enabled', True) else None
         self._network_shares: NetworkShareDiscovery | None = None
         self._media_servers: MediaServerDiscovery | None = None
 
@@ -52,6 +54,10 @@ class DiscoveryManager:
         return self._cast
 
     @property
+    def bluos(self) -> BluosDiscovery | None:
+        return self._bluos
+
+    @property
     def network_shares(self) -> NetworkShareDiscovery | None:
         return self._network_shares
 
@@ -64,9 +70,9 @@ class DiscoveryManager:
             logger.info("discovery_disabled")
             return
 
-        # Create a shared Zeroconf instance for mDNS + Cast discovery
+        # Create a shared Zeroconf instance for mDNS + Cast + BluOS discovery
         # to avoid port 5353 conflicts from multiple instances.
-        if self._mdns or self._cast:
+        if self._mdns or self._cast or self._bluos:
             try:
                 from zeroconf import Zeroconf
                 self._shared_zc = Zeroconf()
@@ -79,6 +85,8 @@ class DiscoveryManager:
             await self._mdns.start(shared_zc=self._shared_zc)
         if self._cast:
             await self._cast.start(shared_zc=self._shared_zc)
+        if self._bluos:
+            await self._bluos.start(shared_zc=self._shared_zc)
         if self._network_shares:
             await self._network_shares.start()
         if self._media_servers:
@@ -93,6 +101,8 @@ class DiscoveryManager:
             await self._mdns.stop()
         if self._cast:
             await self._cast.stop()
+        if self._bluos:
+            await self._bluos.stop()
         if self._shared_zc:
             self._shared_zc.close()
             self._shared_zc = None
@@ -109,6 +119,8 @@ class DiscoveryManager:
             devices.extend(self._mdns.devices.values())
         if self._cast:
             devices.extend(self._cast.devices.values())
+        if self._bluos:
+            devices.extend(self._bluos.devices.values())
         return devices
 
     async def rescan(self) -> list[DiscoveredDevice]:
@@ -121,6 +133,8 @@ class DiscoveryManager:
             tasks.append(self._mdns.rescan())
         if self._cast:
             tasks.append(self._cast.rescan())
+        if self._bluos:
+            tasks.append(self._bluos.rescan())
         if tasks:
             await asyncio.gather(*tasks)
         return self.list_devices()
@@ -136,6 +150,10 @@ class DiscoveryManager:
                 return dev
         if self._cast:
             dev = self._cast.devices.get(device_id)
+            if dev:
+                return dev
+        if self._bluos:
+            dev = self._bluos.devices.get(device_id)
             if dev:
                 return dev
         return None

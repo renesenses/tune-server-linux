@@ -212,6 +212,7 @@ class Settings(BaseSettings):
     ssdp_enabled: bool = True
     mdns_enabled: bool = True
     cast_enabled: bool = True
+    bluos_enabled: bool = True
 
     # UPnP MediaServer
     upnp_server_enabled: bool = True

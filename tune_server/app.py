@@ -516,6 +516,7 @@ class TuneServer:
         from tune_server.models import OutputType
         from tune_server.outputs.dlna import DlnaOutput
         from tune_server.outputs.airplay import AirPlayOutput
+        from tune_server.outputs.bluos import BluosOutput
         from tune_server.outputs.chromecast import ChromecastOutput
         from tune_server.outputs.local import LocalOutput
 
@@ -625,9 +626,27 @@ class TuneServer:
             name = device.name if device else "Chromecast"
             return ChromecastOutput(cast, self._http_streamer, self._server_ip, device_name=name)
 
+        async def create_bluos_output(device_id: str | None):
+            if not device_id:
+                raise RuntimeError("BluOS: no device_id specified")
+            if not self._discovery_manager or not self._discovery_manager.bluos:
+                raise RuntimeError("BluOS: BluOS discovery is not running")
+            host_port = self._discovery_manager.bluos.get_bluos_host(device_id)
+            if not host_port:
+                known = list(self._discovery_manager.bluos.devices.keys())
+                raise RuntimeError(
+                    f"BluOS: device '{device_id}' not found. "
+                    f"Discovered: {known or 'none'}."
+                )
+            host, port = host_port
+            device = self._discovery_manager.get_device(device_id)
+            name = device.name if device else "BluOS"
+            return BluosOutput(host, self._http_streamer, self._server_ip, port=port, device_name=name)
+
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
         self._zone_manager.register_output_factory(OutputType.AIRPLAY, create_airplay_output)
         self._zone_manager.register_output_factory(OutputType.CHROMECAST, create_chromecast_output)
+        self._zone_manager.register_output_factory(OutputType.BLUOS, create_bluos_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
 
     def _setup_playback_history(self, history_repo) -> None:
