@@ -121,7 +121,7 @@ else
     # Only ffmpeg + portaudio runtime + avahi remain as runtime deps.
     case "$PKG_MANAGER" in
         apt)
-            install_packages ffmpeg curl libportaudio2 avahi-daemon
+            install_packages ffmpeg curl rsync libportaudio2 avahi-daemon
             ;;
         dnf)
             install_packages ffmpeg curl portaudio avahi
