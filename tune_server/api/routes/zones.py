@@ -214,3 +214,26 @@ async def list_groups():
             group_manufacturer=group_manufacturer,
         ))
     return result
+
+
+@router.get("/{zone_id}/crossfade")
+async def get_crossfade(zone_id: int):
+    zone = deps.zone_manager.get_zone(zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail=f"Zone {zone_id} not found")
+    return {
+        "enabled": zone.player._crossfade_enabled,
+        "duration": zone.player._crossfade_duration,
+    }
+
+
+@router.post("/{zone_id}/crossfade")
+async def set_zone_crossfade(zone_id: int, body: dict = {}):
+    zone = deps.zone_manager.get_zone(zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail=f"Zone {zone_id} not found")
+    enabled = body.get("enabled", True)
+    duration = body.get("duration", 3.0)
+    zone.player._crossfade_enabled = enabled
+    zone.player._crossfade_duration = duration
+    return {"enabled": enabled, "duration": duration}
