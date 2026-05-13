@@ -280,7 +280,7 @@ async def trigger_scan(
         scan_dirs = settings.music_dirs
 
     if full:
-        await deps.db.execute("UPDATE tracks SET mtime = 0 WHERE mtime IS NOT NULL")
+        await deps.db.execute("UPDATE tracks SET file_mtime = 0 WHERE file_mtime IS NOT NULL")
         await deps.db.commit()
 
     # Run scan in background
