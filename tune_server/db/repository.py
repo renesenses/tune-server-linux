@@ -558,6 +558,17 @@ class AlbumRepo:
         )
         return [_row_to_album(r) for r in rows]
 
+    async def list_without_musicbrainz_ids(self) -> list[Album]:
+        """Return local albums that have no musicbrainz_release_id."""
+        rows = await self._db.fetchall(
+            """SELECT al.*, ar.name as artist_name
+               FROM albums al LEFT JOIN artists ar ON al.artist_id = ar.id
+               WHERE (al.musicbrainz_release_id IS NULL OR al.musicbrainz_release_id = '')
+                 AND al.source = 'local'
+               ORDER BY al.title""",
+        )
+        return [_row_to_album(r) for r in rows]
+
     async def search(self, query: str, limit: int = 50) -> list[Album]:
         like_pat = f"%{query}%"
         if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':

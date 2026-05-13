@@ -63,6 +63,8 @@ class Player:
         # Crossfade
         self._crossfade_enabled = settings.crossfade_enabled
         self._crossfade_duration = settings.crossfade_duration
+        self._crossfade_task: asyncio.Task | None = None
+        self._crossfade_original_volume: float | None = None  # to restore after fade
         # Volume normalization
         self._normalization_enabled = False
         self._normalization_target = -14.0
@@ -151,20 +153,145 @@ class Player:
                     fn=getattr(fn, "__qualname__", repr(fn)),
                 )
 
+    def _is_dlna_output(self) -> bool:
+        """Check if current output is a DLNA renderer."""
+        if not self._output:
+            return False
+        return self._output.__class__.__name__ == "DlnaOutput"
+
     async def _check_crossfade(self):
-        """Check if we should start crossfading to the next track."""
+        """Check if we should start crossfading to the next track.
+
+        For local output: applies FFmpeg fade-out filter.
+        For DLNA output: uses volume ramp (fade-out current, queue next,
+        fade-in when next track starts).
+        """
         if not self._crossfade_enabled or self._crossfade_duration <= 0:
             return
         track = self.current_track
         if not track or not track.duration_ms:
             return
+
+        # Don't crossfade radio
+        if track.source == Source.RADIO:
+            return
+
         remaining_ms = track.duration_ms - self.position_ms
         threshold_ms = int(self._crossfade_duration * 1000)
+
         if remaining_ms <= threshold_ms and remaining_ms > threshold_ms - 500:
-            # Apply fade-out filter
-            fade_filter = f"afade=t=out:st=0:d={self._crossfade_duration}"
-            if self._pipeline:
+            if self._is_dlna_output():
+                await self._start_dlna_crossfade()
+            elif self._pipeline:
+                # Local output: apply FFmpeg fade-out filter
+                fade_filter = f"afade=t=out:st=0:d={self._crossfade_duration}"
                 self._channel_filter = fade_filter
+
+    async def _start_dlna_crossfade(self) -> None:
+        """Initiate DLNA crossfade: queue next track + volume fade-out.
+
+        The approach:
+        1. Ensure next track is queued via SetNextAVTransportURI
+        2. Fade volume down over crossfade_duration seconds
+        3. When _advance_track detects the next track started,
+           _finish_dlna_crossfade fades volume back up
+        """
+        if self._crossfade_task and not self._crossfade_task.done():
+            return  # already fading
+
+        if not self._output:
+            return
+
+        output = self._output
+        # Read current volume from renderer (or use cached)
+        current_vol = await output.get_volume() if hasattr(output, 'get_volume') else None
+        if current_vol is None:
+            current_vol = self._volume
+
+        self._crossfade_original_volume = current_vol
+
+        # Ensure next track is queued for gapless transition
+        if not self._renderer_has_next:
+            await self._preload_next()
+
+        # Start async fade-out task
+        self._crossfade_task = asyncio.create_task(
+            self._dlna_fade_out(output, current_vol)
+        )
+
+    async def _dlna_fade_out(self, output, from_vol: float) -> None:
+        """Fade DLNA volume down to 0 over crossfade_duration."""
+        try:
+            ok = await output.fade_volume(
+                from_vol=from_vol,
+                to_vol=0.0,
+                duration=self._crossfade_duration,
+            )
+            if not ok:
+                logger.info(
+                    "dlna_crossfade_skipped",
+                    zone_id=self._zone_id,
+                    reason="volume_control_not_supported",
+                )
+                self._crossfade_original_volume = None
+        except asyncio.CancelledError:
+            logger.debug("dlna_fade_out_cancelled", zone_id=self._zone_id)
+        except Exception:
+            logger.exception("dlna_fade_out_error", zone_id=self._zone_id)
+            self._crossfade_original_volume = None
+
+    async def _finish_dlna_crossfade(self) -> None:
+        """Fade DLNA volume back up after track transition.
+
+        Called from _advance_track when the next track starts playing
+        and a crossfade was in progress.
+        """
+        if self._crossfade_original_volume is None:
+            return
+
+        if not self._output or not hasattr(self._output, 'fade_volume'):
+            self._crossfade_original_volume = None
+            return
+
+        target_vol = self._crossfade_original_volume
+        self._crossfade_original_volume = None
+
+        try:
+            await self._output.fade_volume(
+                from_vol=0.0,
+                to_vol=target_vol,
+                duration=self._crossfade_duration,
+            )
+            logger.info(
+                "dlna_crossfade_complete",
+                zone_id=self._zone_id,
+                restored_volume=round(target_vol, 2),
+            )
+        except Exception:
+            # Best-effort: if fade-in fails, force-set original volume
+            logger.warning("dlna_fade_in_error", zone_id=self._zone_id)
+            try:
+                await self._output.set_volume(target_vol)
+            except Exception:
+                pass
+
+    async def _cancel_crossfade(self) -> None:
+        """Cancel any in-progress crossfade and restore volume."""
+        if self._crossfade_task and not self._crossfade_task.done():
+            self._crossfade_task.cancel()
+            try:
+                await self._crossfade_task
+            except asyncio.CancelledError:
+                pass
+            self._crossfade_task = None
+
+        # Restore volume if it was modified by crossfade
+        if self._crossfade_original_volume is not None and self._output:
+            try:
+                await self._output.set_volume(self._crossfade_original_volume)
+            except Exception:
+                pass
+            self._crossfade_original_volume = None
 
     async def _persist_queue(self) -> None:
         """Persist current queue state if callback is set."""
@@ -593,6 +720,17 @@ class Player:
                         and not self._gapless.has_next):
                     await self._pre_buffer_next()
 
+                # DLNA crossfade: check if we're within crossfade threshold
+                if (duration_ms and self._crossfade_enabled
+                        and self._crossfade_duration > 0
+                        and self._is_dlna_output()
+                        and self._crossfade_original_volume is None
+                        and (self._crossfade_task is None or self._crossfade_task.done())):
+                    remaining = duration_ms - pos
+                    threshold = int(self._crossfade_duration * 1000)
+                    if 0 < remaining <= threshold and not is_radio:
+                        await self._start_dlna_crossfade()
+
                 if duration_ms and pos >= duration_ms:
                     break
                 # No duration but output signals completion (pos >= 1)
@@ -718,11 +856,25 @@ class Player:
                 self._signal_path = self._build_signal_path(next_track, stream_info, passthrough_type="direct_url")
                 self._playback_task = asyncio.create_task(self._direct_url_monitor(next_track))
                 await self._preload_next()
+                # DLNA crossfade: fade volume back up after track transition
+                if self._crossfade_original_volume is not None:
+                    asyncio.create_task(self._finish_dlna_crossfade())
                 logger.info("gapless_soft_advance", track=next_track.title)
                 return
 
+            # Non-gapless DLNA advance: also fade in if crossfade was active
+            if self._crossfade_original_volume is not None:
+                asyncio.create_task(self._finish_dlna_crossfade())
+
             await self._start_track(next_track)
         else:
+            # Restore volume if crossfade was in progress (last track in queue)
+            if self._crossfade_original_volume is not None and self._output:
+                try:
+                    await self._output.set_volume(self._crossfade_original_volume)
+                except Exception:
+                    pass
+                self._crossfade_original_volume = None
             self._state = PlaybackState.STOPPED
             self._position_ms = 0
             await self._event_bus.emit(Event(
@@ -1134,6 +1286,8 @@ class Player:
 
     async def _stop_pipeline(self) -> None:
         self._renderer_has_next = False
+        # Cancel any in-progress crossfade and restore volume
+        await self._cancel_crossfade()
         # Stop ICY/radio metadata pollers
         if self._icy_poller_task:
             self._icy_poller_task.cancel()

@@ -531,6 +531,75 @@ class DlnaOutput(OutputTarget):
             logger.debug("dlna_position_error", device=self.name)
         return -1
 
+    async def get_volume(self) -> float | None:
+        """Read the current volume level from the renderer (0.0-1.0).
+
+        Returns None if volume cannot be read (renderer doesn't support it).
+        """
+        if self._is_micromega:
+            # Micromega uses proprietary protocol, just return cached value
+            return self._volume
+        try:
+            dmr = self._device
+            vol = getattr(dmr, "volume_level", None)
+            if vol is not None:
+                return float(vol)
+        except Exception:
+            logger.debug("dlna_get_volume_error", device=self.name)
+        return None
+
+    async def fade_volume(
+        self,
+        from_vol: float,
+        to_vol: float,
+        duration: float,
+        steps: int = 20,
+    ) -> bool:
+        """Ramp DLNA volume from from_vol to to_vol over duration seconds.
+
+        Both from_vol and to_vol are in 0.0-1.0 range (DLNA standard).
+        Returns True if the fade completed, False if volume control failed
+        on the first attempt (renderer doesn't support SetVolume).
+
+        The fade is best-effort: individual step failures are silently skipped
+        so playback is never interrupted.
+        """
+        if steps < 1 or duration <= 0:
+            return False
+
+        step_delay = duration / steps
+        vol_delta = (to_vol - from_vol) / steps
+
+        for i in range(steps + 1):
+            target = from_vol + vol_delta * i
+            target = max(0.0, min(1.0, target))
+            try:
+                if self._is_micromega and self._device_ip:
+                    await self._micromega_set_volume(target)
+                else:
+                    ok = await self._dmr_call("async_set_volume_level", target)
+                    if not ok and i == 0:
+                        # First step failed — renderer doesn't support volume control
+                        logger.debug("dlna_fade_volume_not_supported", device=self.name)
+                        return False
+            except Exception:
+                if i == 0:
+                    logger.debug("dlna_fade_volume_not_supported", device=self.name)
+                    return False
+                # Later steps: skip silently
+            self._volume = target
+            if i < steps:
+                await asyncio.sleep(step_delay)
+
+        logger.info(
+            "dlna_fade_volume_done",
+            device=self.name,
+            from_vol=round(from_vol, 2),
+            to_vol=round(to_vol, 2),
+            duration=round(duration, 1),
+        )
+        return True
+
     async def measure_latency(self) -> float | None:
         """Measure actual DLNA startup latency by polling GetPositionInfo after start().
 

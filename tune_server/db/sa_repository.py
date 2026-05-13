@@ -700,6 +700,50 @@ class SAAlbumRepo:
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_album(r) for r in rows]
 
+    async def list_without_musicbrainz_ids(self) -> list[Album]:
+        """Return local albums that have no musicbrainz_release_id."""
+        stmt = (
+            self._album_select()
+            .where(
+                sa.or_(
+                    albums.c.musicbrainz_release_id.is_(None),
+                    albums.c.musicbrainz_release_id == "",
+                )
+            )
+            .where(albums.c.source == "local")
+            .order_by(albums.c.title)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [_row_to_album(r) for r in rows]
+
+    async def update_musicbrainz_ids(self, album_id: int,
+                                       release_id: str | None = None,
+                                       release_group_id: str | None = None) -> None:
+        if release_id:
+            await self._db.sa_execute(
+                albums.update()
+                .where(albums.c.id == album_id)
+                .where(
+                    sa.or_(
+                        albums.c.musicbrainz_release_id.is_(None),
+                        albums.c.musicbrainz_release_id == "",
+                    )
+                )
+                .values(musicbrainz_release_id=release_id)
+            )
+        if release_group_id:
+            await self._db.sa_execute(
+                albums.update()
+                .where(albums.c.id == album_id)
+                .where(
+                    sa.or_(
+                        albums.c.musicbrainz_release_group_id.is_(None),
+                        albums.c.musicbrainz_release_group_id == "",
+                    )
+                )
+                .values(musicbrainz_release_group_id=release_group_id)
+            )
+
 
 # ===================================================================
 # TrackRepo — SA Core

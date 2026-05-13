@@ -419,6 +419,35 @@ async def enrich_all_credits_endpoint():
     return {"status": "started"}
 
 
+@router.post("/enrich-musicbrainz")
+async def enrich_all_musicbrainz_endpoint():
+    """Enrich ALL albums missing MusicBrainz IDs (runs in background).
+
+    Queries the MusicBrainz API for each album without a release ID,
+    rate-limited to 1 request/second. Returns immediately.
+    """
+    from tune_server.metadata.musicbrainz_release import enrich_all_albums_musicbrainz_ids
+
+    async def _run():
+        result = await enrich_all_albums_musicbrainz_ids(deps.album_repo)
+        logger.info("enrich_all_musicbrainz_done", **result)
+
+    asyncio.create_task(_run())
+    return {"status": "started", "message": "MusicBrainz enrichment running in background"}
+
+
+@router.post("/albums/{album_id}/enrich-musicbrainz")
+async def enrich_album_musicbrainz_endpoint(album_id: int):
+    """Enrich a single album with MusicBrainz release/release-group IDs."""
+    album = await deps.album_repo.get(album_id)
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    from tune_server.metadata.musicbrainz_release import enrich_album_musicbrainz_ids
+    result = await enrich_album_musicbrainz_ids(album_id, deps.album_repo)
+    return result
+
+
 @router.get("/search", response_model=SearchResult)
 async def search(q: str = Query(..., min_length=1), limit: int = Query(50, le=200)):
     return await full_text_search(deps.db, q, limit=limit)
