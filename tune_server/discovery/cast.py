@@ -66,13 +66,20 @@ class CastDiscovery:
     async def _on_cast_added(self, uuid, name: str) -> None:
         try:
             import pychromecast
-            casts, _ = pychromecast.get_listed_chromecasts(
-                friendly_names=[name], zeroconf_instance=self._zc
-            )
-            if not casts:
+
+            def _connect():
+                result, _ = pychromecast.get_listed_chromecasts(
+                    friendly_names=[name], zeroconf_instance=self._zc
+                )
+                if not result:
+                    return None
+                cc = result[0]
+                cc.wait(timeout=10)
+                return cc
+
+            cast = await asyncio.to_thread(_connect)
+            if cast is None:
                 return
-            cast = casts[0]
-            cast.wait(timeout=10)
             device_id = str(uuid)
             self._cast_devices[device_id] = cast
 

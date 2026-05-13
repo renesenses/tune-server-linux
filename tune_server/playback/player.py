@@ -58,6 +58,7 @@ class Player:
         self._skip_in_progress = False
         self._lock = asyncio.Lock()
         self._signal_path: "SignalPath | None" = None
+        self._renderer_has_next = False
         self._channel_filter: str | None = None
         # Crossfade
         self._crossfade_enabled = settings.crossfade_enabled
@@ -420,6 +421,7 @@ class Player:
                 if hasattr(self._output, 'set_next_track'):
                     ok = await self._output.set_next_track(next_info, next_track)
                     if ok:
+                        self._renderer_has_next = True
                         logger.info("gapless_next_set_direct", track=next_track.title)
                         return
             except Exception:
@@ -701,6 +703,24 @@ class Player:
                 },
                 source="player",
             ))
+
+            if self._renderer_has_next:
+                self._renderer_has_next = False
+                self._position_ms = 0
+                self._position_start_time = time.monotonic()
+                source_format = AudioFormat(next_track.format) if next_track.format else AudioFormat.FLAC
+                stream_info = AudioStreamInfo(
+                    format=source_format,
+                    sample_rate=next_track.sample_rate or 44100,
+                    bit_depth=next_track.bit_depth or 16,
+                    channels=next_track.channels or 2,
+                )
+                self._signal_path = self._build_signal_path(next_track, stream_info, passthrough_type="direct_url")
+                self._playback_task = asyncio.create_task(self._direct_url_monitor(next_track))
+                await self._preload_next()
+                logger.info("gapless_soft_advance", track=next_track.title)
+                return
+
             await self._start_track(next_track)
         else:
             self._state = PlaybackState.STOPPED
@@ -1113,6 +1133,7 @@ class Player:
             logger.debug("icy_poller_stopped", zone_id=self._zone_id)
 
     async def _stop_pipeline(self) -> None:
+        self._renderer_has_next = False
         # Stop ICY/radio metadata pollers
         if self._icy_poller_task:
             self._icy_poller_task.cancel()
