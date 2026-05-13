@@ -546,6 +546,28 @@ class TuneServer:
                                     pass
                                 break
             if not dmr:
+                # Device visible but no DMR — try a live MinimalDmrDevice probe
+                disc = self._discovery_manager.ssdp.devices.get(device_id)
+                if disc and disc.host:
+                    from tune_server.outputs.minimal_dmr import MinimalDmrDevice
+                    port = disc.port or 80
+                    base_url = f"http://{disc.host}:{port}"
+                    desc_url = disc.capabilities.get("description_url") if disc.capabilities else None
+                    minimal = MinimalDmrDevice(
+                        name=disc.name, base_url=base_url, description_url=desc_url,
+                    )
+                    try:
+                        if await minimal.probe():
+                            async with self._discovery_manager.ssdp._lock:
+                                self._discovery_manager.ssdp._dmr_devices[device_id] = minimal
+                                if disc.name != minimal.name:
+                                    disc.name = minimal.name
+                                    disc.capabilities["device_name"] = minimal.name
+                            dmr = minimal
+                            logger.info("dlna_factory_live_probe_ok", device_id=device_id, name=minimal.name)
+                    except Exception as e:
+                        logger.debug("dlna_factory_live_probe_failed", device_id=device_id, error=str(e))
+            if not dmr:
                 logger.warning("dlna_factory_device_not_found", device_id=device_id,
                              available=list(self._discovery_manager.ssdp._dmr_devices.keys()))
                 return None

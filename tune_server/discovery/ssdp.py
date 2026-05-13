@@ -42,6 +42,50 @@ class SsdpDiscovery:
             error=str(exc), failure_count=count,
         )
 
+    async def _try_minimal_dmr(self, dev_id: str, location: str, name: str) -> bool:
+        """Probe common control URLs with a MinimalDmrDevice as fallback."""
+        from tune_server.outputs.minimal_dmr import MinimalDmrDevice
+
+        parsed = urlparse(location)
+        port = parsed.port or 80
+        base_url = f"http://{parsed.hostname}:{port}"
+        minimal = MinimalDmrDevice(name=name, base_url=base_url, description_url=location)
+
+        try:
+            if not await minimal.probe():
+                return False
+        except Exception as e:
+            logger.debug("minimal_dmr_probe_error", name=name, error=str(e))
+            return False
+
+        resolved_name = minimal.name
+        disc_device = DiscoveredDevice(
+            id=dev_id,
+            name=resolved_name,
+            type=OutputType.DLNA,
+            host=parsed.hostname or "",
+            port=port,
+            available=True,
+            capabilities={
+                "dlna": True,
+                "model": "",
+                "sink_protocols": [],
+                "device_name": resolved_name,
+                "minimal_dmr": True,
+            },
+        )
+        async with self._lock:
+            self._devices[dev_id] = disc_device
+            self._dmr_devices[dev_id] = minimal
+
+        await self._event_bus.emit(Event(
+            type=EventType.DEVICE_DISCOVERED,
+            data=disc_device.model_dump(),
+            source="ssdp",
+        ))
+        logger.info("minimal_dmr_registered", name=resolved_name, host=parsed.hostname, port=port)
+        return True
+
     @property
     def devices(self) -> dict[str, DiscoveredDevice]:
         return dict(self._devices)
@@ -219,13 +263,24 @@ class SsdpDiscovery:
                                 )
 
                         except Exception as exc:
-                            # Extract name from USN for better logging
                             _name = usn.split("uuid:")[-1].split("::")[0] if "uuid:" in usn else usn
-                            self._log_create_failure(usn, location, _name, exc)
-                            # Fallback: register device from SSDP headers alone
-                            # so it at least appears in the device list
-                            parsed_loc = urlparse(location)
                             fallback_id = usn or location
+
+                            # Already have a working DMR from a previous probe — keep it alive
+                            async with self._lock:
+                                if fallback_id in self._dmr_devices:
+                                    if fallback_id in self._devices:
+                                        self._devices[fallback_id].available = True
+                                    return
+
+                            self._log_create_failure(usn, location, _name, exc)
+
+                            # Try MinimalDmrDevice (probe SOAP directly, bypass XML)
+                            if await self._try_minimal_dmr(fallback_id, location, _name or "Unknown DLNA"):
+                                return
+
+                            # Last resort: visible but not controllable
+                            parsed_loc = urlparse(location)
                             fallback_name = _name or "Unknown DLNA"
                             fallback_device = DiscoveredDevice(
                                 id=fallback_id,
@@ -240,6 +295,7 @@ class SsdpDiscovery:
                                     "sink_protocols": [],
                                     "device_name": fallback_name,
                                     "xml_unavailable": True,
+                                    "description_url": location,
                                 },
                             )
                             async with self._lock:
@@ -371,10 +427,20 @@ class SsdpDiscovery:
 
             except Exception as exc:
                 _name = usn.split("uuid:")[-1].split("::")[0] if "uuid:" in usn else usn
-                self._log_create_failure(usn, location, _name, exc)
-                # Fallback: register from SSDP headers
-                parsed_loc = urlparse(location)
                 fallback_id = usn or location
+
+                async with self._lock:
+                    if fallback_id in self._dmr_devices:
+                        if fallback_id in self._devices:
+                            self._devices[fallback_id].available = True
+                        return
+
+                self._log_create_failure(usn, location, _name, exc)
+
+                if await self._try_minimal_dmr(fallback_id, location, _name or "Unknown DLNA"):
+                    return
+
+                parsed_loc = urlparse(location)
                 fallback_name = _name or "Unknown DLNA"
                 fallback_device = DiscoveredDevice(
                     id=fallback_id,
@@ -386,6 +452,7 @@ class SsdpDiscovery:
                     capabilities={
                         "dlna": True, "model": "", "sink_protocols": [],
                         "device_name": fallback_name, "xml_unavailable": True,
+                        "description_url": location,
                     },
                 )
                 async with self._lock:
