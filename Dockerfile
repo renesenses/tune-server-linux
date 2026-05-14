@@ -3,6 +3,7 @@ FROM python:3.12-slim
 # System deps for audio + FFmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    build-essential \
     libasound2-dev \
     libportaudio2 \
     && rm -rf /var/lib/apt/lists/*
@@ -10,9 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Install Python deps
-COPY pyproject.toml .
+COPY pyproject.toml README.md ./
 COPY tune_server/ tune_server/
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir .
 
 # Web client (pre-built)
 COPY web/ web/
