@@ -278,7 +278,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE"]) or None
             original_year_str = _get_first(tags, ["originaldate", "originalyear", "ORIGINALDATE", "ORIGINALYEAR"])
-            year_str = _get_first(tags, ["date", "year"])
+            year_str = _get_first(tags, ["date", "year", "releasedate", "RELEASEDATE"])
             genre = _get_first(tags, ["genre"]) or None
             label = _get_first(tags, ["label", "publisher", "organization"]) or None
             catalog_number = _get_first(tags, ["catalognumber", "catalogno"]) or None
@@ -331,7 +331,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE"]) or None
             original_year_str = _get_first(tags, ["originaldate", "originalyear", "ORIGINALDATE", "ORIGINALYEAR"])
-            year_str = _get_first(tags, ["date"])
+            year_str = _get_first(tags, ["date", "releasedate", "RELEASEDATE"])
             genre = _get_first(tags, ["genre"]) or None
             label = _get_first(tags, ["label", "publisher", "organization"]) or None
             catalog_number = _get_first(tags, ["catalognumber", "catalogno"]) or None
@@ -372,7 +372,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             original_year_str = _get_first(tags, [
                 "originaldate", "ORIGINALDATE", "originalyear", "ORIGINALYEAR", "TDOR",
             ])
-            year_str = _get_first(tags, ["date", "TDRL", "TDRC", "TYER", "\xa9day"])
+            year_str = _get_first(tags, ["date", "releasedate", "RELEASEDATE", "TDRL", "TDRC", "TYER", "\xa9day"])
             genre = _get_first(tags, ["genre", "TCON", "\xa9gen"]) or None
             # Label/publisher: VorbisComment uses LABEL/PUBLISHER/ORGANIZATION,
             # ID3v2 uses TPUB, MP4 has its own iTunes atom but mutagen

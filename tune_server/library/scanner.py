@@ -294,6 +294,13 @@ class LibraryScanner:
                     album = await self._album_repo.get_by_title_and_artist(base_title, artist.id)
                 else:
                     album = await self._album_repo.get_by_title(base_title)
+                # Don't merge into an album that belongs to a different release
+                if (album and mb_release_id
+                        and album.musicbrainz_release_id
+                        and album.musicbrainz_release_id != mb_release_id):
+                    logger.info("album_mbid_split", existing=album.musicbrainz_release_id,
+                                new=mb_release_id, title=base_title)
+                    album = None
 
             if album:
                 # Check if existing album has a different sample rate
@@ -331,7 +338,7 @@ class LibraryScanner:
                 title=metadata.title or Path(file_path).stem,
                 album_id=album.id,
                 artist_id=artist.id,
-                artist_name=artist_name,
+                artist_name=metadata.artist or artist_name,
                 album_title=base_title,
                 disc_number=metadata.disc_number,
                 disc_subtitle=metadata.disc_subtitle,

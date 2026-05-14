@@ -426,12 +426,17 @@ class AlbumRepo:
                 return existing
         existing = await self.get_by_title_and_artist(title, artist_id)
         if existing:
-            if mb_release_id and not existing.musicbrainz_release_id:
-                await self.update_musicbrainz_ids(
-                    existing.id, mb_release_id,
-                    kwargs.get("musicbrainz_release_group_id"),
-                )
-            return existing
+            # Don't reuse an album that belongs to a different MusicBrainz release
+            if (mb_release_id and existing.musicbrainz_release_id
+                    and existing.musicbrainz_release_id != mb_release_id):
+                existing = None
+            else:
+                if mb_release_id and not existing.musicbrainz_release_id:
+                    await self.update_musicbrainz_ids(
+                        existing.id, mb_release_id,
+                        kwargs.get("musicbrainz_release_group_id"),
+                    )
+                return existing
         album = Album(title=title, artist_id=artist_id, **kwargs)
         album_id = await self.create(album)
         album.id = album_id
