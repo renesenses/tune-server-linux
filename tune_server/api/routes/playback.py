@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import random
 
 import structlog
 
@@ -804,6 +805,41 @@ async def widget_data():
         "duration_ms": track.duration_ms,
         "volume": active.player.volume,
     }
+
+
+@global_router.post("/playback/shuffle-all")
+async def shuffle_all_library(zone_id: int):
+    """Shuffle-play the entire local library (up to 5 000 tracks)."""
+    zone = deps.zone_manager.get_zone(zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+
+    if not deps.track_repo:
+        raise HTTPException(status_code=503, detail="Library not available")
+
+    tracks = await deps.track_repo.list_random(limit=5000)
+    if not tracks:
+        raise HTTPException(status_code=404, detail="Library is empty")
+
+    # Shuffle in-place for good measure (DB RANDOM() is already random,
+    # but this also works for repos that don't support ORDER BY RANDOM).
+    random.shuffle(tracks)
+
+    try:
+        zone.player.queue.clear()
+        zone.player.queue.add_tracks(tracks)
+        await zone.player.play()
+    except Exception as e:
+        logger.exception("shuffle_all_error", zone_id=zone_id)
+        raise HTTPException(status_code=502, detail=f"Playback error: {e}")
+
+    await deps.event_bus.emit(Event(
+        type=EventType.PLAYBACK_QUEUE_CHANGED,
+        data={"zone_id": zone_id},
+        source="playback",
+    ))
+
+    return {"status": "ok", "track_count": len(tracks)}
 
 
 # --- Zone Audio Profiles ---

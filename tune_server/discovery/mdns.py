@@ -15,6 +15,30 @@ AIRPLAY_SERVICE = "_raop._tcp.local."
 AIRPLAY_SERVICE_ALT = "_airplay._tcp.local."
 
 
+def _extract_airplay_info(atv_config) -> tuple[str, str | None]:
+    """Extract AirPlay version and MAC address from a pyatv config.
+
+    Returns (airplay_version, mac_address).
+    AirPlay 2 devices announce via ``_airplay._tcp`` which pyatv exposes
+    as ``Protocol.AirPlay``.  Devices with only ``_raop._tcp`` (``Protocol.RAOP``)
+    are AirPlay 1.
+    """
+    try:
+        from pyatv.const import Protocol
+        has_airplay2 = atv_config.get_service(Protocol.AirPlay) is not None
+        airplay_version = "2" if has_airplay2 else "1"
+    except Exception:
+        airplay_version = "1"
+
+    mac_address: str | None = None
+    try:
+        mac_address = atv_config.device_info.mac
+    except Exception:
+        pass
+
+    return airplay_version, mac_address
+
+
 class MdnsDiscovery:
     """mDNS/Bonjour discovery for AirPlay devices."""
 
@@ -141,6 +165,7 @@ class MdnsDiscovery:
 
                         address = str(atv_config.address)
                         name = atv_config.name
+                        airplay_version, mac_address = _extract_airplay_info(atv_config)
 
                         disc_device = DiscoveredDevice(
                             id=dev_id,
@@ -150,6 +175,8 @@ class MdnsDiscovery:
                             port=7000,
                             available=True,
                             capabilities={"airplay": True},
+                            airplay_version=airplay_version,
+                            mac_address=mac_address,
                         )
 
                         async with self._lock:
@@ -166,7 +193,9 @@ class MdnsDiscovery:
                                 data=disc_device.model_dump(),
                                 source="mdns",
                             ))
-                            logger.info("airplay_device_found", name=name, id=dev_id, recovered=was_lost)
+                            logger.info("airplay_device_found", name=name, id=dev_id,
+                                        airplay_version=airplay_version, mac=mac_address,
+                                        recovered=was_lost)
 
                     # Mark lost devices
                     async with self._lock:
@@ -209,6 +238,7 @@ class MdnsDiscovery:
             dev_id = str(atv_config.identifier) or atv_config.name
             address = str(atv_config.address)
             name = atv_config.name
+            airplay_version, mac_address = _extract_airplay_info(atv_config)
 
             disc_device = DiscoveredDevice(
                 id=dev_id,
@@ -218,6 +248,8 @@ class MdnsDiscovery:
                 port=7000,
                 available=True,
                 capabilities={"airplay": True},
+                airplay_version=airplay_version,
+                mac_address=mac_address,
             )
 
             async with self._lock:
@@ -232,6 +264,8 @@ class MdnsDiscovery:
                     data=disc_device.model_dump(),
                     source="mdns",
                 ))
-                logger.info("airplay_device_found", name=name, id=dev_id, recovered=was_lost)
+                logger.info("airplay_device_found", name=name, id=dev_id,
+                            airplay_version=airplay_version, mac=mac_address,
+                            recovered=was_lost)
 
         return list(self._devices.values())

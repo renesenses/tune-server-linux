@@ -237,6 +237,8 @@ class DiscoveredDevice(BaseModel):
     port: int
     available: bool = True
     capabilities: dict = Field(default_factory=dict)
+    airplay_version: str | None = None  # "1" or "2" for AirPlay devices
+    mac_address: str | None = None
 
 
 class LocalAudioDevice(BaseModel):

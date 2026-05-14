@@ -375,7 +375,9 @@ class SAAlbumRepo:
 
         _sort_cols = {
             "title": albums.c.title,
+            "artist": sa.func.coalesce(artists.c.name, albums.c.artist_name),
             "release_date": albums.c.year,
+            "original_year": albums.c.original_year,
             "added_date": albums.c.created_at,
         }
         sort_col = _sort_cols.get(sort, albums.c.title)
@@ -789,6 +791,16 @@ class SATrackRepo:
             sa.select(sa.func.count()).select_from(tracks)
         )
         return row[0] if row else 0
+
+    async def list_random(self, limit: int = 5000) -> list[Track]:
+        """Return up to *limit* tracks in random order."""
+        stmt = (
+            self._track_select()
+            .order_by(sa.func.random())
+            .limit(limit)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [_row_to_track(r) for r in rows]
 
     async def list_by_album(self, album_id: int) -> list[Track]:
         stmt = (

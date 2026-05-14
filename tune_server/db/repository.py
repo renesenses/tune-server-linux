@@ -275,7 +275,9 @@ class AlbumRepo:
 
     _SORT_COLUMNS = {
         "title": "al.title",
+        "artist": "COALESCE(ar.name, al.artist_name)",
         "release_date": "al.year",
+        "original_year": "al.original_year",
         "added_date": "al.created_at",
     }
 
@@ -668,6 +670,14 @@ class TrackRepo:
     async def count(self) -> int:
         row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM tracks")
         return row["cnt"]
+
+    async def list_random(self, limit: int = 5000) -> list[Track]:
+        """Return up to *limit* tracks in random order (SQLite RANDOM())."""
+        rows = await self._db.fetchall(
+            f"{self._SELECT} ORDER BY RANDOM() LIMIT ?",
+            (limit,),
+        )
+        return [_row_to_track(r) for r in rows]
 
     async def list_initial_letters(self) -> list[tuple[str, int]]:
         rows = await self._db.fetchall(
