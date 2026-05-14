@@ -226,15 +226,16 @@ python -m tune_server
 ### Option 6: Docker
 
 ```bash
-docker build -t tune-server .
-docker run -d --name tune-server \
-    --network host \
-    -v /path/to/music:/music:ro \
-    -v tune-data:/data \
-    tune-server
+docker run -d --name tune \
+  --network host \
+  -v ./data:/data \
+  -v /path/to/music:/music:ro \
+  mozaiklabs/tune:latest
 ```
 
 `--network host` is required for DLNA/SSDP multicast discovery and mDNS.
+
+A `docker-compose.example.yml` is included in the repo for reference.
 
 ### Upgrading
 

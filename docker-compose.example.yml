@@ -1,0 +1,15 @@
+version: "3.8"
+services:
+  tune:
+    image: mozaiklabs/tune:latest
+    container_name: tune-server
+    ports:
+      - "8888:8888"
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - /path/to/music:/music:ro
+    environment:
+      - TUNE_MUSIC_DIRS=["/music"]
+    restart: unless-stopped
+    network_mode: host  # Required for DLNA/SSDP/mDNS discovery

@@ -1,0 +1,14 @@
+.git
+.github
+__pycache__
+*.pyc
+.venv
+dist
+build
+*.spec
+tests
+.env
+tune_server.db
+artwork_cache
+backups
+*.log
