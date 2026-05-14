@@ -111,10 +111,25 @@ class BluosOutput(OutputTarget):
             url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
 
         title = track.title if track else "Audio"
+        artist = track.artist_name if track else ""
+        album = track.album_title if track else ""
+
+        play_params: dict[str, str] = {"url": url}
+        if title:
+            play_params["title"] = title
+        if artist:
+            play_params["artist"] = artist
+        if album:
+            play_params["album"] = album
+        if track and track.cover_path:
+            cover = track.cover_path
+            if cover.startswith("/"):
+                cover = f"http://{self._server_ip}:8888{cover}"
+            play_params["image"] = cover
 
         try:
-            await self._api_get("Play", url=url)
-            logger.info("bluos_playing", device=self._name, title=title, url=url[:80])
+            await self._api_get("Play", **play_params)
+            logger.info("bluos_playing", device=self._name, title=title, artist=artist, url=url[:80])
         except Exception:
             logger.exception("bluos_start_error", device=self._name)
             raise
