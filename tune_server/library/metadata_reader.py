@@ -361,6 +361,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             genre = (_get_first(tags, ["TCON"]) or None) if tags else None
             label = (_get_first(tags, ["TPUB"]) or None) if tags else None
             catalog_number = (_get_first(tags, ["TXXX:CATALOGNUMBER", "TXXX:CATALOGNO"]) or None) if tags else None
+            album_artist_sort = (_get_first(tags, ["TSO2", "TXXX:ALBUMARTISTSORT"]) or None) if tags else None
             sample_rate = info.sample_rate  # 2822400 (DSD64), 5644800 (DSD128), etc.
             bit_depth = 1  # DSD is 1-bit
             has_cover = any(k.startswith("APIC") for k in tags.keys()) if tags else False
