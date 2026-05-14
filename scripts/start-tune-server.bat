@@ -85,13 +85,20 @@ echo --- Run attempt !ATTEMPT!/!MAX_ATTEMPTS! ---
 tune-server.exe
 set EXIT_CODE=!errorlevel!
 
-REM Auto-update hand-off: if _update_staging exists, _apply_update.bat is
-REM about to swap files in. The watchdog must NOT restart tune-server.exe
-REM under it — that would race the robocopy.
+REM Auto-update hand-off: if _update_staging or _update_pending exists,
+REM _apply_update.bat is about to swap files in (robocopy or NSIS).
+REM The watchdog must NOT restart tune-server.exe — that would race the
+REM installer and leave a broken or half-updated install.
 if exist "_update_staging" (
     echo.
-    echo Update in progress, watchdog stepping aside.
+    echo Update in progress (staged), watchdog stepping aside.
     echo The applier will restart Tune Server when the swap is complete.
+    goto :END_NOPAUSE
+)
+if exist "_update_pending" (
+    echo.
+    echo Update in progress (NSIS), watchdog stepping aside.
+    echo The installer will restart Tune Server when complete.
     goto :END_NOPAUSE
 )
 

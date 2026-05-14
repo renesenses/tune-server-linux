@@ -52,6 +52,8 @@ class TrackMetadata:
     musicbrainz_artist_id: Optional[str] = None
     musicbrainz_album_artist_id: Optional[str] = None
     musicbrainz_release_group_id: Optional[str] = None
+    release_date: Optional[str] = None
+    original_date: Optional[str] = None
 
 
 def _clean_text(value: str) -> str:
@@ -405,6 +407,9 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             except (ValueError, TypeError):
                 pass
 
+        release_date = str(year_str).strip() if year_str and len(str(year_str).strip()) > 4 else None
+        original_date = str(original_year_str).strip() if original_year_str and len(str(original_year_str).strip()) > 4 else None
+
         duration_ms = int(info.length * 1000) if hasattr(info, "length") else 0
         channels = getattr(info, "channels", 2)
 
@@ -458,6 +463,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             musicbrainz_artist_id=mb_ids.get("artist_id"),
             musicbrainz_album_artist_id=mb_ids.get("album_artist_id"),
             musicbrainz_release_group_id=mb_ids.get("release_group_id"),
+            release_date=release_date,
+            original_date=original_date,
         )
 
     except Exception:

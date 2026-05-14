@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import signal
 import subprocess
 import sys
+import threading
 import urllib.request
 import webbrowser
 from datetime import datetime
@@ -233,18 +235,129 @@ class TuneServerApp(rumps.App):
         resp = rumps.alert(
             title="Mise à jour disponible",
             message=f"Tune Server v{self._latest_version} est disponible.\n\n"
-                    "Le serveur va s'arrêter et la page de téléchargement va s'ouvrir.\n"
-                    "Téléchargez le nouveau DMG et glissez-le dans Applications.",
+                    "Le DMG va se télécharger automatiquement.\n"
+                    "Il s'ouvrira ensuite — glissez simplement la nouvelle app dans Applications.",
             ok="Mettre à jour",
             cancel="Plus tard",
         )
         if resp != 1:
             return
-        self._stop_server()
-        self.status_item.title = "Status: arrêté pour mise à jour"
-        webbrowser.open(
-            f"https://github.com/renesenses/tune-server-linux/releases/tag/v{self._latest_version}"
+
+        # Determine the correct DMG filename for this architecture.
+        machine = platform.machine().lower()
+        if "arm" in machine or "aarch64" in machine:
+            dmg_name = f"tune-server-{self._latest_version}-macos.dmg"
+        else:
+            dmg_name = f"tune-server-{self._latest_version}-macos-intel.dmg"
+
+        dmg_url = (
+            f"https://github.com/renesenses/tune-server-linux/releases/"
+            f"download/v{self._latest_version}/{dmg_name}"
         )
+        dmg_dest = Path.home() / "Downloads" / dmg_name
+
+        # Disable the menu item during download to prevent double-clicks.
+        self.update_item.set_callback(None)
+        self.update_item.title = "Téléchargement en cours... 0%"
+
+        # Download in a background thread so the menubar stays responsive.
+        thread = threading.Thread(
+            target=self._download_and_open_dmg,
+            args=(dmg_url, dmg_dest),
+            daemon=True,
+        )
+        thread.start()
+
+    def _download_and_open_dmg(self, url: str, dest: Path) -> None:
+        """Download the DMG, stop the server, open the DMG, quit the app.
+
+        Runs on a background thread. Uses rumps.Timer one-shot callbacks
+        to touch the UI from the main thread (rumps is not thread-safe).
+        """
+        try:
+            self.log_file.write(
+                f"[{datetime.now().isoformat()}] Downloading update: {url}\n"
+            )
+            self.log_file.flush()
+
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                chunk_size = 64 * 1024  # 64 KB
+                last_pct = -1
+
+                with open(dest, "wb") as f:
+                    while True:
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0:
+                            pct = int(downloaded * 100 / total)
+                            # Update progress at every 5% to avoid flooding.
+                            if pct >= last_pct + 5:
+                                last_pct = pct
+                                self.update_item.title = (
+                                    f"Téléchargement en cours... {pct}%"
+                                )
+
+            self.log_file.write(
+                f"[{datetime.now().isoformat()}] Download complete: {dest} "
+                f"({dest.stat().st_size} bytes)\n"
+            )
+            self.log_file.flush()
+
+            self.update_item.title = "Téléchargement terminé, installation..."
+
+            # Stop the server before opening the DMG so the user can
+            # drag-install without "app is in use" errors.
+            self._stop_server()
+            self.status_item.title = "Status: arrêté pour mise à jour"
+
+            # Show a notification so the user knows the DMG is ready.
+            rumps.notification(
+                title="Tune Server",
+                subtitle=f"v{self._latest_version} téléchargé",
+                message="Glissez la nouvelle app dans Applications.",
+            )
+
+            # Open the DMG — Finder will mount it and show the drag-install
+            # window with the branded background.
+            subprocess.Popen(["/usr/bin/open", str(dest)])
+
+            self.log_file.write(
+                f"[{datetime.now().isoformat()}] DMG opened, quitting menubar app\n"
+            )
+            self.log_file.flush()
+
+            # Quit the menubar app so the user can cleanly drag-install.
+            # Small delay so the notification has time to appear.
+            import time
+            time.sleep(2)
+            rumps.quit_application()
+
+        except Exception as exc:
+            self.log_file.write(
+                f"[{datetime.now().isoformat()}] Update download failed: {exc!r}\n"
+            )
+            self.log_file.flush()
+
+            self.update_item.title = "Échec du téléchargement"
+            # Re-enable the callback so the user can retry.
+            self.update_item.set_callback(self.install_update)
+
+            # Fallback: open the release page in the browser.
+            rumps.notification(
+                title="Tune Server",
+                subtitle="Échec du téléchargement",
+                message="Ouverture de la page de téléchargement...",
+            )
+            webbrowser.open(
+                f"https://github.com/renesenses/tune-server-linux/releases/"
+                f"tag/v{self._latest_version}"
+            )
 
     def show_logs(self, _sender) -> None:
         subprocess.Popen(["/usr/bin/open", "-a", "Console", str(_log_path())])

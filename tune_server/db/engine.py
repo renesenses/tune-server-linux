@@ -186,6 +186,9 @@ class SQLiteDatabase:
             "ALTER TABLE tracks ADD COLUMN musicbrainz_recording_id TEXT",
             # Original year (TDOR/ORIGINALDATE) vs release year (TDRL/DATE)
             "ALTER TABLE albums ADD COLUMN original_year INTEGER",
+            # Full ISO 8601 release dates (display complement to year/original_year)
+            "ALTER TABLE albums ADD COLUMN release_date TEXT",
+            "ALTER TABLE albums ADD COLUMN original_date TEXT",
         ]
         for sql in migrations:
             try:

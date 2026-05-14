@@ -249,9 +249,23 @@ class UpdateChecker:
         os.kill(os.getpid(), signal.SIGTERM)
 
     def _spawn_windows_apply_helper(self) -> None:
-        """Launch the NSIS setup.exe silently as a detached process.
-        The installer waits for tune-server.exe to release file locks,
-        overwrites the install, then start-tune-server.bat relaunches."""
+        """Launch a detached helper .bat that orchestrates the NSIS update.
+
+        The helper:
+        1. Creates an ``_update_pending`` sentinel so the watchdog in
+           ``start-tune-server.bat`` knows NOT to restart tune-server.exe.
+        2. Kills the CMD watchdog window (title "Tune Server") to prevent
+           it from racing the installer.
+        3. Waits for tune-server.exe to fully exit (polls tasklist, max 30 s,
+           force-kills if stuck).
+        4. Kills librespot.exe (helper child that holds file locks).
+        5. Runs the NSIS setup.exe silently (``/S /D=install_dir``).
+        6. Removes the sentinel.
+        7. Relaunches start-tune-server.bat (or tune-server.exe directly).
+
+        Robust against slow exits, file locks, and French-locale cmd.exe.
+        Everything is logged to ``_update.log`` for tester diagnostics.
+        """
         import subprocess
         if not getattr(sys, "frozen", False):
             return
@@ -264,34 +278,91 @@ class UpdateChecker:
         exe_dir = Path(sys.executable).resolve().parent
         install_dir = str(exe_dir)
 
-        # Write a small helper bat that:
-        # 1. Waits for tune-server.exe to exit
-        # 2. Runs the NSIS installer silently with /S /D=install_dir
-        # 3. Relaunches start-tune-server.bat
-        # 4. Cleans up the installer
-        helper_script = f"""@echo off
-setlocal
-set "LOGFILE={install_dir}\\_update.log"
-echo [%DATE% %TIME%] NSIS silent update starting > "%LOGFILE%"
+        # Create sentinel so the watchdog steps aside if it somehow sees
+        # the exit before we kill its window. The bat also re-creates it
+        # as a belt-and-suspenders measure.
+        sentinel = exe_dir / "_update_pending"
+        sentinel.write_text("update in progress", encoding="ascii")
+        logger.info("update_sentinel_created", path=str(sentinel))
 
+        helper_script = f"""@echo off
+setlocal enabledelayedexpansion
+cd /d "{install_dir}"
+
+set "LOGFILE={install_dir}\\_update.log"
+echo [%DATE% %TIME%] NSIS silent update helper starting > "%LOGFILE%"
+echo [%DATE% %TIME%] installer: {installer_path} >> "%LOGFILE%"
+echo [%DATE% %TIME%] install_dir: {install_dir} >> "%LOGFILE%"
+
+REM Create sentinel so the watchdog steps aside on any exit code.
+echo update > "_update_pending"
+
+REM Kill the CMD watchdog window by title. start-tune-server.bat sets
+REM 'title Tune Server' on line 2, so taskkill /FI matches it.
+REM Without this, the watchdog may relaunch tune-server.exe between
+REM our SIGTERM and the NSIS installer starting.
+echo [%DATE% %TIME%] Killing watchdog CMD window... >> "%LOGFILE%"
+taskkill /FI "WINDOWTITLE eq Tune Server" /F >> "%LOGFILE%" 2>&1
+REM Also try the localized title pattern (some Windows builds append a dash)
+taskkill /FI "WINDOWTITLE eq Tune Server*" /F >> "%LOGFILE%" 2>&1
+
+REM Wait for tune-server.exe to actually release its file handles.
+echo [%DATE% %TIME%] Polling for tune-server.exe exit (max 30 s)... >> "%LOGFILE%"
+set /a TRIES=0
 :wait_exit
 tasklist /FI "IMAGENAME eq tune-server.exe" /FO CSV /NH 2>nul | findstr /I "tune-server.exe" >nul
 if errorlevel 1 goto :proc_gone
+set /a TRIES+=1
+if !TRIES! GEQ 15 (
+    echo [%DATE% %TIME%] tune-server.exe still alive after 30 s -- force-killing >> "%LOGFILE%"
+    taskkill /IM tune-server.exe /F >> "%LOGFILE%" 2>&1
+    ping -n 4 127.0.0.1 >nul
+    goto :proc_gone
+)
 ping -n 3 127.0.0.1 >nul
 goto :wait_exit
 :proc_gone
+
+REM Kill librespot and any orphan helpers that may hold file locks.
+taskkill /IM librespot.exe /F >> "%LOGFILE%" 2>&1
+
+REM Grace period for Windows to release file handles after process exit.
+echo [%DATE% %TIME%] Process gone, waiting 3 s for handle release... >> "%LOGFILE%"
 ping -n 4 127.0.0.1 >nul
 
-echo [%DATE% %TIME%] Running installer silently >> "%LOGFILE%"
+REM Run the NSIS installer silently. /S = silent, /D= sets install dir.
+REM The NSIS installer's own pre-install hook kills tune-server.exe
+REM (redundant but harmless since we already did it).
+echo [%DATE% %TIME%] Running NSIS installer silently... >> "%LOGFILE%"
 "{installer_path}" /S /D={install_dir}
-echo [%DATE% %TIME%] Installer finished (exit code %errorlevel%) >> "%LOGFILE%"
+set NSIS_RC=!errorlevel!
+echo [%DATE% %TIME%] NSIS installer finished (exit code !NSIS_RC!) >> "%LOGFILE%"
 
-if exist "{install_dir}\\start-tune-server.bat" (
+if !NSIS_RC! NEQ 0 (
+    echo [%DATE% %TIME%] [ERROR] NSIS installer failed with code !NSIS_RC! >> "%LOGFILE%"
+    echo [tune-update][ERROR] NSIS installer failed. See _update.log
+    del /Q "_update_pending" 2>nul
+    exit /b 1
+)
+
+REM Verify the new binary is in place.
+if not exist "tune-server.exe" (
+    echo [%DATE% %TIME%] [ERROR] tune-server.exe missing after install >> "%LOGFILE%"
+    del /Q "_update_pending" 2>nul
+    exit /b 1
+)
+
+REM Cleanup: remove sentinel + downloaded installer.
+del /Q "_update_pending" 2>nul
+del /Q "{installer_path}" 2>nul
+
+echo [%DATE% %TIME%] Update applied successfully. Relaunching... >> "%LOGFILE%"
+if exist "start-tune-server.bat" (
     start "" "{install_dir}\\start-tune-server.bat"
 ) else (
     start "" "{install_dir}\\tune-server.exe"
 )
-echo [%DATE% %TIME%] Relaunched >> "%LOGFILE%"
+
 endlocal
 exit /b 0
 """
@@ -299,6 +370,7 @@ exit /b 0
         helper.write_text(helper_script, encoding="ascii")
 
         try:
+            # DETACHED_PROCESS (0x08) | CREATE_NEW_PROCESS_GROUP (0x200)
             CREATE_FLAGS = 0x00000008 | 0x00000200
             subprocess.Popen(
                 ["cmd.exe", "/c", str(helper)],
@@ -309,6 +381,8 @@ exit /b 0
             logger.info("update_helper_spawned", path=str(helper))
         except Exception:
             logger.exception("update_helper_spawn_failed")
+            # Clean up sentinel if we failed to spawn the helper
+            sentinel.unlink(missing_ok=True)
 
     async def check_for_update(self) -> dict | None:
         """Check GitHub for the latest release. Returns update info or None."""

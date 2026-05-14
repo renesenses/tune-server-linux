@@ -55,6 +55,8 @@ albums = sa.Table(
     sa.Column("musicbrainz_release_id", sa.Text),
     sa.Column("musicbrainz_release_group_id", sa.Text),
     sa.Column("original_year", sa.Integer),
+    sa.Column("release_date", sa.Text),
+    sa.Column("original_date", sa.Text),
     sa.Column("label", sa.Text),
     sa.Column("catalog_number", sa.Text),
     sa.Column("barcode", sa.Text),

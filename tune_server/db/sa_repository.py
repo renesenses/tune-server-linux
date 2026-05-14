@@ -80,6 +80,8 @@ def _row_to_album(row) -> Album:
         musicbrainz_release_id=row.get("musicbrainz_release_id") if "musicbrainz_release_id" in keys else None,
         musicbrainz_release_group_id=row.get("musicbrainz_release_group_id") if "musicbrainz_release_group_id" in keys else None,
         original_year=row.get("original_year") if "original_year" in keys else None,
+        release_date=row.get("release_date") if "release_date" in keys else None,
+        original_date=row.get("original_date") if "original_date" in keys else None,
     )
 
 
@@ -429,6 +431,9 @@ class SAAlbumRepo:
                 artist_id=album.artist_id,
                 artist_name=album.artist_name,
                 year=album.year,
+                original_year=album.original_year,
+                release_date=album.release_date,
+                original_date=album.original_date,
                 genre=album.genre,
                 cover_path=album.cover_path,
                 source=album.source or "local",
