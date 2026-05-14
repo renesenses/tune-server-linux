@@ -401,7 +401,7 @@ class SAAlbumRepo:
         stmt = (
             self._album_select()
             .where(albums.c.artist_id == artist_id)
-            .order_by(sa.case((albums.c.year.is_(None), 1), else_=0), albums.c.year.desc(), albums.c.title)
+            .order_by(sa.case((sa.func.coalesce(albums.c.original_year, albums.c.year).is_(None), 1), else_=0), sa.func.coalesce(albums.c.original_year, albums.c.year), albums.c.title)
         )
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_album(r) for r in rows]

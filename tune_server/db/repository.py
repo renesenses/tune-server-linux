@@ -332,7 +332,7 @@ class AlbumRepo:
             f"""{self._SELECT}
                WHERE al.artist_id = ?
                   OR al.id IN (SELECT DISTINCT album_id FROM tracks WHERE artist_id = ?)
-               ORDER BY al.year""",
+               ORDER BY COALESCE(al.original_year, al.year)""",
             (artist_id, artist_id),
         )
         return [_row_to_album(r) for r in rows]
