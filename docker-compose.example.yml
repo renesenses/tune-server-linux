@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   tune:
-    image: mozaiklabs/tune:latest
+    image: renesenses/tune:latest
     container_name: tune-server
     ports:
       - "8888:8888"

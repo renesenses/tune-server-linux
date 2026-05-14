@@ -230,7 +230,7 @@ docker run -d --name tune \
   --network host \
   -v ./data:/data \
   -v /path/to/music:/music:ro \
-  mozaiklabs/tune:latest
+  renesenses/tune:latest
 ```
 
 `--network host` is required for DLNA/SSDP multicast discovery and mDNS.
