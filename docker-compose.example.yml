@@ -1,15 +1,29 @@
-version: "3.8"
 services:
   tune:
     image: renesenses/tune:latest
     container_name: tune-server
-    ports:
-      - "8888:8888"
-      - "8080:8080"
+    restart: unless-stopped
+    # network_mode: host est obligatoire pour DLNA (SSDP), AirPlay (mDNS) et Chromecast
+    network_mode: host
     volumes:
       - ./data:/data
-      - /path/to/music:/music:ro
+      - /chemin/vers/votre/musique:/music:ro
+      # Plusieurs dossiers :
+      # - /volume1/music/flac:/music/flac:ro
+      # - /volume1/music/hires:/music/hires:ro
     environment:
       - TUNE_MUSIC_DIRS=["/music"]
-    restart: unless-stopped
-    network_mode: host  # Required for DLNA/SSDP/mDNS discovery
+      - TUNE_DB_PATH=/data/tune_server.db
+      - TUNE_ARTWORK_CACHE_DIR=/data/artwork_cache
+      - TUNE_API_PORT=8888
+      - TUNE_LOG_LEVEL=INFO
+      # Sécurité (optionnel) :
+      # - TUNE_API_KEY=votre_clé_secrète
+      # PostgreSQL (optionnel, recommandé pour > 50k pistes) :
+      # - TUNE_DB_ENGINE=postgres
+      # - TUNE_DB_URL=postgresql://tune:tune@127.0.0.1:5432/tune
+      # DAC USB bit-perfect (optionnel) :
+      # - TUNE_LOCAL_EXCLUSIVE_MODE=true
+    # Pour un DAC USB branché sur la machine hôte :
+    # devices:
+    #   - /dev/snd:/dev/snd
