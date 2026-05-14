@@ -160,17 +160,17 @@ async def transfer_playlist(req: TransferRequest):
             raise HTTPException(status_code=400, detail=f"Target service '{req.target_service}' not found")
 
         async def search_func(query: str, limit: int):
-            results = await target_svc.search(query, limit=limit)
+            sr = await target_svc.search(query, limit=limit)
             return [
                 {
                     "title": r.title,
-                    "artist_name": r.artist,
-                    "album_title": r.album or "",
-                    "source_id": r.id,
-                    "duration_ms": getattr(r, "duration_ms", 0),
-                    "isrc": getattr(r, "isrc", ""),
+                    "artist_name": r.artist_name or "",
+                    "album_title": r.album_title or "",
+                    "source_id": str(r.id) if r.id else "",
+                    "duration_ms": r.duration_ms or 0,
+                    "isrc": getattr(r, "isrc", "") or "",
                 }
-                for r in results
+                for r in sr.tracks
             ]
 
     # Wire up remote playlist creation if target is a streaming service with write support
@@ -630,11 +630,11 @@ async def trigger_sync(link_id: int):
 
     # Build search func for push matching
     async def search_func(query: str, limit: int):
-        results = await svc.search(query, limit=limit)
+        sr = await svc.search(query, limit=limit)
         return [
-            {"title": r.title, "artist_name": r.artist, "source_id": r.id,
-             "duration_ms": getattr(r, "duration_ms", 0)}
-            for r in results
+            {"title": r.title, "artist_name": r.artist_name or "", "source_id": str(r.id) if r.id else "",
+             "duration_ms": r.duration_ms or 0, "isrc": getattr(r, "isrc", "") or ""}
+            for r in sr.tracks
         ]
 
     result = await sync_playlist(
@@ -675,11 +675,11 @@ async def batch_transfer_endpoint(req: BatchTransferRequest):
             raise HTTPException(status_code=400, detail=f"Target '{req.target_service}' not found")
 
         async def search_func(query: str, limit: int):
-            results = await target_svc.search(query, limit=limit)
+            sr = await target_svc.search(query, limit=limit)
             return [
-                {"title": r.title, "artist_name": r.artist, "source_id": r.id,
-                 "duration_ms": getattr(r, "duration_ms", 0)}
-                for r in results
+                {"title": r.title, "artist_name": r.artist_name or "", "source_id": str(r.id) if r.id else "",
+                 "duration_ms": r.duration_ms or 0, "isrc": getattr(r, "isrc", "") or ""}
+                for r in sr.tracks
             ]
 
     result = await batch_transfer(
