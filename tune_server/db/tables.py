@@ -519,6 +519,30 @@ playlist_snapshots = sa.Table(
 )
 
 # ---------------------------------------------------------------------------
+# sync_link_snapshots (delta detection for bidirectional sync)
+# ---------------------------------------------------------------------------
+sync_link_snapshots = sa.Table(
+    "sync_link_snapshots",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column(
+        "playlist_link_id",
+        sa.Integer,
+        sa.ForeignKey("playlist_links.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("side", sa.Text, nullable=False),  # 'local' or 'remote'
+    sa.Column("tracks_json", sa.Text, nullable=False),
+    sa.Column("created_at", sa.Text, nullable=False),
+)
+
+sa.Index(
+    "idx_sync_link_snapshots_link",
+    sync_link_snapshots.c.playlist_link_id,
+    sync_link_snapshots.c.side,
+)
+
+# ---------------------------------------------------------------------------
 # sync_schedules
 # ---------------------------------------------------------------------------
 sync_schedules = sa.Table(

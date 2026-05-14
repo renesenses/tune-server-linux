@@ -416,6 +416,22 @@ class SQLiteDatabase:
         """)
         await self.commit()
 
+        # Sync link snapshots (delta detection for bidirectional sync)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS sync_link_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                playlist_link_id INTEGER NOT NULL REFERENCES playlist_links(id) ON DELETE CASCADE,
+                side TEXT NOT NULL,
+                tracks_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sync_link_snapshots_link "
+            "ON sync_link_snapshots(playlist_link_id, side)"
+        )
+        await self.commit()
+
         # Track credits (multiple artists per track with roles/instruments)
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS track_credits (

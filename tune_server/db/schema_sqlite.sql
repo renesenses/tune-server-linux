@@ -380,6 +380,16 @@ CREATE TABLE IF NOT EXISTS smart_collections (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Sync link snapshots (delta detection for bidirectional sync)
+CREATE TABLE IF NOT EXISTS sync_link_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    playlist_link_id INTEGER NOT NULL REFERENCES playlist_links(id) ON DELETE CASCADE,
+    side TEXT NOT NULL,  -- 'local' or 'remote'
+    tracks_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sync_link_snapshots_link ON sync_link_snapshots(playlist_link_id, side);
+
 CREATE TABLE IF NOT EXISTS smart_playlists (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

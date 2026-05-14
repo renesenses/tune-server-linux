@@ -117,17 +117,17 @@ class AutoSyncScheduler:
 
         async def search_func(query: str, limit: int = 10):
             try:
-                results = await svc.search(query, limit=limit)
+                sr = await svc.search(query, limit=limit)
                 return [
                     {
                         "title": r.title,
-                        "artist_name": r.artist,
-                        "album_title": r.album or "",
-                        "source_id": r.id,
-                        "duration_ms": getattr(r, "duration_ms", 0),
-                        "isrc": getattr(r, "isrc", ""),
+                        "artist_name": r.artist_name or "",
+                        "album_title": r.album_title or "",
+                        "source_id": str(r.id) if r.id else "",
+                        "duration_ms": r.duration_ms or 0,
+                        "isrc": getattr(r, "isrc", "") or "",
                     }
-                    for r in results
+                    for r in sr.tracks
                 ]
             except Exception:
                 return []

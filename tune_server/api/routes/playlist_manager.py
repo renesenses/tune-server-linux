@@ -617,7 +617,14 @@ async def update_link(link_id: int, req: UpdateLinkRequest):
 
 @router.post("/links/{link_id}/sync")
 async def trigger_sync(link_id: int):
-    """Trigger a sync for a playlist link."""
+    """Trigger a sync for a playlist link.
+
+    Returns a detailed result including:
+    - added_to_local / added_to_remote: tracks synced in each direction
+    - removed_from_local / removed_from_remote: tracks removed via delta detection
+    - conflicts: list of unresolved or auto-resolved conflicts
+    - snapshot_saved: whether the post-sync snapshot was persisted
+    """
     row = await deps.db.fetchone("SELECT * FROM playlist_links WHERE id = ?", (link_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Link not found")

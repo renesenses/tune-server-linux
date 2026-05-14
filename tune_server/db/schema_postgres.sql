@@ -283,6 +283,16 @@ CREATE TABLE IF NOT EXISTS sync_schedules (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Sync link snapshots (delta detection for bidirectional sync)
+CREATE TABLE IF NOT EXISTS sync_link_snapshots (
+    id SERIAL PRIMARY KEY,
+    playlist_link_id INTEGER NOT NULL REFERENCES playlist_links(id) ON DELETE CASCADE,
+    side TEXT NOT NULL,
+    tracks_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sync_link_snapshots_link ON sync_link_snapshots(playlist_link_id, side);
+
 -- Transfer history (playlist import/export)
 CREATE TABLE IF NOT EXISTS transfer_history (
     id SERIAL PRIMARY KEY,
