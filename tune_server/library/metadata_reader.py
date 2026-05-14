@@ -54,6 +54,7 @@ class TrackMetadata:
     musicbrainz_release_group_id: Optional[str] = None
     release_date: Optional[str] = None
     original_date: Optional[str] = None
+    album_artist_sort: Optional[str] = None
 
 
 def _clean_text(value: str) -> str:
@@ -276,6 +277,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             artist = _get_first(tags, ["artist"]) or None
             album = _get_first(tags, ["album"]) or None
             album_artist = _get_first(tags, ["albumartist", "album_artist"]) or None
+            album_artist_sort = _get_first(tags, ["albumartistsort", "ALBUMARTISTSORT"]) or None
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE", "setsubtitle", "SETSUBTITLE"]) or None
@@ -293,9 +295,10 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             artist = _get_first(tags, ["TPE1"]) or None
             album = _get_first(tags, ["TALB"]) or None
             album_artist = _get_first(tags, ["TPE2"]) or None
+            album_artist_sort = _get_first(tags, ["TSO2", "TXXX:ALBUMARTISTSORT"]) or None
             track_num = _parse_int(_get_first(tags, ["TRCK"]))
             disc_num = _parse_int(_get_first(tags, ["TPOS"]), 1)
-            disc_subtitle = _get_first(tags, ["TSST", "TXXX:DISCSUBTITLE"]) or None
+            disc_subtitle = _get_first(tags, ["TSST", "TXXX:DISCSUBTITLE", "TXXX:SETSUBTITLE"]) or None
             original_year_str = _get_first(tags, ["TDOR"])
             year_str = _get_first(tags, ["TDRL", "TDRC", "TYER"])
             genre = _get_first(tags, ["TCON"]) or None
@@ -310,6 +313,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             artist = _get_first(tags, ["\xa9ART"]) or None
             album = _get_first(tags, ["\xa9alb"]) or None
             album_artist = _get_first(tags, ["aART"]) or None
+            album_artist_sort = _get_first(tags, ["soaa"]) or None
             trkn = tags.get("trkn", [(0, 0)])[0]
             track_num = trkn[0] if isinstance(trkn, tuple) else _parse_int(str(trkn))
             disk = tags.get("disk", [(1, 1)])[0]
@@ -329,6 +333,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             artist = _get_first(tags, ["artist"]) or None
             album = _get_first(tags, ["album"]) or None
             album_artist = _get_first(tags, ["albumartist"]) or None
+            album_artist_sort = _get_first(tags, ["albumartistsort", "ALBUMARTISTSORT"]) or None
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE", "setsubtitle", "SETSUBTITLE"]) or None
@@ -365,6 +370,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             artist = _get_first(tags, ["artist", "TPE1", "\xa9ART"]) or None
             album = _get_first(tags, ["album", "TALB", "\xa9alb"]) or None
             album_artist = _get_first(tags, ["albumartist", "TPE2", "aART"]) or None
+            album_artist_sort = _get_first(tags, ["albumartistsort", "ALBUMARTISTSORT", "TSO2", "soaa"]) or None
             track_num = _parse_int(_get_first(tags, ["tracknumber", "TRCK"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber", "TPOS"]), 1)
             disc_subtitle = _get_first(tags, [
@@ -443,6 +449,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             artist=str(artist) if artist else None,
             album=str(album) if album else None,
             album_artist=str(album_artist) if album_artist else None,
+            album_artist_sort=str(album_artist_sort) if album_artist_sort else None,
             track_number=track_num,
             disc_number=disc_num,
             year=year,

@@ -181,20 +181,28 @@ class ArtistRepo:
         )
         return _row_to_artist(row) if row else None
 
-    async def get_or_create(self, name: str, musicbrainz_id: str | None = None) -> Artist:
+    async def get_or_create(self, name: str, musicbrainz_id: str | None = None,
+                           sort_name: str | None = None) -> Artist:
         if musicbrainz_id:
             existing = await self.get_by_musicbrainz_id(musicbrainz_id)
             if existing:
+                if sort_name and (not existing.sort_name or existing.sort_name == existing.name):
+                    existing.sort_name = sort_name
+                    await self.update(existing)
                 return existing
         existing = await self.get_by_name(name)
         if existing:
             if musicbrainz_id and not existing.musicbrainz_id:
                 existing.musicbrainz_id = musicbrainz_id
                 await self.update(existing)
+            if sort_name and (not existing.sort_name or existing.sort_name == existing.name):
+                existing.sort_name = sort_name
+                await self.update(existing)
             return existing
-        artist = Artist(name=name, sort_name=name, musicbrainz_id=musicbrainz_id)
+        effective_sort = sort_name or name
+        artist = Artist(name=name, sort_name=effective_sort, musicbrainz_id=musicbrainz_id)
         artist_id = await self.create(artist)
-        return Artist(id=artist_id, name=name, sort_name=name, musicbrainz_id=musicbrainz_id)
+        return Artist(id=artist_id, name=name, sort_name=effective_sort, musicbrainz_id=musicbrainz_id)
 
     async def update(self, artist: Artist) -> None:
         await self._db.execute(

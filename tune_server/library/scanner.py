@@ -263,7 +263,10 @@ class LibraryScanner:
                     artist_name = "Unknown Artist"
                 logger.debug("artist_from_path", path=file_path, artist=artist_name)
             artist_mbid = metadata.musicbrainz_album_artist_id or metadata.musicbrainz_artist_id
-            artist = await self._artist_repo.get_or_create(artist_name, musicbrainz_id=artist_mbid)
+            artist = await self._artist_repo.get_or_create(
+                artist_name, musicbrainz_id=artist_mbid,
+                sort_name=metadata.album_artist_sort,
+            )
 
             # Get or create album — separate albums when sample rates differ
             # or when MusicBrainz Release IDs differ
