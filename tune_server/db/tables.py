@@ -73,6 +73,7 @@ sa.Index("idx_albums_year", albums.c.year)
 sa.Index("idx_albums_source", albums.c.source, albums.c.source_id)
 sa.Index("idx_albums_created_at", albums.c.created_at)
 sa.Index("idx_albums_genre", albums.c.genre)
+sa.Index("idx_albums_original_year", albums.c.original_year)
 
 # ---------------------------------------------------------------------------
 # tracks
@@ -133,6 +134,7 @@ sa.Index("idx_tracks_source", tracks.c.source, tracks.c.source_id)
 sa.Index("idx_tracks_created_at", tracks.c.created_at)
 sa.Index("idx_tracks_format_sr", tracks.c.format, tracks.c.sample_rate)
 sa.Index("idx_tracks_audio_hash", tracks.c.audio_hash)
+sa.Index("idx_tracks_disc_number", tracks.c.disc_number, tracks.c.track_number)
 
 # ---------------------------------------------------------------------------
 # track_credits

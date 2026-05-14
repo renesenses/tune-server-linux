@@ -244,6 +244,8 @@ CREATE INDEX IF NOT EXISTS idx_tracks_created_at ON tracks(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tracks_format_sr ON tracks(format, sample_rate);
 CREATE INDEX IF NOT EXISTS idx_tracks_audio_hash ON tracks(audio_hash);
 CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);
+CREATE INDEX IF NOT EXISTS idx_albums_original_year ON albums(original_year);
+CREATE INDEX IF NOT EXISTS idx_tracks_disc_number ON tracks(disc_number, track_number);
 
 -- Metadata manager
 CREATE TABLE IF NOT EXISTS metadata_suggestions (

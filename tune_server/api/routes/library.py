@@ -6,6 +6,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import math
+
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -37,9 +39,32 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/library", tags=["library"])
 
 
-@router.get("/tracks", response_model=list[Track])
-async def list_tracks(limit: int = Query(100, le=50000), offset: int = Query(0, ge=0)):
+@router.get("/tracks")
+async def list_tracks(
+    limit: int = Query(100, le=50000),
+    offset: int = Query(0, ge=0),
+    page: int | None = Query(None, ge=1, description="Page number (opt-in pagination)"),
+    per_page: int | None = Query(None, ge=1, le=500, description="Items per page"),
+):
+    if page is not None:
+        pp = per_page or 100
+        effective_offset = (page - 1) * pp
+        items = await deps.track_repo.list(limit=pp, offset=effective_offset)
+        total = await deps.track_repo.count()
+        return {
+            "tracks": items,
+            "total": total,
+            "page": page,
+            "per_page": pp,
+            "total_pages": math.ceil(total / pp) if pp else 1,
+        }
     return await deps.track_repo.list(limit=limit, offset=offset)
+
+
+@router.get("/tracks/count")
+async def tracks_count():
+    """Fast count of total tracks in the library."""
+    return {"count": await deps.track_repo.count()}
 
 
 @router.get("/tracks/{track_id}", response_model=Track)
@@ -248,14 +273,24 @@ async def list_recent_albums(limit: int = Query(50, le=200)):
 async def list_albums(
     limit: int = Query(100, le=50000),
     offset: int = Query(0, ge=0),
+    page: int | None = Query(None, ge=1, description="Page number (opt-in pagination)"),
+    per_page: int | None = Query(None, ge=1, le=500, description="Items per page"),
     quality: str | None = Query(None, description="Filter by quality: hi-res, cd, lossy, dsd"),
     format: str | None = Query(None, description="Filter by format: flac, mp3, aac, wav, dsd"),
     sample_rate: int | None = Query(None, description="Filter by min sample rate in Hz (e.g. 96000)"),
     sort: str = Query("title", description="Sort field: title, artist, release_date, original_year, added_date"),
     order: str = Query("asc", description="Sort direction: asc, desc"),
 ):
+    if page is not None:
+        pp = per_page or 100
+        effective_limit = pp
+        effective_offset = (page - 1) * pp
+    else:
+        effective_limit = limit
+        effective_offset = offset
+
     albums = await deps.album_repo.list(
-        limit=limit, offset=offset, quality=quality,
+        limit=effective_limit, offset=effective_offset, quality=quality,
         format=format, sample_rate=sample_rate,
         sort=sort, order=order,
     )
@@ -282,7 +317,24 @@ async def list_albums(
         for item in result:
             item["folder_path"] = path_map.get(item.get("id"))
 
+    if page is not None:
+        total = await deps.album_repo.count()
+        pp = per_page or 100
+        return {
+            "albums": result,
+            "total": total,
+            "page": page,
+            "per_page": pp,
+            "total_pages": math.ceil(total / pp) if pp else 1,
+        }
+
     return result
+
+
+@router.get("/albums/count")
+async def albums_count():
+    """Fast count of total albums in the library."""
+    return {"count": await deps.album_repo.count()}
 
 
 @router.get("/albums/filters")

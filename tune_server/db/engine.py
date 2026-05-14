@@ -454,6 +454,14 @@ class SQLiteDatabase:
         )
         await self.commit()
 
+        # Performance indexes for library queries (idempotent)
+        for stmt in (
+            "CREATE INDEX IF NOT EXISTS idx_albums_original_year ON albums(original_year)",
+            "CREATE INDEX IF NOT EXISTS idx_tracks_disc_number ON tracks(disc_number, track_number)",
+        ):
+            await self.connection.execute(stmt)
+        await self.commit()
+
         # Album ratings & notes
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS album_ratings (
