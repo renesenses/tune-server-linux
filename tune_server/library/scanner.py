@@ -241,11 +241,6 @@ class LibraryScanner:
 
         # --- DB operations: short lock ---
         async with self._lock:
-            # Skip if identical audio content already exists
-            existing = await self._track_repo.find_by_audio_hash(audio_hash)
-            if existing:
-                return False
-
             # Get or create artist — fallback to folder name if tags are empty
             artist_name = metadata.album_artist or metadata.artist
             if not artist_name:
