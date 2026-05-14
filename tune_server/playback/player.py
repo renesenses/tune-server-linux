@@ -502,6 +502,23 @@ class Player:
             source="player",
         ))
 
+        # Radio metadata fallback: if ICY metadata hasn't arrived after 5s,
+        # start the RadioFrance API poller as a backup source.
+        if track.source == Source.RADIO and track.file_path and not self._radio_poller and icy_cb:
+            _fallback_cb = icy_cb
+            async def _radio_metadata_fallback():
+                await asyncio.sleep(5)
+                if self._state != PlaybackState.PLAYING:
+                    return
+                if not getattr(_fallback_cb, '_received', False):
+                    from tune_server.streaming.radio_metadata import RadioMetadataPoller
+                    self._radio_poller = RadioMetadataPoller(
+                        self._event_bus, self._zone_id, track_callback=_fallback_cb,
+                    )
+                    self._radio_poller.start(track.file_path)
+                    logger.info("radio_metadata_fallback_started", zone_id=self._zone_id)
+            asyncio.create_task(_radio_metadata_fallback())
+
         # Preload next track for gapless transition
         await self._preload_next()
 
@@ -1230,6 +1247,7 @@ class Player:
         station_cover = track.cover_path  # original station logo (fallback)
 
         def on_icy_metadata(meta: dict[str, str]) -> None:
+            on_icy_metadata._received = True
             current = self._queue.current
             if not current or current.source != Source.RADIO:
                 return
