@@ -376,8 +376,49 @@ class TuneServerApp(rumps.App):
         rumps.quit_application()
 
 
+def _fallback_run() -> None:
+    """Fallback when rumps fails: run tune-server directly + open browser."""
+    import time
+    bin_path = _runtime_binary()
+    if not bin_path.exists():
+        print(f"[Tune Server] Binary not found: {bin_path}")
+        return
+
+    data_dir = Path.home() / "Library" / "Application Support" / "Tune Server"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    env = dict(os.environ)
+    env["TUNE_VERSION"] = VERSION
+    env.setdefault("TUNE_DB_PATH", str(data_dir / "tune_server.db"))
+    env.setdefault("TUNE_ARTWORK_CACHE_DIR", str(data_dir / "artwork_cache"))
+
+    print(f"[Tune Server] Starting v{VERSION} (fallback mode — no menubar icon)")
+    print(f"[Tune Server] Data: {data_dir}")
+    print(f"[Tune Server] Web UI: http://localhost:8888")
+
+    proc = subprocess.Popen(
+        [str(bin_path)],
+        cwd=str(data_dir),
+        env=env,
+    )
+
+    time.sleep(3)
+    webbrowser.open("http://localhost:8888")
+
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
 def main() -> None:
-    TuneServerApp().run()
+    try:
+        TuneServerApp().run()
+    except Exception as exc:
+        print(f"[Tune Server] Menubar failed: {exc}")
+        print("[Tune Server] Falling back to direct server mode...")
+        _fallback_run()
 
 
 if __name__ == "__main__":
