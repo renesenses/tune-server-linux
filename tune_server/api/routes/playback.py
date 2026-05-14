@@ -826,9 +826,7 @@ async def shuffle_all_library(zone_id: int):
     random.shuffle(tracks)
 
     try:
-        zone.player.queue.clear()
-        zone.player.queue.add_tracks(tracks)
-        await zone.player.play()
+        await zone.player.play(tracks=tracks, start_position=0)
     except Exception as e:
         logger.exception("shuffle_all_error", zone_id=zone_id)
         raise HTTPException(status_code=502, detail=f"Playback error: {e}")
