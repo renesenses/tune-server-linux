@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from tune_server.api.deps import deps
 from tune_server.config import persist_env_var, settings
-from tune_server.models import BackupInfo, MusicDirRequest, MusicDirsResponse, ScanStatusResponse, SystemConfigResponse, SystemHealthResponse, SystemStatsResponse
+from tune_server.models import BackupInfo, MusicDirRequest, MusicDirsResponse, OutputType, ScanStatusResponse, SystemConfigResponse, SystemHealthResponse, SystemStatsResponse
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -991,3 +991,77 @@ def _outputs_diagnostics() -> dict:
     except Exception as e:
         out["error"] = str(e)
     return out
+
+
+# ── Audio health check (onboarding wizard) ───────────────────────────────
+
+
+@router.get("/audio-check")
+async def audio_check():
+    """Quick audio health check for onboarding wizard."""
+    zones = deps.zone_manager.list_zones() if deps.zone_manager else []
+    devices = deps.discovery_manager.list_devices() if deps.discovery_manager else []
+
+    # Check local audio outputs
+    local_devices: list[dict] = []
+    try:
+        import sounddevice as sd
+        for i, d in enumerate(sd.query_devices()):
+            if d.get("max_output_channels", 0) > 0:
+                local_devices.append({
+                    "id": i,
+                    "name": d["name"],
+                    "channels": d["max_output_channels"],
+                    "default": i == sd.default.device[1],
+                })
+    except Exception:
+        pass
+
+    # Network renderers (DLNA, AirPlay, Chromecast, BluOS)
+    renderer_types = {"dlna", "airplay", "chromecast", "bluos"}
+    renderers = [
+        d for d in devices
+        if (d.type.value if hasattr(d.type, "value") else str(d.type)) in renderer_types
+    ]
+
+    return {
+        "zones": len(zones),
+        "zones_with_output": sum(
+            1 for z in zones
+            if z.output_type != OutputType.LOCAL or local_devices
+        ),
+        "local_outputs": local_devices,
+        "network_renderers": [
+            {"id": r.id, "name": r.name, "type": r.type.value if hasattr(r.type, "value") else str(r.type)}
+            for r in renderers
+        ],
+        "has_audio": len(zones) > 0 and (len(local_devices) > 0 or len(renderers) > 0),
+        "issues": _detect_audio_issues(zones, local_devices, renderers),
+    }
+
+
+def _detect_audio_issues(
+    zones: list, local_devices: list[dict], renderers: list,
+) -> list[dict]:
+    issues: list[dict] = []
+    if not zones:
+        issues.append({
+            "code": "no_zones",
+            "message": "Aucune zone configurée",
+            "severity": "error",
+        })
+    if not local_devices and not renderers:
+        issues.append({
+            "code": "no_outputs",
+            "message": "Aucune sortie audio détectée",
+            "severity": "error",
+        })
+    if zones and not any(
+        hasattr(z, "player") and z.player is not None for z in zones
+    ):
+        issues.append({
+            "code": "zones_no_player",
+            "message": "Zones sans lecteur actif",
+            "severity": "warning",
+        })
+    return issues
