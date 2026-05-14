@@ -230,11 +230,18 @@ class TuneServerApp(rumps.App):
     def install_update(self, _sender) -> None:
         if not self._latest_version:
             return
-        # Fall back to opening the GitHub releases page in a browser —
-        # the in-app updater rewrites files inside the .app bundle which
-        # invalidates the codesign seal (see CHANGELOG v0.7.46), so for
-        # DMG installs the safe path is "download the new DMG and drag-
-        # install". Same advice the Settings page surfaces in the web UI.
+        resp = rumps.alert(
+            title="Mise à jour disponible",
+            message=f"Tune Server v{self._latest_version} est disponible.\n\n"
+                    "Le serveur va s'arrêter et la page de téléchargement va s'ouvrir.\n"
+                    "Téléchargez le nouveau DMG et glissez-le dans Applications.",
+            ok="Mettre à jour",
+            cancel="Plus tard",
+        )
+        if resp != 1:
+            return
+        self._stop_server()
+        self.status_item.title = "Status: arrêté pour mise à jour"
         webbrowser.open(
             f"https://github.com/renesenses/tune-server-linux/releases/tag/v{self._latest_version}"
         )
