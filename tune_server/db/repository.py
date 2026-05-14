@@ -126,7 +126,7 @@ class ArtistRepo:
     async def list(self, limit: int = 100, offset: int = 0, principal_only: bool = False) -> list[Artist]:
         where = f"WHERE {self._PRINCIPAL_ONLY}" if principal_only else ""
         rows = await self._db.fetchall(
-            f"SELECT * FROM artists {where} ORDER BY sort_name, name LIMIT ? OFFSET ?",
+            f"SELECT * FROM artists {where} ORDER BY sort_name COLLATE NOCASE, name COLLATE NOCASE LIMIT ? OFFSET ?",
             (limit, offset),
         )
         return [_row_to_artist(r) for r in rows]
@@ -160,7 +160,7 @@ class ArtistRepo:
         where = " WHERE " + " AND ".join(clauses)
         params.extend([limit, offset])
         rows = await self._db.fetchall(
-            f"SELECT * FROM artists{where} ORDER BY sort_name, name LIMIT ? OFFSET ?",
+            f"SELECT * FROM artists{where} ORDER BY sort_name COLLATE NOCASE, name COLLATE NOCASE LIMIT ? OFFSET ?",
             tuple(params),
         )
         return [_row_to_artist(r) for r in rows]
