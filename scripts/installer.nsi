@@ -33,8 +33,10 @@ RequestExecutionLevel user
 Section "Install"
     ; Kill running instance before overwriting files
     nsExec::ExecToLog 'taskkill /F /IM tune-server.exe'
+    nsExec::ExecToLog 'taskkill /F /IM "Tune Server.exe"'
     nsExec::ExecToLog 'taskkill /F /IM librespot.exe'
-    Sleep 2000
+    nsExec::ExecToLog 'cmd /c for /f "tokens=2" %p in (''netstat -ano ^| findstr :8888 ^| findstr LISTENING'') do taskkill /F /PID %p'
+    Sleep 3000
 
     SetOutPath "$INSTDIR"
 
