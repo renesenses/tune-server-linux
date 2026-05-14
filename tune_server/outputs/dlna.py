@@ -284,12 +284,17 @@ class DlnaOutput(OutputTarget):
                 mime = dsd_mime_from_extension(track.file_path)
                 self._stream_id = self._streamer.create_session(stream_info, track.file_path)
                 stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+                # Replace generic .dsd extension with actual file extension (.dsf/.dff)
+                # for better renderer compatibility
+                dsd_ext = "dff" if track.file_path.lower().endswith(".dff") else "dsf"
+                stream_url = stream_url.rsplit(".", 1)[0] + f".{dsd_ext}"
                 metadata = _build_didl_lite(track, stream_url, mime)
 
                 dmr = self._device
                 title = track.title or "Unknown"
                 await self._set_and_play(dmr, stream_url, title, metadata)
 
+                self._direct_url = True
                 self._available = True
                 logger.info(
                     "dlna_native_dsd_playback", device=self.name,
@@ -375,7 +380,7 @@ class DlnaOutput(OutputTarget):
         await self._dmr_call("async_stop")
         if self._direct_url:
             self._direct_url = False
-        elif self._stream_id:
+        if self._stream_id:
             self._streamer.remove_session(self._stream_id)
             self._stream_id = None
 
@@ -459,7 +464,12 @@ class DlnaOutput(OutputTarget):
         await self.stop()
 
     async def set_next_track(self, stream_info: AudioStreamInfo, track: Track) -> bool:
-        """Use SetNextAVTransportURI for gapless playback."""
+        """Use SetNextAVTransportURI for gapless playback.
+
+        Creates an HTTP streamer session for the next track so the renderer
+        can fetch it seamlessly when the current track ends.  Works for
+        direct URLs, native DSD, and local file passthrough.
+        """
         try:
             # Direct URL for next track too if applicable
             if self.supports_direct_url(track):
@@ -471,7 +481,7 @@ class DlnaOutput(OutputTarget):
                 mime = mime_type_for_format(AudioFormat(track.format))
                 metadata = _build_didl_lite(track, url, mime)
                 await self._device.async_set_next_transport_uri(url, track.title or "Unknown", meta_data=metadata)
-                logger.info("dlna_next_track_set_direct", track=track.title)
+                logger.info("dlna_next_track_set_direct", device=self.name, track=track.title)
                 return True
 
             # Native DSD passthrough for next track
@@ -484,21 +494,33 @@ class DlnaOutput(OutputTarget):
                 mime = dsd_mime_from_extension(track.file_path)
                 stream_id = self._streamer.create_session(stream_info, track.file_path)
                 stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
+                dsd_ext = "dff" if track.file_path.lower().endswith(".dff") else "dsf"
+                stream_url = stream_url.rsplit(".", 1)[0] + f".{dsd_ext}"
                 metadata = _build_didl_lite(track, stream_url, mime)
                 await self._device.async_set_next_transport_uri(stream_url, track.title or "Unknown", meta_data=metadata)
-                logger.info("dlna_next_track_set_native_dsd", track=track.title)
+                logger.info("dlna_next_track_set_native_dsd", device=self.name, track=track.title)
                 return True
+
+            # Local file or pipeline-based: serve via HTTP streamer
+            # Use the track's native format for MIME when serving a local file directly
+            is_local_file = track.file_path and not track.file_path.startswith("http")
+            if is_local_file and track.format:
+                mime = mime_type_for_format(AudioFormat(track.format))
+            else:
+                mime = mime_type_for_format(stream_info.format)
 
             stream_id = self._streamer.create_session(stream_info, track.file_path)
             stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
-            mime = mime_type_for_format(stream_info.format)
             metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info)
 
             await self._device.async_set_next_transport_uri(stream_url, track.title or "Unknown", meta_data=metadata)
-            logger.info("dlna_next_track_set", track=track.title)
+            logger.info(
+                "dlna_next_track_set", device=self.name, track=track.title,
+                stream_url=stream_url, local_file=is_local_file,
+            )
             return True
         except Exception:
-            logger.debug("dlna_set_next_not_supported")
+            logger.exception("dlna_set_next_failed", device=self.name, track=track.title)
             return False
 
     def get_current_session(self):

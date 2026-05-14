@@ -434,6 +434,10 @@ class TestGaplessIntegration:
         MockPipeline.return_value = pipeline
 
         player = Player(zone_id=1, event_bus=event_bus)
+        # Remove set_next_track so the player uses gapless preload (local output path).
+        # DLNA outputs have set_next_track and use SetNextAVTransportURI instead.
+        if hasattr(mock_output, 'set_next_track'):
+            del mock_output.set_next_track
         player.set_output(mock_output)
 
         # Mock gapless to verify preload is called

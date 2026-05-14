@@ -41,7 +41,7 @@ async def list_audio_devices():
     # ALSA aliases and virtual devices to hide
     _ALSA_ALIASES = {
         "sysdefault", "default", "front", "surround40", "surround51",
-        "surround71", "iec958", "spdif", "hdmi", "dmix", "dsnoop",
+        "surround71", "iec958", "spdif", "dmix", "dsnoop",
         "plug", "pulse", "pipewire",
     }
 
@@ -54,9 +54,6 @@ async def list_audio_devices():
                 continue
             # Skip channels > 32 (virtual mixers like sysdefault)
             if d["max_output_channels"] > 32:
-                continue
-            # Skip HDMI outputs (rarely used for music)
-            if "hdmi" in name.lower():
                 continue
             result.append(
                 LocalAudioDevice(

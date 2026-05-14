@@ -238,9 +238,14 @@ class MinimalDmrDevice:
                 async with session.post(url, data=body, headers=headers) as resp:
                     if resp.status == 200:
                         return await resp.text()
-                    logger.debug("minimal_dmr_soap_error", action=action, status=resp.status)
+                    resp_body = await resp.text()
+                    logger.debug(
+                        "minimal_dmr_soap_error", name=self._name,
+                        action=action, status=resp.status,
+                        response=resp_body[:300] if resp_body else "",
+                    )
         except Exception as e:
-            logger.debug("minimal_dmr_soap_fail", action=action, error=str(e))
+            logger.debug("minimal_dmr_soap_fail", name=self._name, action=action, error=str(e))
         return None
 
     # ── AVTransport actions ───────────────────────────────────────────
@@ -277,12 +282,24 @@ class MinimalDmrDevice:
     async def async_set_next_transport_uri(
         self, uri: str, title: str = "", meta_data: str = "",
     ) -> None:
-        if self._avt_url:
-            await self._soap(self._avt_url, _AVT_NS, "SetNextAVTransportURI", {
-                "InstanceID": "0",
-                "NextURI": uri,
-                "NextURIMetaData": meta_data,
-            })
+        if not self._avt_url:
+            logger.warning("minimal_dmr_set_next_no_avt", name=self._name)
+            return
+        result = await self._soap(self._avt_url, _AVT_NS, "SetNextAVTransportURI", {
+            "InstanceID": "0",
+            "NextURI": uri,
+            "NextURIMetaData": meta_data,
+        })
+        if result is not None:
+            logger.info(
+                "minimal_dmr_set_next_ok", name=self._name,
+                uri=uri[:80], title=title,
+            )
+        else:
+            logger.warning(
+                "minimal_dmr_set_next_failed", name=self._name,
+                uri=uri[:80], title=title,
+            )
 
     async def async_seek_rel_time(self, target: str) -> None:
         if self._avt_url:

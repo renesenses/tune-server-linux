@@ -163,7 +163,9 @@ DSD_MIME_TYPES = {
 _DSD_CAPABLE_PATTERNS = [
     "dmp-a",      # Eversolo DMP-A8, DMP-A6
     "eversolo",
-    "heos",       # Denon/Marantz HEOS
+    "marantz",    # Marantz AVRs/streamers (SR7009, PM-10, SA-10, etc.)
+    "denon",      # Denon AVRs/streamers (AVR-X series, DNP-800NE, etc.)
+    "heos",       # Denon/Marantz HEOS platform
     "oppo",       # Oppo UDP/BDP
     "cambridge",  # Cambridge Audio
     "naim",       # Naim streamers
@@ -173,6 +175,17 @@ _DSD_CAPABLE_PATTERNS = [
     "micromega",  # Micromega M-One (ESS Sabre DAC)
     "diretta",    # DirettaRendererUPnP (DSD64-DSD1024)
     "wiim",       # WiiM Ultra/Pro
+    "pioneer",    # Pioneer/Onkyo network players
+    "onkyo",      # Onkyo AVRs with DSD support
+    "yamaha",     # Yamaha WXC/WXA/R-N series
+    "teac",       # TEAC NT/UD series
+    "sony",       # Sony HAP/UDA series
+    "technics",   # Technics SL-G700, SA-C600, etc.
+    "t+a",        # T+A DAC 8 DSD, MP series
+    "esoteric",   # Esoteric network players
+    "mcintosh",   # McIntosh network streamers
+    "accuphase",  # Accuphase DP/DC series
+    "ps audio",   # PS Audio DirectStream
 ]
 
 

@@ -524,7 +524,6 @@ class Player:
         if not next_track.file_path:
             return
 
-        # For direct URL / native DSD passthrough: use DLNA SetNextAVTransportURI
         source_format = AudioFormat(next_track.format) if next_track.format else AudioFormat.FLAC
         _native_dsd = (
             source_format == AudioFormat.DSD
@@ -532,10 +531,16 @@ class Player:
             and next_track.file_path
             and not next_track.file_path.startswith("http")
         )
-        if self._output.supports_direct_url(next_track) or _native_dsd:
+
+        # DLNA renderers: always use SetNextAVTransportURI for gapless.
+        # This covers direct URLs, native DSD, AND local files served via
+        # the HTTP streamer. The renderer handles the seamless transition
+        # itself — FFmpeg pre-decode is not needed (and doesn't work for
+        # renderers like DarTZeel that rely on SetNextAVTransportURI).
+        if hasattr(self._output, 'set_next_track'):
             try:
                 file_size = None
-                if _native_dsd and next_track.file_path:
+                if next_track.file_path and not next_track.file_path.startswith("http"):
                     p = Path(next_track.file_path)
                     file_size = p.stat().st_size if p.exists() else None
                 next_info = AudioStreamInfo(
@@ -545,16 +550,15 @@ class Player:
                     channels=next_track.channels or 2,
                     file_size=file_size,
                 )
-                if hasattr(self._output, 'set_next_track'):
-                    ok = await self._output.set_next_track(next_info, next_track)
-                    if ok:
-                        self._renderer_has_next = True
-                        logger.info("gapless_next_set_direct", track=next_track.title)
-                        return
+                ok = await self._output.set_next_track(next_info, next_track)
+                if ok:
+                    self._renderer_has_next = True
+                    logger.info("gapless_next_set", track=next_track.title)
+                    return
             except Exception:
-                logger.exception("gapless_next_direct_error", track=next_track.title)
+                logger.exception("gapless_next_error", track=next_track.title)
 
-        # For pipeline-based playback: pre-decode the next track
+        # For pipeline-based playback (local output): pre-decode the next track
         if self._gapless:
             await self._gapless.preload(next_track)
 
@@ -659,6 +663,7 @@ class Player:
             stopped_threshold = 2  # need 2 consecutive STOPPED
             min_play_ms = 5000     # ignore STOPPED before 5s of playback
             cumulative_pos_ms = 0
+            prev_pos_ms = 0        # previous poll position for gapless detection
 
             while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
                 await asyncio.sleep(5)  # 5s interval for track end detection
@@ -673,6 +678,28 @@ class Player:
                     cumulative_pos_ms = output_pos
                 else:
                     cumulative_pos_ms += 1000  # estimate if no position
+
+                # Gapless transition detection: if we queued the next track
+                # via SetNextAVTransportURI and the renderer's position just
+                # dropped significantly (from near end back to near start),
+                # the renderer has seamlessly transitioned to the next track.
+                if (self._renderer_has_next
+                        and output_pos >= 0
+                        and duration_ms
+                        and prev_pos_ms > duration_ms * 0.7
+                        and output_pos < prev_pos_ms * 0.5):
+                    logger.info(
+                        "dlna_gapless_transition_detected",
+                        zone_id=self._zone_id,
+                        prev_pos=prev_pos_ms,
+                        new_pos=output_pos,
+                        duration=duration_ms,
+                        track=track.title,
+                    )
+                    break
+
+                if output_pos >= 0:
+                    prev_pos_ms = output_pos
 
                 # -2 = renderer reports STOPPED
                 if output_pos == -2 and not is_radio:

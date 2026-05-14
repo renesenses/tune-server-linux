@@ -93,7 +93,8 @@ class ChromecastOutput(OutputTarget):
             url = track.file_path
             self._direct_url = True
         else:
-            self._stream_id = self._streamer.create_session(stream_info)
+            file_path = track.file_path if track else None
+            self._stream_id = self._streamer.create_session(stream_info, file_path)
             url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
 
         content_type = "audio/flac"
@@ -125,8 +126,12 @@ class ChromecastOutput(OutputTarget):
             raise
 
     async def write(self, data: bytes) -> None:
+        if self._direct_url:
+            return
         if self._stream_id:
-            self._streamer.write_to_session(self._stream_id, data)
+            session = self._streamer.get_session(self._stream_id)
+            if session:
+                await session.put(data)
 
     async def flush(self) -> None:
         pass
@@ -183,7 +188,7 @@ class ChromecastOutput(OutputTarget):
             if track.file_path and track.file_path.startswith(("http://", "https://")):
                 url = track.file_path
             else:
-                sid = self._streamer.create_session(stream_info)
+                sid = self._streamer.create_session(stream_info, track.file_path)
                 url = self._streamer.get_stream_url(sid, self._server_ip)
 
             fmt = track.format.value if track.format and hasattr(track.format, "value") else "flac"
