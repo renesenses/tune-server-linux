@@ -512,6 +512,41 @@ class TuneServer:
             stream_url=f"http://{self._server_ip}:{settings.stream_port}",
         )
 
+        asyncio.create_task(self._report_install_or_update())
+
+    async def _report_install_or_update(self) -> None:
+        """Report install or update to mozaiklabs.fr analytics (fire-and-forget)."""
+        try:
+            import platform as _platform
+            from pathlib import Path
+            from tune_server import __version__
+
+            os_map = {"Darwin": "macos", "Windows": "windows", "Linux": "linux"}
+            plat = os_map.get(_platform.system(), _platform.system().lower())
+
+            version_file = Path(settings.db_path).parent / ".last_version"
+            previous = None
+            if version_file.exists():
+                previous = version_file.read_text().strip()
+
+            if previous == __version__:
+                return
+
+            track_type = "update" if previous else "install"
+            version_file.write_text(__version__)
+
+            import aiohttp
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                await session.post("https://mozaiklabs.fr/api/v1/installs/track", json={
+                    "version": __version__,
+                    "platform": plat,
+                    "type": track_type,
+                    "previous_version": previous,
+                })
+            logger.info("install_tracked", type=track_type, version=__version__, previous=previous)
+        except Exception:
+            logger.debug("install_track_failed", exc_info=True)
+
     async def _register_output_factories(self) -> None:
         from tune_server.models import OutputType
         from tune_server.outputs.dlna import DlnaOutput
