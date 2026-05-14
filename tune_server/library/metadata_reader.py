@@ -278,7 +278,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             album_artist = _get_first(tags, ["albumartist", "album_artist"]) or None
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
-            disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE"]) or None
+            disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE", "setsubtitle", "SETSUBTITLE"]) or None
             original_year_str = _get_first(tags, ["originaldate", "originalyear", "ORIGINALDATE", "ORIGINALYEAR"])
             year_str = _get_first(tags, ["date", "year", "releasedate", "RELEASEDATE"])
             genre = _get_first(tags, ["genre"]) or None
@@ -331,7 +331,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             album_artist = _get_first(tags, ["albumartist"]) or None
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
-            disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE"]) or None
+            disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE", "setsubtitle", "SETSUBTITLE"]) or None
             original_year_str = _get_first(tags, ["originaldate", "originalyear", "ORIGINALDATE", "ORIGINALYEAR"])
             year_str = _get_first(tags, ["date", "releasedate", "RELEASEDATE"])
             genre = _get_first(tags, ["genre"]) or None
@@ -368,7 +368,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             track_num = _parse_int(_get_first(tags, ["tracknumber", "TRCK"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber", "TPOS"]), 1)
             disc_subtitle = _get_first(tags, [
-                "discsubtitle", "DISCSUBTITLE", "TSST", "TXXX:DISCSUBTITLE",
+                "discsubtitle", "DISCSUBTITLE", "setsubtitle", "SETSUBTITLE",
+                "TSST", "TXXX:DISCSUBTITLE", "TXXX:SETSUBTITLE",
                 "----:com.apple.iTunes:DISCSUBTITLE",
             ]) or None
             original_year_str = _get_first(tags, [
