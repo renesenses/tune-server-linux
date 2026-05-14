@@ -310,11 +310,15 @@ class LibraryScanner:
                     # Different quality — create a suffixed album for the new track
                     suffix = _quality_suffix(metadata.sample_rate, metadata.bit_depth)
                     qualified_title = f"{base_title} ({suffix})" if suffix else base_title
-                    album = await self._album_repo.get_or_create(
-                        title=qualified_title,
-                        artist_id=artist.id,
-                        **album_kwargs,
-                    )
+                    split_album = await self._album_repo.get_by_title(qualified_title)
+                    if split_album:
+                        album = split_album
+                    else:
+                        album = await self._album_repo.get_or_create(
+                            title=qualified_title,
+                            artist_id=album.artist_id or artist.id,
+                            **album_kwargs,
+                        )
                     logger.info("album_quality_split", base=base_title, new_title=qualified_title)
                 # Backfill label/catalog_number if the album was created
                 # earlier from a track that didn't carry these tags.
