@@ -66,6 +66,7 @@ def format_from_extension(ext: str) -> AudioFormat | None:
         "wma": AudioFormat.WMA,
         "dsf": AudioFormat.DSD,
         "dff": AudioFormat.DSD,
+        "dst": AudioFormat.DSD,
     }
     return mapping.get(ext)
 

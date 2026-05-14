@@ -369,11 +369,13 @@ class Player:
         # Check if output can handle URL directly (e.g., DLNA renderer fetching from CDN)
         # or if output handles native DSD passthrough (renderer pulls DSF via HTTP)
         source_format = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+        _is_dst = track.file_path and track.file_path.lower().endswith(".dst")
         _native_dsd = (
             source_format == AudioFormat.DSD
             and getattr(self._output, "supports_native_dsd", False)
             and track.file_path
             and not track.file_path.startswith("http")
+            and not _is_dst  # DST must be decompressed, can't passthrough
         )
         if (self._output.supports_direct_url(track) or _native_dsd) and seek_ms == 0:
             try:
@@ -545,11 +547,13 @@ class Player:
             return
 
         source_format = AudioFormat(next_track.format) if next_track.format else AudioFormat.FLAC
+        _is_dst = next_track.file_path and next_track.file_path.lower().endswith(".dst")
         _native_dsd = (
             source_format == AudioFormat.DSD
             and getattr(self._output, "supports_native_dsd", False)
             and next_track.file_path
             and not next_track.file_path.startswith("http")
+            and not _is_dst
         )
 
         # DLNA renderers: always use SetNextAVTransportURI for gapless.

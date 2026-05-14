@@ -21,7 +21,7 @@ logger = structlog.get_logger()
 
 SUPPORTED_EXTENSIONS = {
     ".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".aiff",
-    ".aif", ".wv", ".wma", ".dsf", ".dff", ".alac",
+    ".aif", ".wv", ".wma", ".dsf", ".dff", ".dst", ".alac",
 }
 
 
@@ -100,6 +100,7 @@ def _detect_format(path: Path) -> str:
         ".wma": "wma",
         ".dsf": "dsd",
         ".dff": "dsd",
+        ".dst": "dsd",
     }
     return format_map.get(ext, ext.lstrip("."))
 
