@@ -398,28 +398,8 @@ exit /b 0
 
             logger.info("update_downloaded", path=str(archive_path))
 
-            # Extract
-            extract_dir = tmp_dir / "extracted"
-            if archive_path.suffix == ".zip":
-                with zipfile.ZipFile(archive_path) as zf:
-                    zf.extractall(extract_dir)
-            elif archive_path.name.endswith(".tar.gz"):
-                with tarfile.open(archive_path, "r:gz") as tf:
-                    tf.extractall(extract_dir)
-
-            # Find the tune-server directory in the extracted archive
-            extracted_dirs = list(extract_dir.iterdir())
-            source_dir = extracted_dirs[0] if len(extracted_dirs) == 1 and extracted_dirs[0].is_dir() else extract_dir
-
-            # Backup current installation
-            if getattr(sys, "frozen", False):
-                exe_dir = Path(sys.executable).resolve().parent
-            else:
-                exe_dir = Path.cwd()
-
-            # Windows: run the NSIS setup.exe silently. The installer
-            # handles file replacement, registry, and shortcuts. We just
-            # need to stop the server, run the installer, and relaunch.
+            # Windows: the downloaded asset is setup.exe, not a zip.
+            # Skip extraction and hand off to the NSIS installer.
             if platform.system().lower() == "windows":
                 self._windows_installer_path = archive_path
                 self._tmp_dir = tmp_dir
@@ -436,6 +416,23 @@ exit /b 0
                 logger.info("update_ready_windows", version=self._latest_version,
                             installer=str(archive_path))
                 return True
+
+            # Linux/macOS: extract the archive and replace files in-place
+            extract_dir = tmp_dir / "extracted"
+            if archive_path.suffix == ".zip":
+                with zipfile.ZipFile(archive_path) as zf:
+                    zf.extractall(extract_dir)
+            elif archive_path.name.endswith(".tar.gz"):
+                with tarfile.open(archive_path, "r:gz") as tf:
+                    tf.extractall(extract_dir)
+
+            extracted_dirs = list(extract_dir.iterdir())
+            source_dir = extracted_dirs[0] if len(extracted_dirs) == 1 and extracted_dirs[0].is_dir() else extract_dir
+
+            if getattr(sys, "frozen", False):
+                exe_dir = Path(sys.executable).resolve().parent
+            else:
+                exe_dir = Path.cwd()
 
             backup_dir = exe_dir / f"_backup_{self.current_version}"
             if backup_dir.exists():
