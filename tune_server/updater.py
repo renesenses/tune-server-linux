@@ -334,7 +334,7 @@ REM Run the NSIS installer silently. /S = silent, /D= sets install dir.
 REM The NSIS installer's own pre-install hook kills tune-server.exe
 REM (redundant but harmless since we already did it).
 echo [%DATE% %TIME%] Running NSIS installer silently... >> "%LOGFILE%"
-"{installer_path}" /S /D={install_dir}
+"{installer_path}" /S "/D={install_dir}"
 set NSIS_RC=!errorlevel!
 echo [%DATE% %TIME%] NSIS installer finished (exit code !NSIS_RC!) >> "%LOGFILE%"
 

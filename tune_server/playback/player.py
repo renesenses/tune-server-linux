@@ -498,6 +498,9 @@ class Player:
                 "zone_id": self._zone_id,
                 "track_id": track.id,
                 "track_title": track.title,
+                "artist_name": track.artist_name,
+                "album_title": track.album_title,
+                "cover_path": track.cover_path,
             },
             source="player",
         ))
@@ -842,6 +845,9 @@ class Player:
                 "zone_id": self._zone_id,
                 "track_id": next_track.id,
                 "track_title": next_track.title,
+                "artist_name": next_track.artist_name,
+                "album_title": next_track.album_title,
+                "cover_path": next_track.cover_path,
             },
             source="player",
         ))
@@ -887,6 +893,9 @@ class Player:
                     "zone_id": self._zone_id,
                     "track_id": next_track.id,
                     "track_title": next_track.title,
+                    "artist_name": next_track.artist_name,
+                    "album_title": next_track.album_title,
+                    "cover_path": next_track.cover_path,
                 },
                 source="player",
             ))
@@ -998,6 +1007,9 @@ class Player:
                             "zone_id": self._zone_id,
                             "track_id": next_track.id,
                             "track_title": next_track.title,
+                            "artist_name": next_track.artist_name,
+                            "album_title": next_track.album_title,
+                            "cover_path": next_track.cover_path,
                         },
                         source="player",
                     ))
