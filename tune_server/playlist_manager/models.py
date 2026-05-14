@@ -33,6 +33,8 @@ class TrackMatchResult(BaseModel):
     score: float = 0.0
     source_id: str = ""
     target_id: str = ""
+    target_title: str = ""
+    target_artist: str = ""
     alternatives: list[dict] = []
 
 
