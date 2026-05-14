@@ -32,10 +32,14 @@ RequestExecutionLevel user
 ; --- Install ---
 Section "Install"
     ; Kill running instance before overwriting files
+    ; 1. Kill the batch launcher window (cmd.exe running start-tune-server.bat)
+    nsExec::ExecToLog 'cmd /c taskkill /F /FI "WINDOWTITLE eq Tune Server"'
+    ; 2. Kill the server binary
     nsExec::ExecToLog 'taskkill /F /IM tune-server.exe'
     nsExec::ExecToLog 'taskkill /F /IM "Tune Server.exe"'
     nsExec::ExecToLog 'taskkill /F /IM librespot.exe'
-    nsExec::ExecToLog 'cmd /c for /f "tokens=2" %p in (''netstat -ano ^| findstr :8888 ^| findstr LISTENING'') do taskkill /F /PID %p'
+    ; 3. Fallback: kill anything on port 8888
+    nsExec::ExecToLog 'cmd /c for /f "tokens=5" %p in (''netstat -ano ^| findstr :8888 ^| findstr LISTENING'') do taskkill /F /PID %p'
     Sleep 3000
 
     SetOutPath "$INSTDIR"
