@@ -369,6 +369,9 @@ class TuneServerApp(rumps.App):
 
     def quit_app(self, _sender) -> None:
         self._stop_server()
+        # Clean sentinel so next launch tries rumps again
+        sentinel = Path.home() / "Library" / "Application Support" / "Tune Server" / ".rumps_failed"
+        sentinel.unlink(missing_ok=True)
         try:
             self.log_file.close()
         except Exception:
@@ -413,9 +416,27 @@ def _fallback_run() -> None:
 
 
 def main() -> None:
+    # Skip rumps entirely if a previous launch hung (sentinel file).
+    # Also skip if --no-menubar is passed explicitly.
+    sentinel = Path.home() / "Library" / "Application Support" / "Tune Server" / ".rumps_failed"
+    if sentinel.exists() or "--no-menubar" in sys.argv:
+        sentinel.unlink(missing_ok=True)
+        _fallback_run()
+        return
+
+    # Write sentinel before attempting rumps — if the app hangs and is
+    # force-killed, the sentinel survives and the next launch skips rumps.
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("pending")
+
     try:
-        TuneServerApp().run()
+        app = TuneServerApp()
+        # If we get past __init__ without hanging, rumps is likely OK.
+        # Remove sentinel — the quit handler also removes it on clean exit.
+        sentinel.unlink(missing_ok=True)
+        app.run()
     except Exception as exc:
+        sentinel.unlink(missing_ok=True)
         print(f"[Tune Server] Menubar failed: {exc}")
         print("[Tune Server] Falling back to direct server mode...")
         _fallback_run()
