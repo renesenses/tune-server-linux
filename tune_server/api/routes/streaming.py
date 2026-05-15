@@ -56,6 +56,26 @@ async def service_status(service_name: str):
     )
 
 
+@router.get("/{service_name}/auth/status")
+async def auth_status(service_name: str):
+    """Poll the state of a pending OAuth device flow (e.g. Tidal countdown)."""
+    service = deps.streaming_services.get(service_name)
+    if not service:
+        raise HTTPException(status_code=503, detail=f"{service_name} not configured")
+
+    verification_url = getattr(service, "verification_url", None)
+    expires_in = getattr(service, "auth_remaining_seconds", None)
+    error = getattr(service, "_auth_error", None)
+
+    return {
+        "authenticated": service.is_authenticated,
+        "verification_url": verification_url,
+        "expires_in": expires_in,
+        "pending": verification_url is not None,
+        "error": error,
+    }
+
+
 @router.post("/{service_name}/enable")
 async def enable_service(service_name: str):
     """Enable a streaming service and persist to .env."""
@@ -157,13 +177,28 @@ async def authenticate(
             kwargs["password"] = request.password
         if request.oauth_json is not None:
             kwargs["oauth_json"] = request.oauth_json
-    success = await service.authenticate(**kwargs, db=deps.db)
+    try:
+        success = await service.authenticate(**kwargs, db=deps.db)
+    except Exception:
+        return StreamingAuthResponse(
+            authenticated=False,
+            error="Erreur de connexion -- verifiez votre connexion internet",
+        )
     verification_url = getattr(service, "verification_url", None)
     user_code = getattr(service, "user_code", None)
     error = getattr(service, "_auth_error", None)
+    expires_in = getattr(service, "auth_remaining_seconds", None)
     if success and deps.db:
         await service.save_auth(deps.db)
-    return StreamingAuthResponse(authenticated=success, verification_url=verification_url, user_code=user_code, error=error)
+    if success:
+        error = "Authentification reussie"
+    return StreamingAuthResponse(
+        authenticated=success,
+        verification_url=verification_url,
+        user_code=user_code,
+        error=error,
+        expires_in=expires_in,
+    )
 
 
 @router.post("/{service_name}/disconnect")

@@ -701,6 +701,7 @@ class StreamingAuthResponse(BaseModel):
     verification_url: Optional[str] = None
     user_code: Optional[str] = None
     error: Optional[str] = None
+    expires_in: Optional[int] = None  # seconds until device code expires
 
 
 class ZoneGroupResponse(BaseModel):

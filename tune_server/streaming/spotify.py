@@ -35,6 +35,7 @@ class SpotifyService(StreamingService):
         self._auth_manager = None
         self._verification_url: str | None = None
         self._authenticated = False
+        self._auth_error: str | None = None
 
     @property
     def name(self) -> str:
@@ -96,6 +97,7 @@ class SpotifyService(StreamingService):
             )
             if not token_info:
                 logger.warning("spotify_auth_no_token")
+                self._auth_error = "Code expire -- relancez la connexion Spotify"
                 return False
 
             import spotipy
@@ -103,6 +105,7 @@ class SpotifyService(StreamingService):
             self._sp = spotipy.Spotify(auth_manager=self._auth_manager)
             self._authenticated = True
             self._verification_url = None
+            self._auth_error = None
 
             # Verify by fetching current user
             user = await asyncio.to_thread(self._sp.current_user)
@@ -115,9 +118,14 @@ class SpotifyService(StreamingService):
                 await self.save_auth(db)
 
             return True
-        except Exception:
+        except Exception as exc:
             logger.exception("spotify_complete_auth_error")
             self._verification_url = None
+            err_str = str(exc).lower()
+            if "connect" in err_str or "timeout" in err_str:
+                self._auth_error = "Erreur de connexion -- verifiez votre connexion internet"
+            else:
+                self._auth_error = "Erreur d'authentification Spotify -- reessayez"
             return False
 
     async def search(self, query: str, limit: int = 50) -> SearchResult:
@@ -512,14 +520,17 @@ class SpotifyService(StreamingService):
             logger.warning("spotify_auth_restore_expired")
             self._sp = None
             self._auth_manager = None
+            self._auth_error = "Session Spotify expiree -- reconnectez-vous"
             return False
         except ImportError:
             logger.warning("spotipy_not_installed")
+            self._auth_error = "spotipy non installe"
             return False
         except Exception:
             logger.exception("spotify_restore_auth_error")
             self._sp = None
             self._auth_manager = None
+            self._auth_error = "Erreur de connexion -- verifiez votre connexion internet"
             return False
 
     async def disconnect(self, db: Database) -> None:

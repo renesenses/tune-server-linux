@@ -68,6 +68,9 @@ class Player:
         # Volume normalization
         self._normalization_enabled = False
         self._normalization_target = -14.0
+        # Parametric equalizer
+        self._eq_enabled: bool = False
+        self._eq_bands: list[dict] = []  # each: {"freq": 60, "gain": 0, "q": 1.0}
         # Plugin hooks: each PlayerHookEvent maps to a list of callables
         # invoked in registration order. Sync OR async, exceptions are
         # caught per-hook so a faulty plugin can't break playback.
@@ -115,6 +118,37 @@ class Player:
 
     def set_channel_filter(self, channel_filter: str | None) -> None:
         self._channel_filter = channel_filter
+
+    def set_equalizer(self, enabled: bool, bands: list[dict]) -> None:
+        """Set parametric EQ bands. Each band: {"freq": Hz, "gain": dB, "q": float}.
+
+        Settings persist across tracks -- the EQ filter is applied at each
+        _start_track() call via the pipeline's extra_filters parameter.
+        """
+        self._eq_enabled = enabled
+        self._eq_bands = bands
+
+    def get_equalizer(self) -> dict:
+        """Return current EQ state."""
+        return {"enabled": self._eq_enabled, "bands": self._eq_bands}
+
+    def _build_eq_filter(self) -> str | None:
+        """Build an FFmpeg -af equalizer filter chain from the current EQ bands.
+
+        Only bands with non-zero gain are included. Returns None if EQ is
+        disabled or all gains are zero.
+        """
+        if not self._eq_enabled or not self._eq_bands:
+            return None
+        parts = []
+        for band in self._eq_bands:
+            gain = band.get("gain", 0)
+            if gain == 0:
+                continue
+            freq = band.get("freq", 1000)
+            q = band.get("q", 1.0)
+            parts.append(f"equalizer=f={freq}:t=q:w={q}:g={gain}")
+        return ",".join(parts) if parts else None
 
     def add_hook(self, event: PlayerHookEvent, fn: Callable) -> None:
         """Register a hook callable for a player lifecycle event.
@@ -447,6 +481,7 @@ class Player:
             and hasattr(self._output, 'is_direct_url')):
             pipeline_seek_ms = 0
 
+        eq_filter = self._build_eq_filter()
         self._pipeline = AudioPipeline(capabilities, icy_callback=icy_cb, channel_filter=self._channel_filter)
         try:
             stream_info = await asyncio.wait_for(
@@ -457,6 +492,7 @@ class Player:
                     bit_depth=track.bit_depth or 16,
                     channels=track.channels or 2,
                     seek_ms=pipeline_seek_ms,
+                    extra_filters=eq_filter,
                 ),
                 timeout=settings.pipeline_start_timeout,
             )

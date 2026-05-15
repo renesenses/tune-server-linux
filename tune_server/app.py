@@ -515,7 +515,12 @@ class TuneServer:
         asyncio.create_task(self._report_install_or_update())
 
     async def _report_install_or_update(self) -> None:
-        """Report install or update to mozaiklabs.fr analytics (fire-and-forget)."""
+        """Report install or update to mozaiklabs.fr analytics (fire-and-forget).
+
+        Sends a lightweight anonymous payload with version, platform, arch,
+        Python version, library size and zone count so we can understand the
+        install base. Non-blocking, never crashes the server.
+        """
         try:
             import platform as _platform
             from pathlib import Path
@@ -535,6 +540,22 @@ class TuneServer:
             track_type = "update" if previous else "install"
             version_file.write_text(__version__)
 
+            # Gather lightweight telemetry fields
+            track_count = 0
+            zone_count = 0
+            try:
+                if deps.track_repo:
+                    track_count = await deps.track_repo.count()
+            except Exception:
+                pass
+            try:
+                if deps.zone_manager:
+                    zone_count = len(deps.zone_manager.list_zones())
+            except Exception:
+                pass
+
+            db_engine = "postgres" if getattr(settings, "db_engine", "") == "postgres" else "sqlite"
+
             import aiohttp
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
                 await session.post("https://mozaiklabs.fr/api/v1/installs/track", json={
@@ -542,6 +563,11 @@ class TuneServer:
                     "platform": plat,
                     "type": track_type,
                     "previous_version": previous,
+                    "arch": _platform.machine(),
+                    "python": _platform.python_version(),
+                    "tracks": track_count,
+                    "zones": zone_count,
+                    "db_engine": db_engine,
                 })
             logger.info("install_tracked", type=track_type, version=__version__, previous=previous)
         except Exception:

@@ -304,47 +304,88 @@ async def set_volume(zone_id: int, request: VolumeRequest):
     return zone.to_model()
 
 
+@router.get("/eq")
+async def get_equalizer(zone_id: int):
+    """Return current parametric EQ settings for a zone."""
+    zone = _get_zone(zone_id)
+    return zone.player.get_equalizer()
+
+
 @router.post("/eq")
 async def set_equalizer(zone_id: int, body: dict):
-    """Set EQ preset on a zone. Uses FFmpeg superequalizer filter.
+    """Set parametric EQ on a zone.
 
-    body: { "preset": "flat|bass_boost|treble_boost|vocal|rock|jazz|classical" }
-    or: { "bands": { "60": 3, "250": -1, "1000": 0, "4000": 2, "16000": 1 } }
+    Parametric mode (preferred):
+        body: {
+            "enabled": true,
+            "bands": [
+                {"freq": 60, "gain": 3, "q": 1.0},
+                {"freq": 250, "gain": -2, "q": 1.0},
+                ...
+            ]
+        }
+
+    Preset mode (legacy shorthand):
+        body: { "preset": "flat|bass_boost|treble_boost|vocal|rock|jazz|classical" }
+
+    Each band becomes an FFmpeg ``equalizer`` filter applied during playback.
+    Settings persist across tracks within the zone.
     """
     zone = _get_zone(zone_id)
 
-    presets = {
-        "flat": None,
-        "bass_boost": "superequalizer=1b=6:2b=4:3b=2",
-        "treble_boost": "superequalizer=15b=4:16b=5:17b=6:18b=5",
-        "vocal": "superequalizer=6b=3:7b=4:8b=3:9b=2",
-        "rock": "superequalizer=1b=4:2b=3:6b=-2:15b=3:16b=4",
-        "jazz": "superequalizer=2b=2:3b=1:7b=3:8b=2:15b=2",
-        "classical": "superequalizer=1b=-2:7b=2:8b=3:15b=2:16b=3",
+    # ---- Preset shorthand (legacy compat) ----
+    _PRESETS: dict[str, list[dict]] = {
+        "flat": [],
+        "bass_boost": [
+            {"freq": 60, "gain": 6, "q": 1.0},
+            {"freq": 125, "gain": 4, "q": 1.0},
+            {"freq": 250, "gain": 2, "q": 1.0},
+        ],
+        "treble_boost": [
+            {"freq": 8000, "gain": 4, "q": 1.0},
+            {"freq": 12000, "gain": 5, "q": 1.0},
+            {"freq": 16000, "gain": 6, "q": 1.0},
+        ],
+        "vocal": [
+            {"freq": 1000, "gain": 3, "q": 1.0},
+            {"freq": 2000, "gain": 4, "q": 1.0},
+            {"freq": 4000, "gain": 3, "q": 1.0},
+        ],
+        "rock": [
+            {"freq": 60, "gain": 4, "q": 1.0},
+            {"freq": 125, "gain": 3, "q": 1.0},
+            {"freq": 1000, "gain": -2, "q": 1.0},
+            {"freq": 8000, "gain": 3, "q": 1.0},
+            {"freq": 12000, "gain": 4, "q": 1.0},
+        ],
+        "jazz": [
+            {"freq": 125, "gain": 2, "q": 1.0},
+            {"freq": 250, "gain": 1, "q": 1.0},
+            {"freq": 2000, "gain": 3, "q": 1.0},
+            {"freq": 4000, "gain": 2, "q": 1.0},
+            {"freq": 8000, "gain": 2, "q": 1.0},
+        ],
+        "classical": [
+            {"freq": 60, "gain": -2, "q": 1.0},
+            {"freq": 2000, "gain": 2, "q": 1.0},
+            {"freq": 4000, "gain": 3, "q": 1.0},
+            {"freq": 8000, "gain": 2, "q": 1.0},
+            {"freq": 12000, "gain": 3, "q": 1.0},
+        ],
     }
 
     preset = body.get("preset")
-    if preset and preset in presets:
-        zone.player.set_channel_filter(presets[preset])
-        return {"preset": preset, "filter": presets[preset]}
+    if preset and preset in _PRESETS:
+        bands = _PRESETS[preset]
+        enabled = preset != "flat"
+        zone.player.set_equalizer(enabled=enabled, bands=bands)
+        return {"enabled": enabled, "bands": bands, "preset": preset}
 
-    bands = body.get("bands")
-    if bands:
-        # Build custom superequalizer from frequency bands
-        band_map = {"60": 1, "170": 3, "310": 5, "600": 7, "1000": 9,
-                    "3000": 11, "6000": 13, "12000": 15, "14000": 16, "16000": 17}
-        parts = []
-        for freq, gain in bands.items():
-            band_num = band_map.get(str(freq))
-            if band_num is not None:
-                parts.append(f"{band_num}b={gain}")
-        if parts:
-            eq_filter = "superequalizer=" + ":".join(parts)
-            zone.player.set_channel_filter(eq_filter)
-            return {"preset": "custom", "filter": eq_filter}
-
-    zone.player.set_channel_filter(None)
-    return {"preset": "flat", "filter": None}
+    # ---- Parametric mode ----
+    bands = body.get("bands", [])
+    enabled = body.get("enabled", True)
+    zone.player.set_equalizer(enabled=enabled, bands=bands)
+    return {"enabled": enabled, "bands": bands}
 
 
 @router.post("/dsp")

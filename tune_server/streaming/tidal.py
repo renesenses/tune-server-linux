@@ -26,6 +26,8 @@ class TidalService(StreamingService):
         self._pending_login = None
         self._pending_session = None
         self._auth_task = None
+        self._auth_expires_at: float | None = None  # monotonic timestamp
+        self._auth_error: str | None = None
         self._featured_cache: dict[str, object] = {}  # section_id -> PageCategory
         self._featured_sections_cache: list | None = None
         self._featured_cache_time: float = 0
@@ -113,6 +115,20 @@ class TidalService(StreamingService):
             return self._pending_login.verification_uri_complete
         return None
 
+    @property
+    def auth_expires_at(self) -> float | None:
+        """Timestamp (monotonic) when the current device code expires."""
+        return self._auth_expires_at
+
+    @property
+    def auth_remaining_seconds(self) -> int | None:
+        """Seconds remaining before the current device code expires, or None."""
+        if self._auth_expires_at is None:
+            return None
+        import time
+        remaining = int(self._auth_expires_at - time.monotonic())
+        return max(0, remaining)
+
     async def authenticate(self, **kwargs) -> bool:
         db = kwargs.get("db")
         try:
@@ -121,9 +137,15 @@ class TidalService(StreamingService):
             # OAuth device flow
             login, future = session.login_oauth()
 
+            # tidalapi device codes expire after ~300s (5 min)
+            import time
+            expires_in = getattr(login, "expires_in", 300) or 300
+            self._auth_expires_at = time.monotonic() + expires_in
+
             logger.info(
                 "tidal_auth_started",
                 verification_url=login.verification_uri_complete,
+                expires_in=expires_in,
             )
 
             # Store pending state and launch background wait
@@ -143,24 +165,63 @@ class TidalService(StreamingService):
             return False
 
     async def _wait_for_oauth(self, session, future, db) -> None:
-        try:
-            await asyncio.to_thread(future.result, 300)
-            if session.check_login():
-                self._session = session
-                logger.info(
-                    "tidal_authenticated",
-                    user=session.user.first_name if session.user else "unknown",
-                )
-                if db:
-                    await self.save_auth(db)
-            else:
-                logger.warning("tidal_auth_failed")
-        except Exception:
-            logger.exception("tidal_oauth_wait_error")
-        finally:
-            self._pending_login = None
-            self._pending_session = None
-            self._auth_task = None
+        """Wait for the user to complete the OAuth device flow.
+
+        If the first code expires (5 min timeout), automatically generates a
+        new code and waits again -- up to 3 total attempts.
+        """
+        max_attempts = 3
+        attempt = 0
+
+        while attempt < max_attempts:
+            attempt += 1
+            try:
+                await asyncio.to_thread(future.result, 300)
+                if session.check_login():
+                    self._session = session
+                    self._auth_error = None
+                    self._pending_login = None
+                    self._pending_session = None
+                    self._auth_task = None
+                    self._auth_expires_at = None
+                    logger.info(
+                        "tidal_authenticated",
+                        user=session.user.first_name if session.user else "unknown",
+                    )
+                    if db:
+                        await self.save_auth(db)
+                    return
+                else:
+                    logger.warning("tidal_auth_failed", attempt=attempt)
+            except Exception:
+                logger.info("tidal_oauth_code_expired", attempt=attempt, max=max_attempts)
+
+            # Code expired -- retry with a fresh code if attempts remain
+            if attempt < max_attempts:
+                try:
+                    import time as _time
+                    login, future = session.login_oauth()
+                    expires_in = getattr(login, "expires_in", 300) or 300
+                    self._auth_expires_at = _time.monotonic() + expires_in
+                    self._pending_login = login
+                    self._pending_session = session
+                    self._auth_error = "Code expire -- un nouveau code a ete genere"
+                    logger.info(
+                        "tidal_auth_retry",
+                        attempt=attempt + 1,
+                        verification_url=login.verification_uri_complete,
+                        expires_in=expires_in,
+                    )
+                except Exception:
+                    logger.exception("tidal_auth_retry_error")
+                    break
+
+        self._auth_error = "Authentification Tidal echouee apres plusieurs tentatives"
+        logger.warning("tidal_auth_exhausted", attempts=max_attempts)
+        self._pending_login = None
+        self._pending_session = None
+        self._auth_task = None
+        self._auth_expires_at = None
 
     async def search(self, query: str, limit: int = 50) -> SearchResult:
         if not await self._ensure_authenticated():
