@@ -526,14 +526,7 @@ jobs:
               xcrun notarytool log "$SUBMISSION_ID" \
                 --key "/tmp/AuthKey_${AC_API_KEY_ID}.p8" \
                 --key-id "${AC_API_KEY_ID}" \
-                --issuer "${AC_API_ISSUER_ID}" 2>&1 | python3 -c "
-import sys,json
-try:
-  d=json.load(sys.stdin)
-  for i in d.get('issues',[]):
-    print(f\"  {i.get('severity','?')}: {i.get('path','?').split('/')[-1]}: {i.get('message','?')}\")
-except: print('Could not parse notary log')
-" || true
+                --issuer "${AC_API_ISSUER_ID}" 2>&1 | head -50 || true
             fi
             echo "::warning::Shipping signed-but-unnotarized DMG. Users must right-click > Open."
           fi
