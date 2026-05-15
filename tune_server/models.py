@@ -701,6 +701,7 @@ class StreamingAuthRequest(BaseModel):
 class StreamingAuthResponse(BaseModel):
     authenticated: bool
     verification_url: Optional[str] = None
+    auth_url: Optional[str] = None  # direct OAuth URL for navigation (avoids popup blockers)
     user_code: Optional[str] = None
     error: Optional[str] = None
     expires_in: Optional[int] = None  # seconds until device code expires

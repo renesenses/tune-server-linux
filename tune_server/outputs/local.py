@@ -14,6 +14,60 @@ from tune_server.outputs.base import OutputTarget
 logger = structlog.get_logger()
 
 
+def list_local_audio_devices() -> list[dict]:
+    """Return the current list of local audio output devices (refreshed each call)."""
+    try:
+        devices = sd.query_devices()
+        result = []
+        for i, d in enumerate(devices):
+            if d["max_output_channels"] > 0:
+                result.append({"index": i, "name": d["name"], "channels": d["max_output_channels"],
+                               "sample_rate": int(d["default_samplerate"])})
+        return result
+    except Exception:
+        logger.exception("list_local_audio_devices_error")
+        return []
+
+
+def _find_device_index(device_name: str) -> int | None:
+    """Find a device index by name with progressive matching:
+    1. Exact match (case-insensitive)
+    2. Substring match (case-insensitive)
+    3. Partial word match (any word in the requested name appears in the device name)
+    Returns the sounddevice index or None.
+    """
+    devices = sd.query_devices()
+    target = device_name.lower()
+    target_words = [w for w in target.split() if len(w) > 2]
+
+    # Pass 1: exact match
+    for i, d in enumerate(devices):
+        if d["max_output_channels"] > 0 and d["name"].lower() == target:
+            logger.debug("device_match_exact", requested=device_name, matched=d["name"], index=i)
+            return i
+
+    # Pass 2: substring match (either direction)
+    for i, d in enumerate(devices):
+        if d["max_output_channels"] > 0:
+            dname = d["name"].lower()
+            if target in dname or dname in target:
+                logger.debug("device_match_substring", requested=device_name, matched=d["name"], index=i)
+                return i
+
+    # Pass 3: partial word match — at least one significant word from request in device name
+    if target_words:
+        for i, d in enumerate(devices):
+            if d["max_output_channels"] > 0:
+                dname = d["name"].lower()
+                if any(w in dname for w in target_words):
+                    logger.debug("device_match_partial", requested=device_name, matched=d["name"], index=i)
+                    return i
+
+    logger.warning("device_not_found", requested=device_name,
+                    available=[d["name"] for d in devices if d["max_output_channels"] > 0])
+    return None
+
+
 class LocalOutput(OutputTarget):
     """Local audio output using sounddevice (PortAudio)."""
 
@@ -28,6 +82,10 @@ class LocalOutput(OutputTarget):
         self._start_time: float = 0.0
         self._elapsed_before_pause: float = 0.0
         self._exclusive: bool = False
+        # Log available devices on first instantiation for diagnostics
+        available = list_local_audio_devices()
+        logger.info("local_output_init", requested_device=device_name,
+                     available_devices=[d["name"] for d in available])
 
     @property
     def name(self) -> str:
@@ -60,11 +118,7 @@ class LocalOutput(OutputTarget):
             from tune_server.config import settings as _s
             device = None
             if self._device_name:
-                devices = sd.query_devices()
-                for i, d in enumerate(devices):
-                    if self._device_name.lower() in d["name"].lower() and d["max_output_channels"] > 0:
-                        device = i
-                        break
+                device = _find_device_index(self._device_name)
 
             # Exclusive mode: use ALSA hw: device directly (bypass PulseAudio/PipeWire mixer)
             exclusive = _s.local_exclusive_mode

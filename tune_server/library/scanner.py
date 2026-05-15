@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import subprocess
 from pathlib import Path
 
 import structlog
@@ -36,6 +38,47 @@ def _same_quality_tier(sr1: int | None, sr2: int | None) -> bool:
     if sr1 is None or sr2 is None:
         return True  # Can't compare — assume same
     return sr1 == sr2
+
+
+def _ffprobe_audio_info(file_path: str) -> tuple[int | None, int | None]:
+    """Use FFprobe to extract sample_rate and bit_depth from an audio file.
+
+    Returns (sample_rate, bit_depth) or (None, None) on failure.
+    """
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", file_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None, None
+        data = json.loads(result.stdout)
+        for stream in data.get("streams", []):
+            if stream.get("codec_type") == "audio":
+                sr = stream.get("sample_rate")
+                bd = stream.get("bits_per_sample") or stream.get("bits_per_raw_sample")
+                sample_rate = int(sr) if sr else None
+                bit_depth = int(bd) if bd else None
+                return sample_rate, bit_depth
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError, OSError) as e:
+        logger.debug("ffprobe_fallback_error", path=file_path, error=str(e))
+    except Exception:
+        logger.debug("ffprobe_fallback_error", path=file_path, exc_info=True)
+    return None, None
+
+
+# Extension-based defaults when both mutagen and FFprobe fail
+_EXTENSION_DEFAULTS: dict[str, tuple[int, int]] = {
+    ".dsf": (2822400, 1),
+    ".dff": (2822400, 1),
+    ".dst": (2822400, 1),
+    ".mp3": (44100, 16),
+    ".aac": (44100, 16),
+    ".m4a": (44100, 16),
+    ".ogg": (44100, 16),
+    ".opus": (48000, 16),
+    ".wma": (44100, 16),
+}
 
 
 def compute_audio_hash(file_path: str) -> str | None:
@@ -234,6 +277,30 @@ class LibraryScanner:
         metadata = await asyncio.to_thread(read_metadata, file_path)
         if metadata is None:
             return False
+
+        # Fallback: if sample_rate is missing/zero after mutagen, try FFprobe
+        if not metadata.sample_rate or metadata.sample_rate == 0:
+            logger.warning("sample_rate_missing_mutagen", path=file_path,
+                           format=metadata.format)
+            sr, bd = await asyncio.to_thread(_ffprobe_audio_info, file_path)
+            if sr and sr > 0:
+                logger.info("sample_rate_ffprobe_fallback", path=file_path,
+                            sample_rate=sr, bit_depth=bd)
+                metadata.sample_rate = sr
+                if bd and bd > 0:
+                    metadata.bit_depth = bd
+            else:
+                # Last resort: extension-based defaults
+                ext = Path(file_path).suffix.lower()
+                defaults = _EXTENSION_DEFAULTS.get(ext)
+                if defaults:
+                    logger.warning("sample_rate_extension_fallback", path=file_path,
+                                   ext=ext, sample_rate=defaults[0], bit_depth=defaults[1])
+                    metadata.sample_rate = defaults[0]
+                    metadata.bit_depth = defaults[1]
+                else:
+                    # .flac/.wav/.aiff — leave as null, filter shows "Unknown"
+                    logger.warning("sample_rate_unknown", path=file_path, ext=ext)
 
         audio_hash = await asyncio.to_thread(compute_audio_hash, file_path)
         if audio_hash is None:

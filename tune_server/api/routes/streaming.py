@@ -76,6 +76,27 @@ async def auth_status(service_name: str):
     }
 
 
+@router.get("/{service_name}/auth/url")
+async def auth_url(service_name: str):
+    """Return the OAuth URL for direct navigation (avoids popup blockers in Safari).
+
+    The web client should use this URL as an href or window.location redirect
+    instead of window.open() which Safari blocks as a popup.
+    """
+    service = deps.streaming_services.get(service_name)
+    if not service:
+        raise HTTPException(status_code=503, detail=f"{service_name} not configured")
+
+    verification_url = getattr(service, "verification_url", None)
+    if not verification_url:
+        raise HTTPException(status_code=404, detail="No pending auth URL — call POST /auth first")
+
+    return {
+        "auth_url": verification_url,
+        "service": service_name,
+    }
+
+
 @router.post("/{service_name}/enable")
 async def enable_service(service_name: str):
     """Enable a streaming service and persist to .env."""
@@ -195,6 +216,7 @@ async def authenticate(
     return StreamingAuthResponse(
         authenticated=success,
         verification_url=verification_url,
+        auth_url=verification_url,
         user_code=user_code,
         error=error,
         expires_in=expires_in,
