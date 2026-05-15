@@ -155,11 +155,12 @@ def _get_platform_asset_name(version: str) -> str:
     if system == "windows":
         return f"tune-server-{version}-windows-setup.exe"
     elif system == "darwin":
-        # Check if ARM or Intel
+        # macOS: always download the DMG (drag-install preserves codesign;
+        # tar.gz extraction breaks it).
         machine = platform.machine().lower()
         if "arm" in machine or "aarch64" in machine:
-            return f"tune-server-{version}-macos.tar.gz"
-        return f"tune-server-{version}-macos-intel.tar.gz"
+            return f"tune-server-{version}-macos.dmg"
+        return f"tune-server-{version}-macos-intel.dmg"
     return f"tune-server-{version}-linux.tar.gz"
 
 
@@ -238,6 +239,12 @@ class UpdateChecker:
             logger.info("auto_update_handing_off_to_windows_helper")
             await asyncio.sleep(2)
             os.kill(os.getpid(), signal.SIGTERM)
+            return
+
+        # macOS: the DMG has been downloaded and opened in Finder.
+        # Do NOT SIGTERM — the user needs to drag-install manually.
+        if platform.system().lower() == "darwin":
+            logger.info("auto_update_dmg_ready_macos")
             return
 
         # systemd / launchd / supervisord will restart us; for plain
@@ -491,7 +498,41 @@ exit /b 0
                             installer=str(archive_path))
                 return True
 
-            # Linux/macOS: extract the archive and replace files in-place
+            # macOS: download the DMG to ~/Downloads and open it in Finder.
+            # In-place file replacement breaks codesign on macOS bundles, so
+            # we let the user drag-install from the DMG instead.
+            if platform.system().lower() == "darwin":
+                import subprocess
+                dmg_dest = Path.home() / "Downloads" / self._asset_name
+                shutil.move(str(archive_path), str(dmg_dest))
+                logger.info("update_dmg_ready", path=str(dmg_dest))
+
+                # Open the DMG in Finder so the user sees the drag-install window
+                subprocess.Popen(["/usr/bin/open", str(dmg_dest)])
+
+                self._install_state = {
+                    "phase": "dmg_ready",
+                    "dmg_path": str(dmg_dest),
+                    "version": self._latest_version,
+                }
+
+                # Notify via event bus
+                if self._event_bus:
+                    from tune_server.event_bus import Event, EventType
+                    await self._event_bus.emit(Event(
+                        type=EventType.SYSTEM_UPDATE_INSTALLED,
+                        data={
+                            "version": self._latest_version,
+                            "dmg_ready": True,
+                            "dmg_path": str(dmg_dest),
+                        },
+                    ))
+
+                # Clean up temp dir (DMG already moved to Downloads)
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return True
+
+            # Linux: extract the archive and replace files in-place
             extract_dir = tmp_dir / "extracted"
             if archive_path.suffix == ".zip":
                 with zipfile.ZipFile(archive_path) as zf:

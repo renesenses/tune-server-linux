@@ -746,13 +746,18 @@ async def install_update():
     }
 
     is_windows = platform.system().lower() == "windows"
+    is_macos = platform.system().lower() == "darwin"
 
     async def _run_install_in_background():
         success = await deps.update_checker.download_and_install()
         if not success:
             deps.update_checker._install_state["phase"] = "failed"
             return
-        if is_windows:
+        if is_macos:
+            # macOS: download_and_install already set phase to "dmg_ready".
+            # Do NOT SIGTERM — the user drag-installs from the DMG.
+            pass
+        elif is_windows:
             deps.update_checker._spawn_windows_apply_helper()
             deps.update_checker._install_state["phase"] = "restarting"
             await asyncio.sleep(2)
@@ -774,7 +779,7 @@ async def install_update():
 @router.get("/update/status")
 async def update_status():
     """Poll the in-progress install state. Returns phase ∈
-    {idle, downloading, restarting, installed_restart_required, failed}.
+    {idle, downloading, restarting, installed_restart_required, dmg_ready, failed}.
     """
     if not deps.update_checker:
         return {"phase": "idle"}
