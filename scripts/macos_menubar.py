@@ -61,10 +61,23 @@ def _log_path() -> Path:
     return p
 
 
+def _rotate_log(path: Path, max_bytes: int = 5 * 1024 * 1024, keep: int = 2) -> None:
+    """Rotate log if it exceeds max_bytes. Keep up to `keep` old copies."""
+    if not path.exists() or path.stat().st_size < max_bytes:
+        return
+    for i in range(keep - 1, 0, -1):
+        src = path.with_suffix(f".log.{i}")
+        dst = path.with_suffix(f".log.{i + 1}")
+        if src.exists():
+            src.rename(dst)
+    path.rename(path.with_suffix(".log.1"))
+
+
 class TuneServerApp(rumps.App):
     def __init__(self) -> None:
         super().__init__("🎵", quit_button=None)
         self.server_proc: subprocess.Popen | None = None
+        _rotate_log(_log_path())
         self.log_file = open(_log_path(), "a", buffering=1)
 
         self.status_item = rumps.MenuItem("Status: démarrage…")
