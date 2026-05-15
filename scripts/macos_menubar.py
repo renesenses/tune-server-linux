@@ -432,7 +432,7 @@ def main() -> None:
     # Skip rumps entirely if a previous launch hung (sentinel file).
     # Also skip if --no-menubar is passed explicitly.
     sentinel = Path.home() / "Library" / "Application Support" / "Tune Server" / ".rumps_failed"
-    if sentinel.exists() or "--no-menubar" in sys.argv:
+    if sentinel.exists() or "--no-menubar" in sys.argv or os.environ.get("TUNE_NO_MENUBAR"):
         sentinel.unlink(missing_ok=True)
         _fallback_run()
         return

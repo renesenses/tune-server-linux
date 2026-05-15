@@ -70,7 +70,13 @@ cd "$DATA_DIR"
 exec "$DIR/tune-server"
 LAUNCHER
 chmod +x "Tune Server.app/Contents/MacOS/launch.sh"
-/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable launch.sh" "Tune Server.app/Contents/Info.plist"
+# Keep the original rumps Mach-O as CFBundleExecutable (macOS requires Mach-O)
+# but force --no-menubar so rumps is always skipped → direct server mode
+# This avoids the rumps hang that affects some Intel Macs on Sequoia.
+/usr/libexec/PlistBuddy -c "Delete :LSEnvironment" "Tune Server.app/Contents/Info.plist" 2>/dev/null
+/usr/libexec/PlistBuddy -c "Add :LSEnvironment dict" "Tune Server.app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :LSEnvironment:TUNE_NO_MENUBAR string 1" "Tune Server.app/Contents/Info.plist"
+echo "  TUNE_NO_MENUBAR env set → direct server mode"
 
 # 7. Bundle ffmpeg (static x86_64)
 echo "[7/7] Bundling ffmpeg..."
