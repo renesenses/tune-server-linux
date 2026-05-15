@@ -79,6 +79,32 @@ NEXT_BUILD=$((CURRENT_BUILD + 1))
 sed -i.bak -E "s/CURRENT_PROJECT_VERSION: [0-9]+/CURRENT_PROJECT_VERSION: $NEXT_BUILD/g" "$IPAD"
 rm "$IPAD.bak"
 
+# 6. Homebrew formula — update version in local formula + push to tap repo
+FORMULA="$DEV/tune-server-linux/homebrew/tune-server.rb"
+if [ -f "$FORMULA" ]; then
+    sed -i.bak -E "s/^  version \"[0-9]+\\.[0-9]+\\.[0-9]+\"/  version \"$VERSION\"/" "$FORMULA"
+    sed -i.bak -E "s|/v[0-9]+\\.[0-9]+\\.[0-9]+/|/v$VERSION/|g" "$FORMULA"
+    sed -i.bak -E "s/v[0-9]+\\.[0-9]+\\.[0-9]+\\.tar\\.gz/v$VERSION.tar.gz/" "$FORMULA"
+    sed -i.bak -E "s/Tune Server v[0-9]+\\.[0-9]+\\.[0-9]+/Tune Server v$VERSION/" "$FORMULA"
+    rm -f "$FORMULA.bak"
+    echo "  - $FORMULA"
+
+    # Push to homebrew-tap repo via GitHub API (if gh is available)
+    if command -v gh &>/dev/null; then
+        TAP_SHA=$(gh api repos/renesenses/homebrew-tap/contents/Formula/tune-server.rb -q '.sha' 2>/dev/null || true)
+        if [ -n "$TAP_SHA" ]; then
+            CONTENT=$(base64 -i "$FORMULA")
+            gh api -X PUT repos/renesenses/homebrew-tap/contents/Formula/tune-server.rb \
+                -f message="Update tune-server formula to v$VERSION" \
+                -f content="$CONTENT" \
+                -f sha="$TAP_SHA" >/dev/null 2>&1 \
+                && echo "  - homebrew-tap updated on GitHub" \
+                || echo "  ! homebrew-tap update failed (push manually)"
+        fi
+    fi
+fi
+
+echo
 echo "Bumped Tune to v$VERSION (build $NEXT_BUILD for Apple targets)"
 echo "  - $PYPROJECT"
 echo "  - $BAT"
