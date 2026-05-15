@@ -18,7 +18,38 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-import rumps
+# rumps is imported lazily in main() — importing it at module level
+# hangs on some Intel Macs where PyObjC/AppKit is incompatible.
+# Provide a stub so the class definition doesn't crash at import time.
+try:
+    if os.environ.get("TUNE_NO_MENUBAR"):
+        raise ImportError("TUNE_NO_MENUBAR set")
+    import rumps
+except ImportError:
+    class _StubModule:
+        """Minimal stub so `class TuneServerApp(rumps.App)` parses."""
+        class App:
+            def __init__(self, *a, **kw): pass
+            def run(self): pass
+        class MenuItem:
+            def __init__(self, *a, **kw): pass
+            hidden = False
+            title = ""
+            def set_callback(self, *a): pass
+        class Timer:
+            def __init__(self, *a, **kw): pass
+            def start(self): pass
+        @staticmethod
+        def timer(interval):
+            def decorator(fn): return fn
+            return decorator
+        @staticmethod
+        def alert(**kw): return 0
+        @staticmethod
+        def notification(**kw): pass
+        @staticmethod
+        def quit_application(): pass
+    rumps = _StubModule()
 
 
 def _runtime_binary() -> Path:
@@ -429,8 +460,12 @@ def _fallback_run() -> None:
 
 
 def main() -> None:
-    # Skip rumps entirely if a previous launch hung (sentinel file).
-    # Also skip if --no-menubar is passed explicitly.
+    global rumps
+
+    # Skip rumps entirely if a previous launch hung (sentinel file),
+    # --no-menubar is passed, or TUNE_NO_MENUBAR env is set.
+    # This check MUST happen BEFORE importing rumps — the import itself
+    # hangs on some Intel Macs where PyObjC/AppKit is incompatible.
     sentinel = Path.home() / "Library" / "Application Support" / "Tune Server" / ".rumps_failed"
     if sentinel.exists() or "--no-menubar" in sys.argv or os.environ.get("TUNE_NO_MENUBAR"):
         sentinel.unlink(missing_ok=True)
@@ -443,6 +478,8 @@ def main() -> None:
     sentinel.write_text("pending")
 
     try:
+        import rumps as _rumps
+        rumps = _rumps
         app = TuneServerApp()
         # If we get past __init__ without hanging, rumps is likely OK.
         # Remove sentinel — the quit handler also removes it on clean exit.
