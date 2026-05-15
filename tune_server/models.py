@@ -130,6 +130,7 @@ class Track(BaseModel):
     loudness_lufs: Optional[float] = None
     credits: list[TrackCredit] | None = None
     musicbrainz_recording_id: Optional[str] = None
+    gapless_next: bool = False
 
 
 class Playlist(BaseModel):
@@ -170,6 +171,7 @@ class Zone(BaseModel):
     signal_path: SignalPath | None = None
     stereo_pair_id: str | None = None
     stereo_channel: str | None = None  # "left" or "right"
+    audiophile_mode: bool = False
 
 
 class ZoneGroupModel(BaseModel):

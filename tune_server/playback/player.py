@@ -71,6 +71,10 @@ class Player:
         # Parametric equalizer
         self._eq_enabled: bool = False
         self._eq_bands: list[dict] = []  # each: {"freq": 60, "gain": 0, "q": 1.0}
+        # Audiophile mode — disables all DSP processing for purest signal path
+        self._audiophile_mode: bool = False
+        # Quality preference per zone (used by streaming connectors)
+        self._quality_preference: str = "max"
         # Plugin hooks: each PlayerHookEvent maps to a list of callables
         # invoked in registration order. Sync OR async, exceptions are
         # caught per-hook so a faulty plugin can't break playback.
@@ -102,6 +106,37 @@ class Player:
     @property
     def signal_path(self) -> SignalPath | None:
         return self._signal_path
+
+    @property
+    def audiophile_mode(self) -> bool:
+        return self._audiophile_mode
+
+    @property
+    def quality_preference(self) -> str:
+        return self._quality_preference
+
+    def set_quality_preference(self, quality: str) -> None:
+        if quality not in ("max", "hires", "cd", "low"):
+            raise ValueError(f"Invalid quality: {quality}")
+        self._quality_preference = quality
+        logger.info("quality_preference_changed", zone_id=self._zone_id, quality=quality)
+
+    async def set_audiophile_mode(self, enabled: bool) -> None:
+        """Enable or disable audiophile mode.
+
+        When enabling: disables EQ, crossfade, normalization and sets volume
+        to 1.0 (bit-perfect signal path). When disabling: only clears the
+        flag — user controls individual settings separately.
+        """
+        self._audiophile_mode = enabled
+        if enabled:
+            self._eq_enabled = False
+            self._crossfade_enabled = False
+            self._normalization_enabled = False
+            await self.set_volume(1.0)
+            logger.info("audiophile_mode_enabled", zone_id=self._zone_id)
+        else:
+            logger.info("audiophile_mode_disabled", zone_id=self._zone_id)
 
     def set_output(self, output: OutputTarget) -> None:
         self._output = output
@@ -136,8 +171,10 @@ class Player:
         """Build an FFmpeg -af equalizer filter chain from the current EQ bands.
 
         Only bands with non-zero gain are included. Returns None if EQ is
-        disabled or all gains are zero.
+        disabled, all gains are zero, or audiophile mode is active.
         """
+        if self._audiophile_mode:
+            return None
         if not self._eq_enabled or not self._eq_bands:
             return None
         parts = []
@@ -200,6 +237,8 @@ class Player:
         For DLNA output: uses volume ramp (fade-out current, queue next,
         fade-in when next track starts).
         """
+        if self._audiophile_mode:
+            return
         if not self._crossfade_enabled or self._crossfade_duration <= 0:
             return
         track = self.current_track
@@ -613,6 +652,10 @@ class Player:
                 ok = await self._output.set_next_track(next_info, next_track)
                 if ok:
                     self._renderer_has_next = True
+                    # Mark current track as gapless-ready for API consumers
+                    current = self._queue.current
+                    if current:
+                        current.gapless_next = True
                     logger.info("gapless_next_set", track=next_track.title)
                     return
             except Exception:
@@ -621,6 +664,10 @@ class Player:
         # For pipeline-based playback (local output): pre-decode the next track
         if self._gapless:
             await self._gapless.preload(next_track)
+            # Mark current track as gapless-ready once preload starts
+            current = self._queue.current
+            if current and self._gapless.has_next:
+                current.gapless_next = True
 
     async def _pre_buffer_next(self) -> None:
         """Pre-decode the start of the next track for seamless transitions.

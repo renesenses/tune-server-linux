@@ -649,6 +649,51 @@ async def save_queue_as_playlist(zone_id: int, body: dict = {}):
     return {"playlist_id": playlist_id, "name": name, "track_count": len(track_ids)}
 
 
+@router.get("/audiophile")
+async def get_audiophile_mode(zone_id: int):
+    """Return current audiophile mode status for a zone."""
+    zone = _get_zone(zone_id)
+    effects_disabled = []
+    if zone.player.audiophile_mode:
+        effects_disabled = ["eq", "crossfade", "normalization"]
+    return {"enabled": zone.player.audiophile_mode, "effects_disabled": effects_disabled}
+
+
+@router.post("/audiophile")
+async def set_audiophile_mode(zone_id: int, body: dict = {}):
+    """Enable or disable audiophile mode on a zone.
+
+    When enabled: disables EQ, crossfade, normalization, sets volume to 1.0.
+    When disabled: only clears the flag (user controls DSP settings separately).
+    """
+    zone = _get_zone(zone_id)
+    enabled = body.get("enabled", True)
+    await zone.player.set_audiophile_mode(enabled)
+    effects_disabled = ["eq", "crossfade", "normalization"] if enabled else []
+    return {"enabled": enabled, "effects_disabled": effects_disabled}
+
+
+@router.get("/quality")
+async def get_quality_preference(zone_id: int):
+    """Return current streaming quality preference for a zone."""
+    zone = _get_zone(zone_id)
+    return {"quality": zone.player.quality_preference}
+
+
+@router.post("/quality")
+async def set_quality_preference(zone_id: int, body: dict = {}):
+    """Set streaming quality preference for a zone.
+
+    Accepted values: "max", "hires", "cd", "low".
+    """
+    zone = _get_zone(zone_id)
+    quality = body.get("quality", "max")
+    if quality not in ("max", "hires", "cd", "low"):
+        raise HTTPException(status_code=400, detail="quality must be one of: max, hires, cd, low")
+    zone.player.set_quality_preference(quality)
+    return {"quality": quality}
+
+
 @router.post("/crossfade")
 async def set_crossfade(zone_id: int, body: dict = {}):
     """Enable/disable crossfade between tracks."""

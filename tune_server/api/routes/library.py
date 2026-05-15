@@ -500,6 +500,76 @@ async def enrich_album_musicbrainz_endpoint(album_id: int):
     return result
 
 
+# Batch enrichment state — stored on the module so it survives across requests
+_enrich_all_state: dict = {"running": False, "processed": 0, "total": 0, "task_id": None}
+
+
+@router.post("/enrich-all", status_code=202)
+async def enrich_all_albums_endpoint():
+    """Launch background enrichment for ALL albums without MusicBrainz data.
+
+    Rate-limited to 1 req/sec to respect the MusicBrainz API terms.
+    Returns immediately with a task_id and total count.
+    """
+    global _enrich_all_state
+
+    if _enrich_all_state["running"]:
+        return {
+            "task_id": _enrich_all_state["task_id"],
+            "total_albums": _enrich_all_state["total"],
+            "already_running": True,
+        }
+
+    if not deps.album_repo:
+        raise HTTPException(status_code=503, detail="Album repo not available")
+
+    # Count albums without MusicBrainz IDs
+    row = await deps.db.fetchone(
+        "SELECT COUNT(*) as cnt FROM albums WHERE musicbrainz_release_id IS NULL"
+    )
+    total = row["cnt"] if row else 0
+
+    import uuid
+    task_id = str(uuid.uuid4())[:8]
+    _enrich_all_state = {"running": True, "processed": 0, "total": total, "task_id": task_id}
+
+    async def _run_batch():
+        try:
+            from tune_server.metadata.musicbrainz_release import enrich_album_musicbrainz_ids
+            rows = await deps.db.fetchall(
+                "SELECT id FROM albums WHERE musicbrainz_release_id IS NULL"
+            )
+            for i, row in enumerate(rows):
+                if not _enrich_all_state["running"]:
+                    break  # cancelled
+                try:
+                    await enrich_album_musicbrainz_ids(row["id"], deps.album_repo)
+                except Exception:
+                    logger.debug("enrich_all_album_error", album_id=row["id"], exc_info=True)
+                _enrich_all_state["processed"] = i + 1
+                # Rate limit: 1 request per second (MusicBrainz API requirement)
+                await asyncio.sleep(1.0)
+            logger.info("enrich_all_complete", processed=_enrich_all_state["processed"], total=total)
+        except Exception:
+            logger.exception("enrich_all_error")
+        finally:
+            _enrich_all_state["running"] = False
+
+    asyncio.create_task(_run_batch())
+    return {"task_id": task_id, "total_albums": total}
+
+
+@router.get("/enrich-all/status")
+async def enrich_all_status():
+    """Return progress of the batch MusicBrainz enrichment task."""
+    return {
+        "processed": _enrich_all_state["processed"],
+        "total": _enrich_all_state["total"],
+        "running": _enrich_all_state["running"],
+        "task_id": _enrich_all_state.get("task_id"),
+    }
+
+
 @router.get("/search", response_model=SearchResult)
 async def search(q: str = Query(..., min_length=1), limit: int = Query(50, le=200)):
     return await full_text_search(deps.db, q, limit=limit)

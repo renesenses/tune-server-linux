@@ -10,9 +10,13 @@ from typing import Optional
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
+import structlog
+
 from tune_server.api.deps import deps
 from tune_server.config import persist_env_var, settings
 from tune_server.models import BackupInfo, MusicDirRequest, MusicDirsResponse, OutputType, ScanStatusResponse, SystemConfigResponse, SystemHealthResponse, SystemStatsResponse
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -846,6 +850,182 @@ async def get_logs(lines: int = 100):
         return {"logs": "", "lines": 0}
 
 
+@router.get("/config/export")
+async def export_config():
+    """Export server configuration as JSON.
+
+    Includes zones, streaming auth status (NOT tokens), playlists, and settings.
+    Designed for backup/migration between instances.
+    """
+    config: dict = {"version": 1}
+
+    # Zones
+    zones_data: list[dict] = []
+    if deps.zone_manager:
+        for z in deps.zone_manager.list_zones():
+            zones_data.append({
+                "name": z.name,
+                "output_type": z.output_type.value,
+                "output_device_id": z.output_device_id,
+                "volume": z.player.volume,
+                "sync_delay_ms": z.sync_delay_ms,
+            })
+    config["zones"] = zones_data
+
+    # Streaming auth status (NOT tokens/credentials)
+    streaming_status: dict = {}
+    for name, svc in deps.streaming_services.items():
+        try:
+            streaming_status[name] = {"authenticated": bool(svc.is_authenticated)}
+        except Exception:
+            streaming_status[name] = {"authenticated": False}
+    config["streaming_services"] = streaming_status
+
+    # Playlists
+    playlists_data: list[dict] = []
+    if deps.playlist_repo:
+        try:
+            playlists = await deps.playlist_repo.list()
+            for p in playlists:
+                playlists_data.append({
+                    "name": p.get("name", "") if isinstance(p, dict) else getattr(p, "name", ""),
+                    "track_count": p.get("track_count", 0) if isinstance(p, dict) else getattr(p, "track_count", 0),
+                })
+        except Exception:
+            pass
+    config["playlists"] = playlists_data
+
+    # Settings
+    config["settings"] = {
+        "music_dirs": settings.music_dirs,
+        "api_port": settings.api_port,
+        "stream_port": settings.stream_port,
+        "resample_policy": settings.resample_policy,
+        "crossfade_enabled": settings.crossfade_enabled,
+        "crossfade_duration": settings.crossfade_duration,
+        "enrich_on_scan": settings.enrich_on_scan,
+        "metadata_readonly": settings.metadata_readonly,
+    }
+
+    return config
+
+
+@router.post("/config/import")
+async def import_config(body: dict):
+    """Import server configuration from JSON.
+
+    Recreates zones and applies settings. Streaming auth is skipped for
+    security (tokens are never exported).
+    """
+    if not deps.zone_manager:
+        raise HTTPException(status_code=503, detail="Zone manager not available")
+
+    imported: dict = {"zones_created": 0, "settings_applied": []}
+
+    # Import zones
+    zones_data = body.get("zones", [])
+    for z_data in zones_data:
+        name = z_data.get("name")
+        if not name:
+            continue
+        # Check if zone with this name already exists
+        existing = [z for z in deps.zone_manager.list_zones() if z.name == name]
+        if existing:
+            continue  # Skip duplicates
+        try:
+            output_type = OutputType(z_data.get("output_type", "local"))
+            await deps.zone_manager.create_zone(
+                name=name,
+                output_type=output_type,
+                output_device_id=z_data.get("output_device_id"),
+            )
+            imported["zones_created"] += 1
+        except Exception as e:
+            logger.warning("config_import_zone_failed", name=name, error=str(e))
+
+    # Import settings
+    imported_settings = body.get("settings", {})
+    if "music_dirs" in imported_settings:
+        for d in imported_settings["music_dirs"]:
+            if d not in settings.music_dirs and Path(d).is_dir():
+                settings.music_dirs.append(d)
+                imported["settings_applied"].append(f"music_dir:{d}")
+
+    for key in ("enrich_on_scan", "metadata_readonly"):
+        if key in imported_settings:
+            setattr(settings, key, imported_settings[key])
+            imported["settings_applied"].append(key)
+
+    return imported
+
+
+@router.get("/diagnostics/network")
+async def network_diagnostics():
+    """Network auto-diagnostic — multicast, renderers, DNS, internet."""
+    import socket
+
+    result: dict = {}
+
+    # Multicast support (SSDP bind test)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except (AttributeError, OSError):
+            pass  # SO_REUSEPORT not available on Windows
+        sock.settimeout(1)
+        sock.bind(("", 1900))
+        mreq = socket.inet_aton("239.255.255.250") + socket.inet_aton("0.0.0.0")
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        sock.close()
+        result["multicast_supported"] = True
+    except Exception as e:
+        result["multicast_supported"] = False
+        result["multicast_error"] = str(e)
+
+    # Discovered renderers
+    renderers: list[dict] = []
+    if deps.discovery_manager:
+        for d in deps.discovery_manager.list_devices():
+            renderers.append({
+                "id": d.id,
+                "name": d.name,
+                "type": d.type.value if hasattr(d.type, "value") else str(d.type),
+                "host": d.host,
+            })
+    result["discovered_renderers"] = renderers
+
+    # Port 8888 reachable from localhost
+    try:
+        sock = socket.create_connection(("127.0.0.1", settings.api_port), timeout=2)
+        sock.close()
+        result["port_reachable"] = True
+    except Exception:
+        result["port_reachable"] = False
+    result["port"] = settings.api_port
+
+    # DNS resolution for streaming domains
+    dns_results: dict[str, bool] = {}
+    for domain in ("tidal.com", "api.qobuz.com", "api.deezer.com"):
+        try:
+            socket.getaddrinfo(domain, 443, socket.AF_INET, socket.SOCK_STREAM)
+            dns_results[domain] = True
+        except Exception:
+            dns_results[domain] = False
+    result["dns_resolution"] = dns_results
+
+    # Internet connectivity
+    try:
+        sock = socket.create_connection(("1.1.1.1", 443), timeout=3)
+        sock.close()
+        result["internet_available"] = True
+    except Exception:
+        result["internet_available"] = False
+
+    return result
+
+
 @router.get("/diagnostics/bundle")
 async def diagnostics_bundle():
     """One-click diagnostic ZIP for testers.
@@ -969,7 +1149,120 @@ async def diagnostics(errors_limit: int = Query(50, le=200)):
     except ImportError:
         pass
 
+    # ffmpeg version
+    diag["ffmpeg_version"] = _ffmpeg_version()
+
+    # ffprobe available
+    import shutil
+    diag["ffprobe_available"] = shutil.which("ffprobe") is not None
+
+    # Disk free on DB partition
+    diag["disk_free_mb"] = _disk_free_mb()
+
+    # Audio devices (optional sounddevice)
+    diag["audio_devices"] = _list_audio_devices()
+
+    # Network interfaces (non-loopback)
+    diag["network_interfaces"] = _list_network_interfaces()
+
+    # Music dirs status
+    diag["music_dirs_status"] = _music_dirs_status()
+
     return diag
+
+
+def _ffmpeg_version() -> str | None:
+    """Run ``ffmpeg -version`` and return the first line."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["ffmpeg", "-version"], capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout.splitlines()[0]
+    except Exception:
+        pass
+    return None
+
+
+def _disk_free_mb() -> int | None:
+    """Free disk space (MB) on the partition containing the DB file."""
+    try:
+        import shutil
+        db_path = getattr(settings, "db_path", "tune_server.db")
+        stat = shutil.disk_usage(Path(db_path).parent)
+        return int(stat.free / (1024 * 1024))
+    except Exception:
+        return None
+
+
+def _list_audio_devices() -> list[dict] | None:
+    """List local audio output devices via sounddevice (optional)."""
+    try:
+        import sounddevice as sd
+        devices = []
+        for i, d in enumerate(sd.query_devices()):
+            if d.get("max_output_channels", 0) > 0:
+                devices.append({
+                    "id": i,
+                    "name": d["name"],
+                    "channels": d["max_output_channels"],
+                    "sample_rate": int(d.get("default_samplerate", 0)),
+                })
+        return devices
+    except Exception:
+        return None
+
+
+def _list_network_interfaces() -> list[dict]:
+    """List non-loopback network interfaces with their IP addresses."""
+    result: list[dict] = []
+    try:
+        import socket
+        import psutil
+        addrs = psutil.net_if_addrs()
+        for iface, addr_list in addrs.items():
+            for addr in addr_list:
+                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                    result.append({"name": iface, "ip": addr.address})
+    except ImportError:
+        # psutil not available — fallback
+        try:
+            import socket
+            hostname = socket.gethostname()
+            ips = socket.getaddrinfo(hostname, None, socket.AF_INET)
+            for info in ips:
+                ip = info[4][0]
+                if not ip.startswith("127."):
+                    result.append({"name": "unknown", "ip": ip})
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return result
+
+
+def _music_dirs_status() -> list[dict]:
+    """Check each configured music_dir: exists, readable, file count."""
+    statuses: list[dict] = []
+    for music_dir in settings.music_dirs:
+        p = Path(music_dir)
+        exists = p.is_dir()
+        readable = False
+        file_count = 0
+        if exists:
+            readable = os.access(str(p), os.R_OK)
+            try:
+                file_count = sum(1 for _ in p.rglob("*") if _.is_file())
+            except Exception:
+                file_count = -1
+        statuses.append({
+            "path": music_dir,
+            "exists": exists,
+            "readable": readable,
+            "file_count": file_count,
+        })
+    return statuses
 
 
 def _db_diagnostics(engine: str) -> dict:

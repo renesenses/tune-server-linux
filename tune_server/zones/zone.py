@@ -150,6 +150,7 @@ class ZoneInstance:
             online=self._online,
             stereo_pair_id=self._stereo_pair_id,
             stereo_channel=self._stereo_channel,
+            audiophile_mode=self._player.audiophile_mode,
         )
 
     async def _save_queue(self, tracks: list[Track], position: int) -> None:

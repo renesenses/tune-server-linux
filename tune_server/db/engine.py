@@ -596,42 +596,22 @@ class SQLiteDatabase:
     # ------------------------------------------------------------------
 
     def _backup_database(self) -> None:
-        """Create a timestamped backup of the database, keeping last N backups."""
+        """Create a timestamped backup of the database before schema migration.
+
+        Delegates to the shared backup module (``tune_server.db.backup``)
+        which handles timestamped copies, WAL/SHM files, and rotation.
+        """
         db_file = Path(self._db_path)
         if not db_file.exists():
             return
 
-        backup_dir = db_file.parent / "backups"
-        backup_dir.mkdir(exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = backup_dir / f"{db_file.stem}_{timestamp}{db_file.suffix}"
-
+        from tune_server.db.backup import create_backup
         try:
-            shutil.copy2(str(db_file), str(backup_path))
-            # Also copy WAL and SHM files if they exist
-            for suffix in ("-wal", "-shm"):
-                wal_file = db_file.with_name(db_file.name + suffix)
-                if wal_file.exists():
-                    shutil.copy2(str(wal_file), str(backup_path) + suffix)
-            logger.info("database_backup_created", path=str(backup_path))
+            result = create_backup(self._db_path)
+            if result:
+                logger.info("database_pre_migration_backup", **result)
         except Exception:
             logger.exception("database_backup_error")
-            return
-
-        # Prune old backups, keep only the last N
-        backups = sorted(backup_dir.glob(f"{db_file.stem}_*{db_file.suffix}"))
-        while len(backups) > _MAX_BACKUPS:
-            old = backups.pop(0)
-            try:
-                old.unlink()
-                for suffix in ("-wal", "-shm"):
-                    wal = old.with_name(old.name + suffix)
-                    if wal.exists():
-                        wal.unlink()
-                logger.info("database_backup_pruned", path=str(old))
-            except Exception:
-                pass
 
     def list_backups(self) -> list[dict]:
         """List available backups, newest first."""

@@ -161,52 +161,29 @@ class SADatabase:
         logger.info("database_connected", engine=self.engine_name,
                      url=self._sa_url.split("@")[-1] if "@" in self._sa_url else self._sa_url)
 
-    def _backup_sqlite_if_needed(self, keep: int = 5) -> None:
-        """Snapshot the SQLite DB next to itself before migrations run.
+    def _backup_sqlite_if_needed(self) -> None:
+        """Snapshot the SQLite DB before migrations run.
 
-        Skipped for in-memory and PostgreSQL. Keeps the most recent ``keep``
-        backups; older ones are pruned. Failures are non-fatal — a backup we
-        can't write shouldn't block startup.
+        Delegates to the shared backup module (``tune_server.db.backup``)
+        which handles timestamped copies, WAL/SHM files, and rotation.
+        Skipped for in-memory and PostgreSQL. Failures are non-fatal.
         """
         if self.engine_name != "sqlite":
             return
         if not self._db_path or self._db_path == ":memory:":
             return
 
-        from datetime import datetime
         from pathlib import Path
-        import shutil
-
         src = Path(self._db_path)
         if not src.exists() or src.stat().st_size == 0:
             return  # Nothing to back up — fresh install
 
+        from tune_server.db.backup import create_backup
         try:
-            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            dst = src.with_suffix(src.suffix + f".bak.{stamp}")
-            shutil.copy2(src, dst)
-            logger.info(
-                "database_backup_created",
-                path=str(dst),
-                size_bytes=dst.stat().st_size,
-            )
-            # Rotate: keep the N most recent backups
-            backups = sorted(
-                src.parent.glob(f"{src.name}.bak.*"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            for old in backups[keep:]:
-                try:
-                    old.unlink()
-                    logger.debug("database_backup_pruned", path=str(old))
-                except OSError as e:
-                    logger.warning(
-                        "database_backup_prune_failed",
-                        path=str(old),
-                        error=str(e),
-                    )
-        except OSError as e:
+            result = create_backup(self._db_path)
+            if result:
+                logger.info("database_pre_migration_backup", **result)
+        except Exception as e:
             logger.warning("database_backup_failed", error=str(e), path=str(src))
 
     async def _run_column_migrations(self) -> None:
