@@ -153,40 +153,34 @@ class MetadataEnricher:
             # Enrich artist images from Discogs
             from tune_server.config import settings as _s
             if _s.discogs_token:
-                no_image = await self._db.fetchall(
-                    "SELECT id, name FROM artists WHERE (image_path IS NULL OR image_path = '') LIMIT 200",
-                )
+                all_artists = await self._artist_repo.list(limit=200)
+                no_image = [a for a in all_artists if not a.image_path]
                 enriched_count = 0
-                for row in no_image:
+                for artist in no_image:
                     img_path = await _fetch_discogs_artist_image(
-                        row["name"], _s.discogs_token, _s.artwork_cache_dir
+                        artist.name, _s.discogs_token, _s.artwork_cache_dir
                     )
                     if img_path:
-                        await self._db.execute(
-                            "UPDATE artists SET image_path = ? WHERE id = ?",
-                            (img_path, row["id"]),
-                        )
-                        await self._db.commit()
+                        artist.image_path = img_path
+                        try:
+                            await self._artist_repo.update(artist)
+                        except Exception:
+                            logger.debug("artist_image_update_failed", name=artist.name)
+                            continue
                         enriched_count += 1
-                    await asyncio.sleep(1.5)  # Discogs rate limit: ~1 req/sec
+                    await asyncio.sleep(1.5)
                 if enriched_count:
                     logger.info("artist_images_enriched", count=enriched_count)
 
             # Enrich albums
-            albums = await self._db.fetchall(
-                "SELECT id, title, artist_id FROM albums WHERE (year IS NULL OR genre IS NULL) LIMIT 50",
-            )
-            for album_row in albums:
-                album_id = album_row["id"]
-                album_title = album_row["title"]
-                artist_id = album_row["artist_id"]
+            all_albums = await self._album_repo.list(limit=50)
+            albums_to_enrich = [a for a in all_albums if not a.year or not a.genre]
+            for album in albums_to_enrich:
+                album_id = album.id
+                album_title = album.title
                 if not album_title:
                     continue
-                artist_name = ""
-                if artist_id:
-                    a = await self._artist_repo.get(artist_id)
-                    if a:
-                        artist_name = a.name
+                artist_name = album.artist_name or ""
                 try:
                     query = f'release:"{album_title}"'
                     if artist_name:
@@ -267,46 +261,38 @@ class MetadataEnricher:
                 # Enrich artist images from Discogs
                 from tune_server.config import settings as _s
                 if _s.discogs_token:
-                    no_image = await self._db.fetchall(
-                        "SELECT id, name FROM artists WHERE (image_path IS NULL OR image_path = '') LIMIT 200",
-                    )
+                    all_artists = await self._artist_repo.list(limit=200)
+                    no_image = [a for a in all_artists if not a.image_path]
                     enriched_count = 0
-                    for row in no_image:
+                    for artist in no_image:
                         if not self._running:
                             break
                         img_path = await _fetch_discogs_artist_image(
-                            row["name"], _s.discogs_token, _s.artwork_cache_dir
+                            artist.name, _s.discogs_token, _s.artwork_cache_dir
                         )
                         if img_path:
-                            await self._db.execute(
-                                "UPDATE artists SET image_path = ? WHERE id = ?",
-                                (img_path, row["id"]),
-                            )
-                            await self._db.commit()
+                            artist.image_path = img_path
+                            try:
+                                await self._artist_repo.update(artist)
+                            except Exception:
+                                logger.debug("artist_image_update_failed", name=artist.name)
+                                continue
                             enriched_count += 1
                         await asyncio.sleep(1.5)
                     if enriched_count:
                         logger.info("artist_images_enriched", count=enriched_count)
 
                 # Enrich albums without year or genre
-                albums = await self._db.fetchall(
-                    "SELECT id, title, artist_id FROM albums WHERE (year IS NULL OR genre IS NULL) LIMIT 10",
-                )
-                for album_row in albums:
+                all_albums = await self._album_repo.list(limit=50)
+                albums_to_enrich = [a for a in all_albums if not a.year or not a.genre]
+                for album in albums_to_enrich:
                     if not self._running:
                         break
-                    album_id = album_row["id"]
-                    album_title = album_row["title"]
-                    artist_id = album_row["artist_id"]
+                    album_id = album.id
+                    album_title = album.title
                     if not album_title:
                         continue
-
-                    # Get artist name for better search
-                    artist_name = ""
-                    if artist_id:
-                        a = await self._artist_repo.get(artist_id)
-                        if a:
-                            artist_name = a.name
+                    artist_name = album.artist_name or ""
 
                     try:
                         query = f'release:"{album_title}"'
