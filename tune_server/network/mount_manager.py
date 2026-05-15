@@ -241,7 +241,12 @@ class MountManager:
             return info
 
     async def _os_mount(self, request: MountRequest, mount_path: str) -> tuple[bool, str | None]:
-        """Execute OS mount command. Returns (success, error_message)."""
+        """Execute OS mount command. Returns (success, error_message).
+
+        For Linux SMB mounts, tries ``vers=3.0`` first (required by most
+        modern NAS including Synology).  If that fails, retries without
+        an explicit version so the kernel can auto-negotiate.
+        """
         try:
             cmd = self._build_mount_cmd(request, mount_path)
             # On Linux, mount requires root — use sudo (configured via sudoers)
@@ -259,14 +264,40 @@ class MountManager:
             if proc.returncode == 0:
                 logger.info("os_mount_success", mount_path=mount_path)
                 return True, None
-            else:
-                error = stderr.decode(errors="replace").strip()
-                # Provide helpful message for permission errors
-                if "permission" in error.lower() or "operation not permitted" in error.lower():
-                    manual_cmd = " ".join(cmd)
-                    error = f"{error}. Try manually: sudo {manual_cmd}"
-                logger.warning("os_mount_failed", mount_path=mount_path, error=error)
-                return False, error
+
+            first_error = stderr.decode(errors="replace").strip()
+            logger.warning("os_mount_failed", mount_path=mount_path, error=first_error)
+
+            # Fallback: on Linux SMB, retry without explicit vers= (let kernel negotiate)
+            if (
+                not _IS_MACOS
+                and request.protocol == ShareProtocol.SMB
+                and "vers=" in " ".join(cmd)
+            ):
+                fallback_cmd = self._build_mount_cmd_smb_fallback(request, mount_path)
+                fallback_cmd = ["sudo", "-n"] + fallback_cmd
+                logger.info("os_mount_fallback_exec", cmd=fallback_cmd, host=request.host)
+
+                proc2 = await asyncio.create_subprocess_exec(
+                    *fallback_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout2, stderr2 = await asyncio.wait_for(proc2.communicate(), timeout=30)
+
+                if proc2.returncode == 0:
+                    logger.info("os_mount_success_fallback", mount_path=mount_path)
+                    return True, None
+
+                fallback_error = stderr2.decode(errors="replace").strip()
+                logger.warning("os_mount_fallback_failed", mount_path=mount_path, error=fallback_error)
+                first_error = f"{first_error} | Fallback without vers=3.0: {fallback_error}"
+
+            # Provide helpful message for permission errors
+            if "permission" in first_error.lower() or "operation not permitted" in first_error.lower():
+                manual_cmd = " ".join(cmd)
+                first_error = f"{first_error}. Try manually: sudo {manual_cmd}"
+            return False, first_error
 
         except asyncio.TimeoutError:
             return False, "Mount command timed out (30s)"
@@ -276,11 +307,34 @@ class MountManager:
             return False, str(e)
 
     @staticmethod
+    def _build_mount_cmd_smb_fallback(request: MountRequest, mount_path: str) -> list[str]:
+        """Build Linux SMB mount command without explicit version (auto-negotiate)."""
+        cmd = [
+            "mount.cifs",
+            f"//{request.host}/{request.share_name}",
+            mount_path,
+            "-o",
+        ]
+        opts = []
+        if request.username:
+            opts.append(f"username={request.username}")
+            if request.password:
+                opts.append(f"password={request.password}")
+        else:
+            opts.append("guest")
+        opts.append("iocharset=utf8")
+        opts.append("noperm")
+        cmd.append(",".join(opts))
+        return cmd
+
+    @staticmethod
     def _build_mount_cmd(request: MountRequest, mount_path: str) -> list[str]:
         """Build the OS-specific mount command."""
         if request.protocol == ShareProtocol.SMB:
             if _IS_MACOS:
                 # mount_smbfs //[user:pass@]host/share /mount/point
+                # Use -N (no password prompt) for guest access, and -o
+                # nobrowse to avoid Finder interference
                 auth = ""
                 if request.username:
                     auth = request.username
@@ -291,11 +345,12 @@ class MountManager:
                     auth = "guest@"
                 return [
                     "mount_smbfs",
+                    "-N",
                     f"//{auth}{request.host}/{request.share_name}",
                     mount_path,
                 ]
             else:
-                # mount.cifs //host/share /mount/point -o username=...,password=...
+                # mount.cifs //host/share /mount/point -o username=...,password=...,vers=3.0,...
                 cmd = [
                     "mount.cifs",
                     f"//{request.host}/{request.share_name}",
@@ -309,6 +364,11 @@ class MountManager:
                         opts.append(f"password={request.password}")
                 else:
                     opts.append("guest")
+                # Synology and modern NAS default to SMB3; force version
+                # negotiation to avoid SMB1 fallback failures
+                opts.append("vers=3.0")
+                opts.append("iocharset=utf8")
+                opts.append("noperm")
                 cmd.append(",".join(opts))
                 return cmd
 

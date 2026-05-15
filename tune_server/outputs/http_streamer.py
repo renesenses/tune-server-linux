@@ -62,6 +62,19 @@ class StreamSession:
         self.client_connected = asyncio.Event()  # set when renderer makes first HTTP request
         self.created_at = time.monotonic()
         self.last_activity = time.monotonic()
+        # Active HTTP responses serving this session — forcibly closed on stop
+        self._active_responses: list[web.StreamResponse] = []
+
+    def register_response(self, response: web.StreamResponse) -> None:
+        """Track an active HTTP response so it can be aborted on stop."""
+        self._active_responses.append(response)
+
+    def unregister_response(self, response: web.StreamResponse) -> None:
+        """Remove a response from tracking (normal completion)."""
+        try:
+            self._active_responses.remove(response)
+        except ValueError:
+            pass
 
     async def put(self, data: bytes) -> None:
         if self.active and not self.file_served:
@@ -77,6 +90,18 @@ class StreamSession:
             self._chunks.put_nowait(None)
         except asyncio.QueueFull:
             logger.debug("stream_session_queue_full")
+        # Abort all active HTTP responses to force the renderer to stop
+        # receiving data (prevents 20-30s buffer lag on Stop/Next)
+        for resp in self._active_responses:
+            try:
+                writer = resp._payload_writer  # type: ignore[attr-defined]
+                if writer is not None:
+                    transport = getattr(writer, "transport", None)
+                    if transport is not None and not transport.is_closing():
+                        transport.close()
+            except Exception:
+                pass
+        self._active_responses.clear()
 
 
 class HttpAudioStreamer:
@@ -264,6 +289,7 @@ class HttpAudioStreamer:
         stream_headers.update(self._tune_timing_headers(session))
         response = web.StreamResponse(headers=stream_headers)
         await response.prepare(request)
+        session.register_response(response)
 
         try:
             # Prepend WAV header when streaming decoded PCM as WAV
@@ -282,6 +308,7 @@ class HttpAudioStreamer:
             else:
                 logger.debug("stream_write_error", stream_id=stream_id, error=str(e))
         finally:
+            session.unregister_response(response)
             try:
                 await response.write_eof()
             except Exception as e:
@@ -318,12 +345,14 @@ class HttpAudioStreamer:
                     headers=range_headers,
                 )
                 await response.prepare(request)
+                if session:
+                    session.register_response(response)
 
                 try:
                     with open(file_path, "rb") as f:
                         f.seek(start)
                         remaining = length
-                        while remaining > 0:
+                        while remaining > 0 and (not session or session.active):
                             chunk_size = min(65536, remaining)
                             chunk = await asyncio.to_thread(f.read, chunk_size)
                             if not chunk:
@@ -331,9 +360,13 @@ class HttpAudioStreamer:
                             await response.write(chunk)
                             remaining -= len(chunk)
 
-                    await response.write_eof()
+                    if not session or session.active:
+                        await response.write_eof()
                 except Exception:
                     logger.debug("serve_file_client_disconnected", stream_id=request.match_info.get("stream_id"))
+                finally:
+                    if session:
+                        session.unregister_response(response)
                 return response
             except (ValueError, OSError) as e:
                 logger.debug("serve_file_range_parse_failed", error=str(e))
@@ -348,18 +381,24 @@ class HttpAudioStreamer:
         full_headers.update(timing)
         response = web.StreamResponse(headers=full_headers)
         await response.prepare(request)
+        if session:
+            session.register_response(response)
 
         try:
             with open(file_path, "rb") as f:
-                while True:
+                while not session or session.active:
                     chunk = await asyncio.to_thread(f.read, 65536)
                     if not chunk:
                         break
                     await response.write(chunk)
 
-            await response.write_eof()
+            if not session or session.active:
+                await response.write_eof()
         except Exception:
             logger.debug("serve_file_client_disconnected", stream_id=request.match_info.get("stream_id"))
+        finally:
+            if session:
+                session.unregister_response(response)
         return response
 
     async def _proxy_stream(
@@ -384,15 +423,23 @@ class HttpAudioStreamer:
 
                 response = web.StreamResponse(headers=headers)
                 await response.prepare(request)
+                if session:
+                    session.register_response(response)
 
                 logger.info("proxy_stream_started", stream_id=stream_id, content_length=cl)
 
                 try:
                     async for chunk in upstream.content.iter_chunked(65536):
+                        if session and not session.active:
+                            break
                         await response.write(chunk)
-                    await response.write_eof()
+                    if not session or session.active:
+                        await response.write_eof()
                 except Exception:
                     logger.debug("proxy_stream_disconnected", stream_id=stream_id)
+                finally:
+                    if session:
+                        session.unregister_response(response)
 
                 return response
 
