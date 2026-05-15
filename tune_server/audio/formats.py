@@ -63,6 +63,8 @@ def format_from_extension(ext: str) -> AudioFormat | None:
         "aiff": AudioFormat.AIFF,
         "aif": AudioFormat.AIFF,
         "alac": AudioFormat.ALAC,
+        "wv": AudioFormat.FLAC,
+        "ape": AudioFormat.FLAC,
         "wma": AudioFormat.WMA,
         "dsf": AudioFormat.DSD,
         "dff": AudioFormat.DSD,

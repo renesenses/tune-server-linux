@@ -132,6 +132,7 @@ class DlnaOutput(OutputTarget):
             or detect_dsd_from_device_info(device_name, device_model)
         )
         self._capabilities = self._build_capabilities()
+        self._watchdog_task: asyncio.Task | None = None
         if self._supports_native_dsd:
             logger.info("dlna_dsd_support_detected", device=self.name)
 
@@ -187,6 +188,7 @@ class DlnaOutput(OutputTarget):
             await asyncio.sleep(_s.dlna_settle_ms / 1000.0)
         except Exception:
             logger.debug("dlna_pre_start_stop_failed", device=self.name)
+        self._cancel_watchdog()
         if self._stream_id:
             self._streamer.remove_session(self._stream_id)
             self._stream_id = None
@@ -216,6 +218,7 @@ class DlnaOutput(OutputTarget):
                 dmr = self._device
                 title = track.title or "Unknown"
                 await self._set_and_play(dmr, stream_url, title, metadata)
+                self._start_watchdog(stream_url, title, metadata)
 
                 self._direct_url = True
                 self._last_uri = stream_url
@@ -267,6 +270,7 @@ class DlnaOutput(OutputTarget):
                 dmr = self._device
                 title = track.title or "Unknown"
                 await self._set_and_play(dmr, stream_url, title, metadata)
+                self._start_watchdog(stream_url, title, metadata)
 
                 self._direct_url = True
                 self._available = True
@@ -293,6 +297,7 @@ class DlnaOutput(OutputTarget):
                 dmr = self._device
                 title = track.title or "Unknown"
                 await self._set_and_play(dmr, stream_url, title, metadata)
+                self._start_watchdog(stream_url, title, metadata)
 
                 self._direct_url = True
                 self._available = True
@@ -321,6 +326,7 @@ class DlnaOutput(OutputTarget):
             title = track.title if track else "Unknown"
             dmr = self._device
             await self._set_and_play(dmr, stream_url, title, metadata)
+            self._start_watchdog(stream_url, title, metadata)
 
             self._last_uri = stream_url
             self._available = True
@@ -350,6 +356,66 @@ class DlnaOutput(OutputTarget):
         await asyncio.sleep(_s.dlna_play_delay_ms / 1000.0)
         await asyncio.wait_for(dmr.async_play(), timeout=10)
 
+    def _start_watchdog(self, stream_url: str, title: str, metadata: str) -> None:
+        """Start a watchdog that retries SetAVTransportURI if the renderer
+        doesn't fetch the HTTP stream within 30 seconds."""
+        self._cancel_watchdog()
+        self._watchdog_task = asyncio.create_task(
+            self._watchdog_loop(stream_url, title, metadata)
+        )
+
+    def _cancel_watchdog(self) -> None:
+        """Cancel any pending watchdog timer."""
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
+
+    async def _watchdog_loop(self, stream_url: str, title: str, metadata: str) -> None:
+        """Wait up to 30s for the renderer to connect. If it doesn't, retry
+        SetAVTransportURI once. If the second attempt also times out, log
+        an error and give up."""
+        try:
+            session = self._streamer.get_session(self._stream_id) if self._stream_id else None
+            if not session:
+                return
+
+            # Wait for the renderer to make its first HTTP GET
+            try:
+                await asyncio.wait_for(session.client_connected.wait(), timeout=30)
+                logger.debug("dlna_watchdog_ok", device=self.name, msg="renderer connected")
+                return  # success — renderer fetched the stream
+            except asyncio.TimeoutError:
+                pass
+
+            # Renderer didn't connect within 30s — retry SetAVTransportURI
+            logger.warning(
+                "dlna_watchdog_retry",
+                device=self.name,
+                msg="renderer did not fetch stream within 30s, retrying SetAVTransportURI",
+            )
+            try:
+                dmr = self._device
+                await asyncio.wait_for(dmr.async_stop(), timeout=5)
+                await asyncio.sleep(0.5)
+                await self._set_and_play(dmr, stream_url, title, metadata)
+            except Exception:
+                logger.exception("dlna_watchdog_retry_failed", device=self.name)
+                return
+
+            # Wait another 30s after retry
+            try:
+                await asyncio.wait_for(session.client_connected.wait(), timeout=30)
+                logger.info("dlna_watchdog_retry_ok", device=self.name,
+                            msg="renderer connected after retry")
+            except asyncio.TimeoutError:
+                logger.error("dlna_watchdog_gave_up", device=self.name,
+                             msg="renderer still not fetching after retry")
+
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("dlna_watchdog_error", device=self.name, exc_info=True)
+
     async def _dmr_call(self, method: str, *args, **kwargs) -> bool:
         """Call DMR method with timeout."""
         func = getattr(self._device, method)
@@ -377,6 +443,7 @@ class DlnaOutput(OutputTarget):
                 await self._dmr_call("async_play")
 
     async def stop(self) -> None:
+        self._cancel_watchdog()
         await self._dmr_call("async_stop")
         if self._direct_url:
             self._direct_url = False
@@ -461,6 +528,7 @@ class DlnaOutput(OutputTarget):
             return url
 
     async def close(self) -> None:
+        self._cancel_watchdog()
         await self.stop()
 
     async def set_next_track(self, stream_info: AudioStreamInfo, track: Track) -> bool:

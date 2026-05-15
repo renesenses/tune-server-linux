@@ -56,7 +56,10 @@ def test_get_first_default():
 
 
 def test_supported_extensions():
-    expected = {".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".aiff", ".aif", ".wv", ".wma", ".dsf", ".dff", ".alac"}
+    expected = {
+        ".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".aiff",
+        ".aif", ".wv", ".wma", ".dsf", ".dff", ".dst", ".alac", ".ape",
+    }
     assert expected == SUPPORTED_EXTENSIONS
 
 

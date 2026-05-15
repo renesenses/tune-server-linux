@@ -294,6 +294,80 @@ async def scan_status():
     return ScanStatusResponse(scanning=deps.scanner.is_scanning if deps.scanner else False)
 
 
+@router.get("/stats/listening")
+async def listening_stats():
+    """Lightweight listening statistics dashboard.
+
+    Returns total plays, total listening hours, top artists, top albums,
+    recent plays, and plays-by-day trend. All from the playback_history table.
+    """
+    if not deps.db:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    # Total plays & duration
+    totals_row = await deps.db.fetchone(
+        "SELECT COUNT(*) as total_plays, COALESCE(SUM(listened_ms), 0) as total_ms "
+        "FROM playback_history"
+    )
+    total_plays = totals_row["total_plays"] if totals_row else 0
+    total_duration_hours = round((totals_row["total_ms"] if totals_row else 0) / 3_600_000, 1)
+
+    # Top artists
+    top_artists_rows = await deps.db.fetchall(
+        "SELECT artist_name as name, COUNT(*) as plays "
+        "FROM playback_history "
+        "WHERE artist_name IS NOT NULL AND artist_name != '' "
+        "GROUP BY artist_name ORDER BY plays DESC LIMIT 20"
+    )
+    top_artists = [{"name": r["name"], "plays": r["plays"]} for r in top_artists_rows]
+
+    # Top albums
+    top_albums_rows = await deps.db.fetchall(
+        "SELECT album_title as title, artist_name, MAX(cover_path) as cover_path, "
+        "COUNT(*) as plays "
+        "FROM playback_history "
+        "WHERE album_title IS NOT NULL AND album_title != '' "
+        "GROUP BY album_title, artist_name ORDER BY plays DESC LIMIT 20"
+    )
+    top_albums = [
+        {"title": r["title"], "artist_name": r["artist_name"],
+         "cover_path": r["cover_path"], "plays": r["plays"]}
+        for r in top_albums_rows
+    ]
+
+    # Recent plays
+    recent_rows = await deps.db.fetchall(
+        "SELECT track_title, artist_name, album_title, cover_path, "
+        "played_at, source, zone_id "
+        "FROM playback_history ORDER BY played_at DESC LIMIT 20"
+    )
+    recent = [
+        {"track_title": r["track_title"], "artist_name": r["artist_name"],
+         "album_title": r["album_title"], "cover_path": r["cover_path"],
+         "played_at": r["played_at"], "source": r["source"],
+         "zone_id": r["zone_id"]}
+        for r in recent_rows
+    ]
+
+    # Plays by day (last 30 days)
+    plays_by_day_rows = await deps.db.fetchall(
+        "SELECT DATE(played_at) as date, COUNT(*) as count "
+        "FROM playback_history "
+        "WHERE played_at > datetime('now', '-30 days') "
+        "GROUP BY DATE(played_at) ORDER BY date"
+    )
+    plays_by_day = [{"date": r["date"], "count": r["count"]} for r in plays_by_day_rows]
+
+    return {
+        "total_plays": total_plays,
+        "total_duration_hours": total_duration_hours,
+        "top_artists": top_artists,
+        "top_albums": top_albums,
+        "recent": recent,
+        "plays_by_day": plays_by_day,
+    }
+
+
 @router.get("/stats", response_model=SystemStatsResponse)
 async def system_stats():
     zones = deps.zone_manager.list_zones() if deps.zone_manager else []
