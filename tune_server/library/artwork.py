@@ -65,6 +65,17 @@ def extract_cover_art(file_path: str) -> Optional[bytes]:
             if covr:
                 return bytes(covr[0])
 
+        else:
+            tags = audio.tags or {}
+            if hasattr(tags, "getall"):
+                pics = tags.getall("APIC")
+                if pics:
+                    return pics[0].data
+            else:
+                for key in tags:
+                    if str(key).startswith("APIC"):
+                        return tags[key].data
+
         # Try generic approach: look for cover image files in folder
         folder = Path(file_path).parent
         _cover_names = {"cover", "folder", "front", "album", "artwork", "thumb"}
