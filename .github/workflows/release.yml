@@ -140,6 +140,8 @@ jobs:
           if [ -x "$HOME/.cargo/bin/librespot" ]; then
             cp "$HOME/.cargo/bin/librespot" dist/tune-server/librespot
             echo "Bundled librespot at dist/tune-server/librespot"
+            # Verify it will be picked up by the signing step
+            file dist/tune-server/librespot
           else
             echo "::warning::librespot not found — Spotify Connect feature will be unavailable in this build"
           fi
@@ -383,20 +385,33 @@ jobs:
             fi
           done
 
-          # 3) Sign the .app itself. NOT --deep: PyInstaller dist-info dirs
+          # 3) Sign librespot explicitly (Rust binary, critical for Gatekeeper)
+          if [ -f "${APP_DIR}/Contents/Resources/runtime/librespot" ]; then
+            echo "--- Signing librespot ---"
+            codesign "${SIGN_FLAGS[@]}" "${APP_DIR}/Contents/Resources/runtime/librespot"
+            codesign --display --verbose=2 "${APP_DIR}/Contents/Resources/runtime/librespot" 2>&1 | grep -E "Authority|flags"
+          fi
+
+          # 4) Sign the .app itself. NOT --deep: PyInstaller dist-info dirs
           #    are not signable bundles. Sub-components are already signed.
           codesign "${SIGN_FLAGS[@]}" "${APP_DIR}"
 
-          # Verification — Apple requires Authority=Developer ID, a secure
-          # Timestamp, and runtime flag on every Mach-O.
+          # 5) Fail-fast verification — abort before DMG if signing is broken
           echo "--- Verifying tune-server binary signature ---"
           codesign --display --verbose=4 "${APP_DIR}/Contents/Resources/runtime/tune-server" 2>&1 | grep -E "Authority|TeamIdentifier|Timestamp|flags"
-          echo "--- Verifying Python framework signature (was the failing one) ---"
-          if [ -f "${APP_DIR}/Contents/Resources/runtime/_internal/Python.framework/Versions/3.12/Python" ]; then
-            codesign --display --verbose=4 "${APP_DIR}/Contents/Resources/runtime/_internal/Python.framework/Versions/3.12/Python" 2>&1 | grep -E "Authority|TeamIdentifier|Timestamp|flags"
+          echo "--- Verifying Python framework signature ---"
+          PYTHON_BIN=$(find "${APP_DIR}" -path '*/Python.framework/Versions/*/Python' -type f | head -1)
+          if [ -n "$PYTHON_BIN" ]; then
+            codesign --display --verbose=4 "$PYTHON_BIN" 2>&1 | grep -E "Authority|TeamIdentifier|Timestamp|flags"
           fi
           echo "--- Verifying .app bundle signature ---"
-          codesign --verify --verbose=2 "${APP_DIR}"
+          codesign --verify --strict --verbose=2 "${APP_DIR}"
+          if [ $? -ne 0 ]; then
+            echo "::error::App bundle signature verification FAILED — aborting"
+            exit 1
+          fi
+          echo "--- Verifying Gatekeeper acceptance ---"
+          spctl --assess --type execute "${APP_DIR}" 2>&1 || echo "::warning::spctl assess failed (may be OK in CI without full keychain)"
 
       - name: Notarize + staple .app bundle (macOS)
         if: matrix.platform == 'macos' && env.AC_API_KEY_BASE64 != ''
@@ -484,11 +499,6 @@ jobs:
 
       - name: Notarize DMG (macOS, if credentials present)
         if: matrix.platform == 'macos' && env.AC_API_KEY_BASE64 != ''
-        # Non-blocking: PyInstaller's embedded Python.framework currently
-        # confuses Apple's notary even when codesign verifies clean.
-        # Ship the signed-but-unnotarized DMG; users open with right-click.
-        # Investigate framework re-packaging in a follow-up.
-        continue-on-error: true
         env:
           AC_API_KEY_BASE64: ${{ secrets.AC_API_KEY_BASE64 }}
           AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
@@ -498,16 +508,39 @@ jobs:
           echo "$AC_API_KEY_BASE64" | base64 -d > "/tmp/AuthKey_${AC_API_KEY_ID}.p8"
 
           echo "Submitting DMG to Apple notary service..."
-          xcrun notarytool submit "${DMG_NAME}" \
+          SUBMIT_OUTPUT=$(xcrun notarytool submit "${DMG_NAME}" \
             --key "/tmp/AuthKey_${AC_API_KEY_ID}.p8" \
             --key-id "${AC_API_KEY_ID}" \
             --issuer "${AC_API_ISSUER_ID}" \
-            --wait --timeout 30m
+            --wait --timeout 30m 2>&1) || true
+          echo "$SUBMIT_OUTPUT"
 
-          echo "Stapling notarization ticket..."
-          xcrun stapler staple "${DMG_NAME}" || echo "Stapling failed — ship unstapled DMG"
-          xcrun stapler validate "${DMG_NAME}" || true
-          spctl --assess --type open --context context:primary-signature -v "${DMG_NAME}" || true
+          # Extract submission ID for log retrieval on failure
+          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+
+          if echo "$SUBMIT_OUTPUT" | grep -q "status: Accepted"; then
+            echo "Notarization ACCEPTED"
+            echo "Stapling notarization ticket..."
+            xcrun stapler staple "${DMG_NAME}"
+            xcrun stapler validate "${DMG_NAME}"
+            spctl --assess --type install "${DMG_NAME}" && echo "Gatekeeper OK"
+          else
+            echo "::warning::DMG notarization failed — fetching log for diagnosis"
+            if [ -n "$SUBMISSION_ID" ]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --key "/tmp/AuthKey_${AC_API_KEY_ID}.p8" \
+                --key-id "${AC_API_KEY_ID}" \
+                --issuer "${AC_API_ISSUER_ID}" 2>&1 | python3 -c "
+import sys,json
+try:
+  d=json.load(sys.stdin)
+  for i in d.get('issues',[]):
+    print(f\"  {i.get('severity','?')}: {i.get('path','?').split('/')[-1]}: {i.get('message','?')}\")
+except: print('Could not parse notary log')
+" || true
+            fi
+            echo "::warning::Shipping signed-but-unnotarized DMG. Users must right-click > Open."
+          fi
           rm -f "/tmp/AuthKey_${AC_API_KEY_ID}.p8"
 
       - name: Compute DMG checksum (macOS)
