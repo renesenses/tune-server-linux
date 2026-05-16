@@ -98,7 +98,7 @@ def _detect_format(path: Path) -> str:
         ".wav": "wav",
         ".aiff": "aiff",
         ".aif": "aiff",
-        ".wv": "wav",
+        ".wv": "wv",
         ".ape": "ape",
         ".wma": "wma",
         ".dsf": "dsd",

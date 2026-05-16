@@ -28,6 +28,8 @@ class AudioFormat(str, Enum):
     DSD = "dsd"
     AIFF = "aiff"
     WMA = "wma"
+    APE = "ape"
+    WAVPACK = "wv"
 
 
 class PlaybackState(str, Enum):
