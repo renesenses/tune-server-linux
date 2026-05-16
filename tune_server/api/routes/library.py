@@ -2104,3 +2104,47 @@ async def browse_directory(path: str = Query(..., description="Absolute path to 
         directories=directories,
         tracks=tracks,
     )
+
+
+# --- Artist image management ---
+
+
+@router.post("/artists/{artist_id}/image/report")
+async def report_artist_image(artist_id: int):
+    """Report an incorrect artist image. Clears the image and resets source."""
+    artist = await deps.artist_repo.get(artist_id)
+    if not artist:
+        raise HTTPException(status_code=404, detail="Artist not found")
+    artist.image_path = None
+    artist.image_source = None
+    await deps.artist_repo.update(artist)
+    logger.info("artist_image_reported", artist_id=artist_id, name=artist.name)
+    return {"status": "cleared", "artist_id": artist_id}
+
+
+@router.post("/artists/{artist_id}/image/upload", response_model=Artist)
+async def upload_artist_image(artist_id: int, file: UploadFile):
+    """Upload a correct artist image. Sets source to 'user' (highest priority)."""
+    artist = await deps.artist_repo.get(artist_id)
+    if not artist:
+        raise HTTPException(status_code=404, detail="Artist not found")
+
+    content_type = file.content_type or ""
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    image_data = await file.read()
+    if not image_data:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    cover_path = await asyncio.to_thread(
+        save_artwork, f"upload:artist:{artist_id}", image_data, True,
+    )
+    if not cover_path:
+        raise HTTPException(status_code=500, detail="Failed to save artwork")
+
+    artist.image_path = cover_path
+    artist.image_source = "user"
+    await deps.artist_repo.update(artist)
+    logger.info("artist_image_uploaded", artist_id=artist_id, name=artist.name)
+    return await deps.artist_repo.get(artist_id)

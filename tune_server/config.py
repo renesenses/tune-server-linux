@@ -94,8 +94,8 @@ class Settings(BaseSettings):
     sync_drift_threshold_ms: int = 500             # ms, correct if drift exceeds this
     sync_correction_cooldown_s: float = 15.0       # seconds, min between corrections per follower
     sync_dlna_default_buffer_s: float = 3.0        # seconds, default DLNA buffer delay
-    dlna_settle_ms: int = 300                       # ms, delay after Stop before SetAVTransportURI
-    dlna_play_delay_ms: int = 150                   # ms, delay after SetAVTransportURI before Play
+    dlna_settle_ms: int = 150                       # ms, delay after Stop before SetAVTransportURI
+    dlna_play_delay_ms: int = 50                    # ms, delay after SetAVTransportURI before Play
 
     # Crossfade
     crossfade_enabled: bool = False

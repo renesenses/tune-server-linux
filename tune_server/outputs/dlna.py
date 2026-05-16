@@ -183,9 +183,14 @@ class DlnaOutput(OutputTarget):
         # Stop current playback before setting a new URI — many renderers
         # (Micromega, Wiim, Denon) ignore a new URI without explicit Stop.
         from tune_server.config import settings as _s
+        _start_t = time.monotonic()
+        _had_active_stream = self._stream_id is not None or self._last_uri is not None
         try:
             await self._dmr_call("async_stop")
-            await asyncio.sleep(_s.dlna_settle_ms / 1000.0)
+            # Only wait settle delay if we were actually playing something —
+            # skip for first track to reduce startup latency
+            if _had_active_stream and _s.dlna_settle_ms > 0:
+                await asyncio.sleep(_s.dlna_settle_ms / 1000.0)
         except Exception:
             logger.debug("dlna_pre_start_stop_failed", device=self.name)
         self._cancel_watchdog()
@@ -223,7 +228,8 @@ class DlnaOutput(OutputTarget):
                 self._direct_url = True
                 self._last_uri = stream_url
                 self._available = True
-                logger.info("radio_proxy_playback", device=self.name, url=track.file_path[:80])
+                _elapsed = round((time.monotonic() - _start_t) * 1000)
+                logger.info("radio_proxy_playback", device=self.name, url=track.file_path[:80], startup_ms=_elapsed)
                 return
 
             # Direct URL passthrough: let the DLNA renderer fetch from the CDN
@@ -244,7 +250,8 @@ class DlnaOutput(OutputTarget):
                     self._direct_url = True
                     self._last_uri = url
                     self._available = True
-                    logger.info("dlna_direct_url_playback", device=self.name, url=url[:80])
+                    _elapsed = round((time.monotonic() - _start_t) * 1000)
+                    logger.info("dlna_direct_url_playback", device=self.name, url=url[:80], startup_ms=_elapsed)
                     return
 
             # Micromega proxy: relay external URLs over HTTP
@@ -275,7 +282,8 @@ class DlnaOutput(OutputTarget):
                 self._direct_url = True
                 self._last_uri = stream_url
                 self._available = True
-                logger.info("micromega_proxy_playback", device=self.name, url=track.file_path[:80])
+                _elapsed = round((time.monotonic() - _start_t) * 1000)
+                logger.info("micromega_proxy_playback", device=self.name, url=track.file_path[:80], startup_ms=_elapsed)
                 return
 
             # Native DSD passthrough: serve DSF/DFF file directly to the renderer
@@ -303,10 +311,12 @@ class DlnaOutput(OutputTarget):
                 self._direct_url = True
                 self._last_uri = stream_url
                 self._available = True
+                _elapsed = round((time.monotonic() - _start_t) * 1000)
                 logger.info(
                     "dlna_native_dsd_playback", device=self.name,
                     file=track.file_path, mime=mime,
                     sample_rate=track.sample_rate,
+                    startup_ms=_elapsed,
                 )
                 return
 
@@ -332,7 +342,8 @@ class DlnaOutput(OutputTarget):
 
             self._last_uri = stream_url
             self._available = True
-            logger.info("dlna_playback_started", device=self.name, url=stream_url)
+            _elapsed = round((time.monotonic() - _start_t) * 1000)
+            logger.info("dlna_playback_started", device=self.name, url=stream_url, startup_ms=_elapsed)
         except Exception:
             logger.exception("dlna_start_error", device=self.name)
             self._available = False
@@ -352,11 +363,22 @@ class DlnaOutput(OutputTarget):
 
     async def _set_and_play(self, dmr, stream_url: str, title: str, metadata: str) -> None:
         from tune_server.config import settings as _s
+        t0 = time.monotonic()
         await asyncio.wait_for(
             dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
         )
-        await asyncio.sleep(_s.dlna_play_delay_ms / 1000.0)
+        t_uri = time.monotonic()
+        if _s.dlna_play_delay_ms > 0:
+            await asyncio.sleep(_s.dlna_play_delay_ms / 1000.0)
         await asyncio.wait_for(dmr.async_play(), timeout=10)
+        t_play = time.monotonic()
+        logger.info(
+            "dlna_set_and_play_timing",
+            device=self.name,
+            set_uri_ms=round((t_uri - t0) * 1000),
+            play_cmd_ms=round((t_play - t_uri) * 1000),
+            total_ms=round((t_play - t0) * 1000),
+        )
 
     def _start_watchdog(self, stream_url: str, title: str, metadata: str) -> None:
         """Start a watchdog that retries SetAVTransportURI if the renderer

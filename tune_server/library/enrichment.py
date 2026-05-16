@@ -15,6 +15,26 @@ logger = structlog.get_logger()
 DISCOGS_API = "https://api.discogs.com"
 DISCOGS_UA = "TuneServer/0.5.2 +https://mozaiklabs.fr"
 
+# Image source priority (higher index = higher priority)
+_IMAGE_SOURCE_PRIORITY = {
+    None: 0,
+    "wikipedia": 1,
+    "musicbrainz": 2,
+    "discogs": 3,
+    "user": 4,
+}
+
+
+def image_source_priority(source: str | None) -> int:
+    """Return numeric priority for an image source. Higher = more trusted."""
+    return _IMAGE_SOURCE_PRIORITY.get(source, 0)
+
+
+def should_update_image(current_source: str | None, new_source: str | None) -> bool:
+    """Return True if new_source has equal or higher priority than current_source."""
+    return image_source_priority(new_source) >= image_source_priority(current_source)
+
+
 # Normalize MusicBrainz tags to Discogs-style genres
 _GENRE_NORMALIZE = {
     "rock": "Rock", "pop": "Pop", "jazz": "Jazz", "blues": "Blues",
@@ -195,14 +215,18 @@ class MetadataEnricher:
             from tune_server.config import settings as _s
             if _s.discogs_token:
                 all_artists = await self._artist_repo.list(limit=200)
-                no_image = [a for a in all_artists if not a.image_path]
+                # Only target artists without image or with a lower-priority source than discogs
+                candidates = [a for a in all_artists
+                              if (not a.image_path and a.image_source != "user")
+                              or (a.image_path and a.image_source not in ("discogs", "user"))]
                 enriched_count = 0
-                for artist in no_image:
+                for artist in candidates:
                     img_path = await _fetch_discogs_artist_image(
                         artist.name, _s.discogs_token, _s.artwork_cache_dir
                     )
                     if img_path:
                         artist.image_path = img_path
+                        artist.image_source = "discogs"
                         try:
                             await self._artist_repo.update(artist)
                         except Exception:
@@ -303,7 +327,10 @@ class MetadataEnricher:
                 from tune_server.config import settings as _s
                 if _s.discogs_token:
                     all_artists = await self._artist_repo.list(limit=200)
-                    no_image = [a for a in all_artists if not a.image_path]
+                    # Only target artists without image or with a lower-priority source than discogs
+                    no_image = [a for a in all_artists
+                                if (not a.image_path and a.image_source != "user")
+                                or (a.image_path and a.image_source not in ("discogs", "user"))]
                     enriched_count = 0
                     for artist in no_image:
                         if not self._running:
@@ -313,6 +340,7 @@ class MetadataEnricher:
                         )
                         if img_path:
                             artist.image_path = img_path
+                            artist.image_source = "discogs"
                             try:
                                 await self._artist_repo.update(artist)
                             except Exception:

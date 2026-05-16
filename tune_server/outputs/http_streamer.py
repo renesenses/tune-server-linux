@@ -205,7 +205,7 @@ class HttpAudioStreamer:
         for cb in self._route_callbacks:
             cb(self._app)
 
-        self._runner = web.AppRunner(self._app)
+        self._runner = web.AppRunner(self._app, keepalive_timeout=30)
         await self._runner.setup()
         site = web.TCPSite(
             self._runner, self._host, self._port,
@@ -226,9 +226,16 @@ class HttpAudioStreamer:
         headers = {
             "Content-Type": mime,
             "Accept-Ranges": "bytes",
+            "Connection": "keep-alive",
             "transferMode.dlna.org": "Streaming",
             "contentFeatures.dlna.org": "",
         }
+
+        # For local files, return Content-Length immediately from file_size
+        file_path = self._file_paths.get(stream_id)
+        if file_path and session.stream_info.file_size:
+            headers["Content-Length"] = str(session.stream_info.file_size)
+            return web.Response(headers=headers)
 
         # For proxy sessions, fetch Content-Length from upstream
         proxy_url = self._proxy_urls.get(stream_id)
@@ -258,8 +265,14 @@ class HttpAudioStreamer:
 
         mime = self._resolve_mime(stream_id, session)
 
-        # Signal that the renderer has connected
+        # Signal that the renderer has connected and log connection latency
         session.client_connected.set()
+        connect_latency = time.monotonic() - session.created_at
+        logger.info(
+            "stream_renderer_connected",
+            stream_id=stream_id,
+            connect_latency_ms=round(connect_latency * 1000),
+        )
 
         # Check for file-based passthrough with Range support
         file_path = self._file_paths.get(stream_id)
@@ -337,6 +350,7 @@ class HttpAudioStreamer:
                     "Content-Range": f"bytes {start}-{end}/{file_size}",
                     "Content-Length": str(length),
                     "Accept-Ranges": "bytes",
+                    "Connection": "keep-alive",
                     "transferMode.dlna.org": "Streaming",
                 }
                 range_headers.update(timing)
@@ -376,6 +390,7 @@ class HttpAudioStreamer:
             "Content-Type": mime,
             "Content-Length": str(file_size),
             "Accept-Ranges": "bytes",
+            "Connection": "keep-alive",
             "transferMode.dlna.org": "Streaming",
         }
         full_headers.update(timing)

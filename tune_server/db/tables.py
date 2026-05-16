@@ -22,6 +22,7 @@ artists = sa.Table(
     sa.Column("discogs_id", sa.Text),
     sa.Column("bio", sa.Text),
     sa.Column("image_path", sa.Text),
+    sa.Column("image_source", sa.Text),
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("source_id", sa.Text),

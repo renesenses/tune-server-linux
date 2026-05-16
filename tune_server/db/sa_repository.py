@@ -34,6 +34,7 @@ def _row_to_artist(row) -> Artist:
         discogs_id=row.get("discogs_id") if hasattr(row, "get") else row["discogs_id"],
         bio=row.get("bio") if hasattr(row, "get") else row["bio"],
         image_path=row.get("image_path") if hasattr(row, "get") else row["image_path"],
+        image_source=row.get("image_source") if hasattr(row, "get") else row["image_source"],
     )
 
 
@@ -238,6 +239,7 @@ class SAArtistRepo:
                 discogs_id=artist.discogs_id,
                 bio=artist.bio,
                 image_path=artist.image_path,
+                image_source=artist.image_source,
             )
         )
         return result.lastrowid
@@ -258,6 +260,7 @@ class SAArtistRepo:
                 discogs_id=artist.discogs_id,
                 bio=artist.bio,
                 image_path=artist.image_path,
+                image_source=artist.image_source,
                 updated_at=sa.func.now(),
             )
         )

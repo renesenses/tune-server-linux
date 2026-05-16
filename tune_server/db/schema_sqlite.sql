@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS artists (
     discogs_id TEXT,
     bio TEXT,
     image_path TEXT,
+    image_source TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

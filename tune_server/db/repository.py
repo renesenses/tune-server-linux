@@ -25,6 +25,7 @@ def _row_to_artist(row) -> Artist:
         discogs_id=_row_get(row, "discogs_id"),
         bio=_row_get(row, "bio"),
         image_path=_row_get(row, "image_path"),
+        image_source=_row_get(row, "image_source"),
     )
 
 
@@ -167,10 +168,10 @@ class ArtistRepo:
 
     async def create(self, artist: Artist) -> int:
         result = await self._db.execute(
-            """INSERT INTO artists (name, sort_name, musicbrainz_id, discogs_id, bio, image_path)
-               VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
+            """INSERT INTO artists (name, sort_name, musicbrainz_id, discogs_id, bio, image_path, image_source)
+               VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (artist.name, artist.sort_name, artist.musicbrainz_id,
-             artist.discogs_id, artist.bio, artist.image_path),
+             artist.discogs_id, artist.bio, artist.image_path, artist.image_source),
         )
         await self._db.commit()
         return result.lastrowid
@@ -207,10 +208,10 @@ class ArtistRepo:
     async def update(self, artist: Artist) -> None:
         await self._db.execute(
             """UPDATE artists SET name=?, sort_name=?, musicbrainz_id=?,
-               discogs_id=?, bio=?, image_path=?, updated_at=CURRENT_TIMESTAMP
+               discogs_id=?, bio=?, image_path=?, image_source=?, updated_at=CURRENT_TIMESTAMP
                WHERE id=?""",
             (artist.name, artist.sort_name, artist.musicbrainz_id,
-             artist.discogs_id, artist.bio, artist.image_path, artist.id),
+             artist.discogs_id, artist.bio, artist.image_path, artist.image_source, artist.id),
         )
         await self._db.commit()
 

@@ -190,6 +190,8 @@ class SQLiteDatabase:
             # Full ISO 8601 release dates (display complement to year/original_year)
             "ALTER TABLE albums ADD COLUMN release_date TEXT",
             "ALTER TABLE albums ADD COLUMN original_date TEXT",
+            # Artist image source tracking (priority: user > discogs > musicbrainz > wikipedia)
+            "ALTER TABLE artists ADD COLUMN image_source TEXT",
         ]
         for sql in migrations:
             try:
