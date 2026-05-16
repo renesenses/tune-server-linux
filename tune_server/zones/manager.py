@@ -78,12 +78,29 @@ class ZoneManager:
         self._output_factory[key] = factory
 
     async def initialize(self) -> None:
-        """Load persisted zones from DB and create instances."""
+        """Load persisted zones from DB and create instances.
+
+        On first startup (no zones in DB), auto-creates a default local
+        zone so the UI is immediately functional. Without at least one
+        zone the Play button does nothing, which confuses new users.
+        """
         # Listen for device discovery changes to mark zones online/offline
         self._event_bus.on(EventType.DEVICE_LOST, self._on_device_lost)
         self._event_bus.on(EventType.DEVICE_DISCOVERED, self._on_device_discovered)
 
         zone_rows = await self._zone_repo.list()
+
+        # First-run: auto-create a default local zone so playback works
+        # out of the box. Users can rename or replace it later.
+        if not zone_rows:
+            try:
+                await self.create_zone("This Computer", OutputType.LOCAL)
+                logger.info("default_zone_created",
+                            reason="no zones configured on first startup")
+                zone_rows = await self._zone_repo.list()
+            except Exception:
+                logger.exception("default_zone_create_failed")
+
         for row in zone_rows:
             try:
                 zone_id = row["id"]
