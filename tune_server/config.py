@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     # Library
     music_dirs: list[str] = Field(default_factory=lambda: [str(Path.home() / "Music")])
     scan_on_startup: bool = True
+    scan_schedule: str | None = None  # "HH:MM" for daily scheduled scan, e.g. "03:00"
     watch_filesystem: bool = True
     watcher_debounce_seconds: float = 2.0
 

@@ -498,6 +498,18 @@ class TuneServer:
         self._alarm_scheduler = AlarmScheduler(self._db, self._trigger_alarm)
         await self._alarm_scheduler.start()
 
+        # Scan scheduler (daily scheduled scan)
+        from tune_server.library.scan_scheduler import ScanScheduler
+        scan_time = getattr(settings, "scan_schedule", None)
+        self._scan_scheduler = ScanScheduler(
+            db=self._db,
+            scanner=self._scanner,
+            music_dirs=settings.music_dirs,
+            initial_time=scan_time,
+        )
+        await self._scan_scheduler.start()
+        deps.scan_scheduler = self._scan_scheduler
+
         # Initial scan
         if settings.scan_on_startup:
             self._scan_task = asyncio.create_task(self._scanner.scan(settings.music_dirs))
@@ -1071,6 +1083,9 @@ class TuneServer:
                 await self._scan_task
             except asyncio.CancelledError:
                 pass
+
+        if hasattr(self, "_scan_scheduler") and self._scan_scheduler:
+            await self._safe_stop("scan_scheduler", self._scan_scheduler.stop())
 
         if hasattr(self, "_autosync") and self._autosync:
             await self._safe_stop("autosync", self._autosync.stop())

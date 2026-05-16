@@ -298,6 +298,43 @@ async def scan_status():
     return ScanStatusResponse(scanning=deps.scanner.is_scanning if deps.scanner else False)
 
 
+@router.get("/scan/schedule")
+async def get_scan_schedule():
+    """Get the current scheduled scan configuration."""
+    scheduler = getattr(deps, "scan_scheduler", None)
+    if not scheduler:
+        return {"enabled": False, "time": None, "next_run": None}
+    return scheduler.status()
+
+
+@router.post("/scan/schedule")
+async def set_scan_schedule(body: dict = {}):
+    """Set or disable the daily library scan schedule.
+
+    Body: ``{"time": "03:00"}`` to enable, ``{"enabled": false}`` to disable.
+    """
+    scheduler = getattr(deps, "scan_scheduler", None)
+    if not scheduler:
+        raise HTTPException(status_code=503, detail="Scan scheduler not available")
+
+    enabled = body.get("enabled", True)
+    time_str = body.get("time")
+
+    if not enabled:
+        await scheduler.set_schedule(enabled=False)
+        return scheduler.status()
+
+    if not time_str:
+        raise HTTPException(status_code=400, detail="'time' field required (format HH:MM)")
+
+    try:
+        await scheduler.set_schedule(time_str=time_str, enabled=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return scheduler.status()
+
+
 @router.get("/stats/listening")
 async def listening_stats():
     """Lightweight listening statistics dashboard.

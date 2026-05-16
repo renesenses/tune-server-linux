@@ -273,6 +273,7 @@ class DlnaOutput(OutputTarget):
                 self._start_watchdog(stream_url, title, metadata)
 
                 self._direct_url = True
+                self._last_uri = stream_url
                 self._available = True
                 logger.info("micromega_proxy_playback", device=self.name, url=track.file_path[:80])
                 return
@@ -300,6 +301,7 @@ class DlnaOutput(OutputTarget):
                 self._start_watchdog(stream_url, title, metadata)
 
                 self._direct_url = True
+                self._last_uri = stream_url
                 self._available = True
                 logger.info(
                     "dlna_native_dsd_playback", device=self.name,
@@ -620,6 +622,36 @@ class DlnaOutput(OutputTarget):
         except Exception:
             logger.debug("dlna_position_error", device=self.name)
         return -1
+
+    def get_current_track_uri(self) -> str | None:
+        """Return the URI the renderer is currently playing (from last async_update).
+
+        Works with both async_upnp_client DmrDevice (current_track_uri property)
+        and MinimalDmrDevice (_current_track_uri attribute).
+        """
+        return getattr(self._device, "current_track_uri", None)
+
+    def has_uri_changed(self) -> bool:
+        """Check if the renderer is now playing a different URI than what we set.
+
+        Returns True when the renderer has auto-advanced to the next track
+        (gapless transition via SetNextAVTransportURI).  Called after
+        get_position_ms() which triggers async_update().
+        """
+        renderer_uri = self.get_current_track_uri()
+        if not renderer_uri or not self._last_uri:
+            return False
+        return renderer_uri != self._last_uri
+
+    def sync_last_uri(self) -> None:
+        """Update _last_uri to the renderer's current URI.
+
+        Called after a gapless transition is detected so subsequent
+        has_uri_changed() calls compare against the new track's URI.
+        """
+        renderer_uri = self.get_current_track_uri()
+        if renderer_uri:
+            self._last_uri = renderer_uri
 
     async def get_volume(self) -> float | None:
         """Read the current volume level from the renderer (0.0-1.0).

@@ -388,6 +388,10 @@ class LibraryScanner:
                             **album_kwargs,
                         )
                     logger.info("album_quality_split", base=base_title, new_title=qualified_title)
+                # Backfill or update genre when the tag provides one
+                if genre and (not album.genre or album.genre != genre):
+                    album.genre = genre
+                    await self._album_repo.update(album)
                 # Backfill label/catalog_number if the album was created
                 # earlier from a track that didn't carry these tags.
                 if metadata.label or metadata.catalog_number:

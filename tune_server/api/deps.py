@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from tune_server.discovery.manager import DiscoveryManager
     from tune_server.event_bus import EventBus
     from tune_server.library.enrichment import MetadataEnricher
+    from tune_server.library.scan_scheduler import ScanScheduler
     from tune_server.library.scanner import LibraryScanner
     from tune_server.library.watcher import FileSystemWatcher
     from tune_server.metadata.artist_enrichment import ArtistEnrichmentClient
@@ -26,6 +27,7 @@ class AppDeps:
         self.db: Database | None = None
         self.event_bus: EventBus | None = None
         self.scanner: LibraryScanner | None = None
+        self.scan_scheduler: ScanScheduler | None = None
         self.zone_manager: ZoneManager | None = None
         self.group_manager: GroupManager | None = None
         self.discovery_manager: DiscoveryManager | None = None

@@ -31,7 +31,11 @@ router = APIRouter(prefix="/zones/{zone_id}", tags=["playback"])
 global_router = APIRouter(tags=["playback"])
 
 _sleep_timers: dict[int, asyncio.Task] = {}
+_sleep_state: dict[int, dict] = {}  # zone_id -> {minutes, started_at, fading, original_volume}
 _alarms: dict[int, dict] = {}
+
+SLEEP_FADE_DURATION = 30  # seconds
+SLEEP_FADE_STEPS = 30     # 1-second steps
 
 
 def _clean_file_title(file_path: str) -> str:
@@ -596,36 +600,103 @@ async def clear_queue(zone_id: int):
 
 @router.post("/sleep")
 async def set_sleep_timer(zone_id: int, body: dict = {}):
-    """Set a sleep timer. Stops playback after `minutes`. Pass 0 to cancel."""
+    """Set a sleep timer with volume fade-out. Stops playback after `minutes`.
+
+    Pass ``{"minutes": 0}`` to cancel. If cancelled during fade, volume is
+    restored immediately.
+    """
     zone = _get_zone(zone_id)
 
     minutes = body.get("minutes", 30)
 
-    # Cancel existing timer
+    # Cancel existing timer and restore volume if fading
     if zone_id in _sleep_timers:
         _sleep_timers[zone_id].cancel()
         del _sleep_timers[zone_id]
+    if zone_id in _sleep_state:
+        state = _sleep_state.pop(zone_id)
+        if state.get("fading") and state.get("original_volume") is not None:
+            try:
+                await zone.player.set_volume(state["original_volume"])
+                logger.info("sleep_timer_cancelled_volume_restored",
+                            zone_id=zone_id, volume=state["original_volume"])
+            except Exception:
+                logger.warning("sleep_timer_volume_restore_failed", zone_id=zone_id)
 
     if minutes <= 0:
         return {"sleep_timer": None, "zone_id": zone_id}
 
-    async def _sleep_stop():
-        await asyncio.sleep(minutes * 60)
-        await zone.player.stop()
-        if zone_id in _sleep_timers:
-            del _sleep_timers[zone_id]
+    started_at = asyncio.get_event_loop().time()
+    _sleep_state[zone_id] = {
+        "minutes": minutes,
+        "started_at": started_at,
+        "fading": False,
+        "original_volume": None,
+    }
+
+    async def _sleep_with_fade():
+        total_seconds = minutes * 60
+        wait_seconds = max(0, total_seconds - SLEEP_FADE_DURATION)
+
+        # Wait until fade should begin
+        await asyncio.sleep(wait_seconds)
+
+        # Begin fade-out
+        original_volume = zone.player.volume
+        if zone_id in _sleep_state:
+            _sleep_state[zone_id]["fading"] = True
+            _sleep_state[zone_id]["original_volume"] = original_volume
+
+        logger.info("sleep_timer_fade_start", zone_id=zone_id,
+                     from_volume=round(original_volume, 2))
+
+        for step in range(1, SLEEP_FADE_STEPS + 1):
+            # Check if timer was cancelled during fade
+            if zone_id not in _sleep_state:
+                return
+            vol = original_volume * (1.0 - step / SLEEP_FADE_STEPS)
+            try:
+                await zone.player.set_volume(max(0.0, vol))
+            except Exception:
+                pass
+            await asyncio.sleep(SLEEP_FADE_DURATION / SLEEP_FADE_STEPS)
+
+        # Fade complete — stop playback
+        try:
+            await zone.player.stop()
+        except Exception:
+            logger.warning("sleep_timer_stop_failed", zone_id=zone_id)
+
+        # Restore original volume setting so next play starts at normal level
+        try:
+            await zone.player.set_volume(original_volume)
+        except Exception:
+            pass
+
+        _sleep_state.pop(zone_id, None)
+        _sleep_timers.pop(zone_id, None)
         logger.info("sleep_timer_fired", zone_id=zone_id, minutes=minutes)
 
-    _sleep_timers[zone_id] = asyncio.create_task(_sleep_stop())
+    _sleep_timers[zone_id] = asyncio.create_task(_sleep_with_fade())
     return {"sleep_timer": minutes, "zone_id": zone_id}
 
 
 @router.get("/sleep")
 async def get_sleep_timer(zone_id: int):
-    """Get remaining sleep timer."""
-    if zone_id in _sleep_timers and not _sleep_timers[zone_id].done():
-        return {"active": True, "zone_id": zone_id}
-    return {"active": False, "zone_id": zone_id}
+    """Get sleep timer status including remaining seconds and fade state."""
+    _get_zone(zone_id)  # validate zone exists
+    state = _sleep_state.get(zone_id)
+    if state and zone_id in _sleep_timers and not _sleep_timers[zone_id].done():
+        elapsed = asyncio.get_event_loop().time() - state["started_at"]
+        total = state["minutes"] * 60
+        remaining = max(0, int(total - elapsed))
+        return {
+            "active": True,
+            "remaining_seconds": remaining,
+            "fading": state.get("fading", False),
+            "zone_id": zone_id,
+        }
+    return {"active": False, "remaining_seconds": 0, "fading": False, "zone_id": zone_id}
 
 
 @router.post("/queue/save-as-playlist")

@@ -785,7 +785,13 @@ class Player:
             prev_pos_ms = 0        # previous poll position for gapless detection
 
             while self._state in (PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.BUFFERING):
-                await asyncio.sleep(5)  # 5s interval for track end detection
+                # Poll faster (2s) when gapless is armed and nearing end,
+                # normal rate (5s) otherwise to reduce UPnP traffic.
+                if (self._renderer_has_next and duration_ms
+                        and cumulative_pos_ms > duration_ms * 0.8):
+                    await asyncio.sleep(2)
+                else:
+                    await asyncio.sleep(5)
                 if self._state == PlaybackState.PAUSED:
                     continue
 
@@ -798,9 +804,26 @@ class Player:
                 else:
                     cumulative_pos_ms += 1000  # estimate if no position
 
-                # Gapless transition detection: if we queued the next track
-                # via SetNextAVTransportURI and the renderer's position just
-                # dropped significantly (from near end back to near start),
+                # URI-based gapless detection: if the renderer's current
+                # TrackURI differs from what we set, it auto-advanced to the
+                # next track via SetNextAVTransportURI.  This is the most
+                # reliable detection — works regardless of position heuristics.
+                if (self._renderer_has_next
+                        and self._output
+                        and hasattr(self._output, 'has_uri_changed')
+                        and self._output.has_uri_changed()):
+                    logger.info(
+                        "dlna_gapless_uri_transition_detected",
+                        zone_id=self._zone_id,
+                        track=track.title,
+                    )
+                    # Update the stored URI so subsequent checks work
+                    if hasattr(self._output, 'sync_last_uri'):
+                        self._output.sync_last_uri()
+                    break
+
+                # Position-based gapless detection (fallback): if the
+                # renderer's position dropped from near-end to near-start,
                 # the renderer has seamlessly transitioned to the next track.
                 if (self._renderer_has_next
                         and output_pos >= 0
@@ -815,6 +838,8 @@ class Player:
                         duration=duration_ms,
                         track=track.title,
                     )
+                    if self._output and hasattr(self._output, 'sync_last_uri'):
+                        self._output.sync_last_uri()
                     break
 
                 if output_pos >= 0:

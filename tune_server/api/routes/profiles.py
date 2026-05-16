@@ -1,6 +1,8 @@
 """User profiles and favorites API routes."""
 from __future__ import annotations
 
+import structlog
+
 from fastapi import APIRouter, HTTPException, Query
 
 from tune_server.api.deps import deps
@@ -9,7 +11,13 @@ from tune_server.models import (
     UserProfile, UserProfileCreate,
 )
 
+logger = structlog.get_logger()
+
 router = APIRouter(prefix="/profiles", tags=["profiles"])
+
+# In-memory cache of active profile id (loaded from DB on first access)
+_active_profile_id: int | None = None
+_active_loaded: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +67,30 @@ async def search_profiles(q: str = Query(..., min_length=1)) -> list[UserProfile
     return [UserProfile(**_clean_row(r)) for r in rows]
 
 
+@router.get("/active")
+async def get_active_profile():
+    """Get the currently active profile."""
+    pid = await _load_active_profile()
+    if pid is None:
+        return {"active_profile_id": None, "profile": None}
+    row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (pid,))
+    if not row:
+        return {"active_profile_id": None, "profile": None}
+    return {
+        "active_profile_id": pid,
+        "profile": UserProfile(**_clean_row(row)),
+    }
+
+
+@router.post("/deactivate")
+async def deactivate_profile():
+    """Clear the active profile (revert to no-profile mode)."""
+    global _active_profile_id
+    _active_profile_id = None
+    await _persist_active_profile(None)
+    return {"active_profile_id": None}
+
+
 @router.get("/{profile_id}")
 async def get_profile(profile_id: int) -> UserProfile:
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
@@ -95,8 +127,117 @@ async def update_profile(profile_id: int, body: UserProfileCreate) -> UserProfil
 
 @router.delete("/{profile_id}", status_code=204)
 async def delete_profile(profile_id: int):
+    global _active_profile_id
     await deps.db.execute("DELETE FROM user_profiles WHERE id = ?", (profile_id,))
     await deps.db.commit()
+    # If the deleted profile was active, clear it
+    if _active_profile_id == profile_id:
+        _active_profile_id = None
+        await _persist_active_profile(None)
+
+
+# ---------------------------------------------------------------------------
+# Active profile
+# ---------------------------------------------------------------------------
+
+async def _load_active_profile() -> int | None:
+    """Load active profile ID from DB (streaming_auth table)."""
+    global _active_profile_id, _active_loaded
+    if _active_loaded:
+        return _active_profile_id
+    try:
+        row = await deps.db.fetchone(
+            "SELECT token_data FROM streaming_auth WHERE service = ?",
+            ("active_profile",),
+        )
+        if row:
+            import json
+            data = json.loads(row["token_data"])
+            _active_profile_id = data.get("profile_id")
+        _active_loaded = True
+    except Exception:
+        _active_loaded = True
+    return _active_profile_id
+
+
+async def _persist_active_profile(profile_id: int | None) -> None:
+    """Persist active profile ID to DB."""
+    import json
+    data = json.dumps({"profile_id": profile_id})
+    try:
+        await deps.db.execute(
+            """INSERT INTO streaming_auth (service, token_data) VALUES (?, ?)
+               ON CONFLICT(service) DO UPDATE SET token_data = ?, updated_at = CURRENT_TIMESTAMP""",
+            ("active_profile", data, data),
+        )
+        await deps.db.commit()
+    except Exception:
+        logger.exception("active_profile_persist_error")
+
+
+@router.post("/{profile_id}/activate")
+async def activate_profile(profile_id: int):
+    """Switch the active profile for the session."""
+    global _active_profile_id
+    row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
+    if not row:
+        raise HTTPException(404, "Profile not found")
+    _active_profile_id = profile_id
+    await _persist_active_profile(profile_id)
+    logger.info("profile_activated", profile_id=profile_id, name=row["name"])
+    return {
+        "active_profile_id": profile_id,
+        "profile": UserProfile(**_clean_row(row)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Profile with stats (enhanced GET)
+# ---------------------------------------------------------------------------
+
+@router.get("/{profile_id}/stats")
+async def get_profile_stats(profile_id: int):
+    """Get profile with aggregated stats (favorite counts, listening history)."""
+    row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
+    if not row:
+        raise HTTPException(404, "Profile not found")
+    profile = UserProfile(**_clean_row(row))
+
+    # Count favorites by type
+    fav_tracks = await deps.db.fetchone(
+        "SELECT COUNT(*) as cnt FROM user_favorites WHERE user_id = ? AND track_id IS NOT NULL",
+        (profile_id,),
+    )
+    fav_albums = await deps.db.fetchone(
+        "SELECT COUNT(*) as cnt FROM user_favorites WHERE user_id = ? AND album_id IS NOT NULL",
+        (profile_id,),
+    )
+    fav_artists = await deps.db.fetchone(
+        "SELECT COUNT(*) as cnt FROM user_favorites WHERE user_id = ? AND artist_id IS NOT NULL",
+        (profile_id,),
+    )
+
+    # Listening history count (if playback_history exists)
+    history_count = 0
+    try:
+        hist_row = await deps.db.fetchone(
+            "SELECT COUNT(*) as cnt FROM playback_history WHERE profile_id = ?",
+            (profile_id,),
+        )
+        if hist_row:
+            history_count = hist_row["cnt"]
+    except Exception:
+        pass  # Table may not have profile_id column yet
+
+    return {
+        "profile": profile,
+        "stats": {
+            "favorite_tracks": fav_tracks["cnt"] if fav_tracks else 0,
+            "favorite_albums": fav_albums["cnt"] if fav_albums else 0,
+            "favorite_artists": fav_artists["cnt"] if fav_artists else 0,
+            "listening_history": history_count,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

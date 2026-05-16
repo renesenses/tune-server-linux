@@ -83,6 +83,7 @@ class MinimalDmrDevice:
         self._rc_url: str | None = None
         self._transport_state: str = "STOPPED"
         self._media_position: float | None = None
+        self._current_track_uri: str | None = None
 
     # ── properties expected by DlnaOutput ─────────────────────────────
 
@@ -97,6 +98,10 @@ class MinimalDmrDevice:
     @property
     def media_position(self) -> float | None:
         return self._media_position
+
+    @property
+    def current_track_uri(self) -> str | None:
+        return self._current_track_uri
 
     @property
     def can_seek_rel_time(self) -> bool:
@@ -337,6 +342,9 @@ class MinimalDmrDevice:
             m = re.search(r"<RelTime>([\d:.]+)</RelTime>", resp2)
             if m:
                 self._media_position = self._parse_time(m.group(1))
+            m_uri = re.search(r"<TrackURI>([^<]*)</TrackURI>", resp2)
+            if m_uri:
+                self._current_track_uri = m_uri.group(1) or None
 
     async def async_get_protocol_info(self) -> None:
         pass
