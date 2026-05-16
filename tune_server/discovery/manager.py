@@ -9,6 +9,7 @@ from tune_server.config import settings
 from tune_server.discovery.bluos import BluosDiscovery
 from tune_server.discovery.cast import CastDiscovery
 from tune_server.discovery.mdns import MdnsDiscovery
+from tune_server.discovery.openhome import OpenHomeDiscovery
 from tune_server.discovery.ssdp import SsdpDiscovery
 from tune_server.event_bus import EventBus
 from tune_server.models import DiscoveredDevice
@@ -30,6 +31,7 @@ class DiscoveryManager:
         self._mdns = MdnsDiscovery(event_bus) if settings.mdns_enabled else None
         self._cast = CastDiscovery(event_bus) if getattr(settings, 'cast_enabled', True) else None
         self._bluos = BluosDiscovery(event_bus) if getattr(settings, 'bluos_enabled', True) else None
+        self._openhome = OpenHomeDiscovery(event_bus) if settings.ssdp_enabled else None
         self._network_shares: NetworkShareDiscovery | None = None
         self._media_servers: MediaServerDiscovery | None = None
 
@@ -56,6 +58,10 @@ class DiscoveryManager:
     @property
     def bluos(self) -> BluosDiscovery | None:
         return self._bluos
+
+    @property
+    def openhome(self) -> OpenHomeDiscovery | None:
+        return self._openhome
 
     @property
     def network_shares(self) -> NetworkShareDiscovery | None:
@@ -87,6 +93,8 @@ class DiscoveryManager:
             await self._cast.start(shared_zc=self._shared_zc)
         if self._bluos:
             await self._bluos.start(shared_zc=self._shared_zc)
+        if self._openhome:
+            await self._openhome.start()
         if self._network_shares:
             await self._network_shares.start()
         if self._media_servers:
@@ -103,6 +111,8 @@ class DiscoveryManager:
             await self._cast.stop()
         if self._bluos:
             await self._bluos.stop()
+        if self._openhome:
+            await self._openhome.stop()
         if self._shared_zc:
             self._shared_zc.close()
             self._shared_zc = None
@@ -121,6 +131,8 @@ class DiscoveryManager:
             devices.extend(self._cast.devices.values())
         if self._bluos:
             devices.extend(self._bluos.devices.values())
+        if self._openhome:
+            devices.extend(self._openhome.devices.values())
         return devices
 
     async def rescan(self) -> list[DiscoveredDevice]:
@@ -135,6 +147,8 @@ class DiscoveryManager:
             tasks.append(self._cast.rescan())
         if self._bluos:
             tasks.append(self._bluos.rescan())
+        if self._openhome:
+            tasks.append(self._openhome.rescan())
         if tasks:
             await asyncio.gather(*tasks)
         return self.list_devices()

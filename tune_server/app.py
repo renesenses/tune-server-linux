@@ -767,11 +767,30 @@ class TuneServer:
             name = device.name if device else "BluOS"
             return BluosOutput(host, self._http_streamer, self._server_ip, port=port, device_name=name)
 
+        async def create_openhome_output(device_id: str | None):
+            if not device_id or not self._discovery_manager or not self._discovery_manager.openhome:
+                return None
+            oh = self._discovery_manager.openhome
+            disc = oh.devices.get(device_id)
+            urls = oh.get_service_urls(device_id)
+            if not disc or not urls:
+                logger.warning("openhome_factory_not_found", device_id=device_id)
+                return None
+            from tune_server.outputs.openhome import OpenHomeOutput
+            return OpenHomeOutput(
+                device_name=disc.name,
+                service_urls=urls,
+                server_ip=self._server_ip,
+                streamer=self._http_streamer,
+                base_url=disc.capabilities.get("base_url", ""),
+            )
+
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
         self._zone_manager.register_output_factory(OutputType.AIRPLAY, create_airplay_output)
         self._zone_manager.register_output_factory(OutputType.CHROMECAST, create_chromecast_output)
         self._zone_manager.register_output_factory(OutputType.BLUOS, create_bluos_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
+        self._zone_manager.register_output_factory(OutputType.OPENHOME, create_openhome_output)
 
     def _setup_playback_history(self, history_repo) -> None:
         """Record each played track in playback_history via EventBus.

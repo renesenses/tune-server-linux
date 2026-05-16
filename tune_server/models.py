@@ -49,6 +49,7 @@ class OutputType(str, Enum):
     AIRPLAY = "airplay"
     CHROMECAST = "chromecast"
     BLUOS = "bluos"
+    OPENHOME = "openhome"
 
 
 # --- Domain models ---
