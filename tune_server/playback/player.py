@@ -23,6 +23,15 @@ StreamUrlResolver = Callable[[Track], Coroutine[Any, Any, Optional[str]]]
 QueuePersistCallback = Callable[[list[Track], int], Coroutine[Any, Any, None]]
 
 
+def cover_url_for_client(cover_path: str | None) -> str | None:
+    """Transform cover_path to a URL the web client can load."""
+    if not cover_path:
+        return None
+    if cover_path.startswith("http"):
+        return cover_path
+    return f"/api/v1/library/artwork/{cover_path.split('/')[-1]}"
+
+
 class PlayerHookEvent(StrEnum):
     """Lifecycle events plugins can hook into via Player.add_hook()."""
     BEFORE_TRACK = "before_track"   # fired with (zone_id, track) just before audio output starts
@@ -520,7 +529,7 @@ class Player:
                     "track_title": track.title,
                     "artist_name": track.artist_name,
                     "album_title": track.album_title,
-                    "cover_path": track.cover_path,
+                    "cover_path": cover_url_for_client(track.cover_path),
                 },
                 source="player",
             ))
@@ -616,7 +625,7 @@ class Player:
                 "track_title": track.title,
                 "artist_name": track.artist_name,
                 "album_title": track.album_title,
-                "cover_path": track.cover_path,
+                "cover_path": cover_url_for_client(track.cover_path),
             },
             source="player",
         ))
@@ -998,7 +1007,7 @@ class Player:
                 "track_title": next_track.title,
                 "artist_name": next_track.artist_name,
                 "album_title": next_track.album_title,
-                "cover_path": next_track.cover_path,
+                "cover_path": cover_url_for_client(next_track.cover_path),
             },
             source="player",
         ))
@@ -1046,7 +1055,7 @@ class Player:
                     "track_title": next_track.title,
                     "artist_name": next_track.artist_name,
                     "album_title": next_track.album_title,
-                    "cover_path": next_track.cover_path,
+                    "cover_path": cover_url_for_client(next_track.cover_path),
                 },
                 source="player",
             ))
@@ -1160,7 +1169,7 @@ class Player:
                             "track_title": next_track.title,
                             "artist_name": next_track.artist_name,
                             "album_title": next_track.album_title,
-                            "cover_path": next_track.cover_path,
+                            "cover_path": cover_url_for_client(next_track.cover_path),
                         },
                         source="player",
                     ))
@@ -1206,7 +1215,7 @@ class Player:
                             "track_title": prev_track.title,
                             "artist_name": prev_track.artist_name,
                             "album_title": prev_track.album_title,
-                            "cover_path": prev_track.cover_path,
+                            "cover_path": cover_url_for_client(prev_track.cover_path),
                         },
                         source="player",
                     ))
@@ -1449,7 +1458,7 @@ class Player:
                     "title": current.title,
                     "artist_name": current.artist_name,
                     "album_title": current.album_title,
-                    "cover_path": current.cover_path,
+                    "cover_path": cover_url_for_client(current.cover_path),
                     "source": "radio",
                 },
                 source="player",

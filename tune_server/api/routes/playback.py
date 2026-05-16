@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 
 from tune_server.api.deps import deps
 from tune_server.event_bus import Event, EventType
+from tune_server.playback.player import cover_url_for_client
 from tune_server.models import (
     PlayRequest,
     QueueAddRequest,
@@ -425,9 +426,7 @@ async def share_now_playing(zone_id: int):
     if not track:
         raise HTTPException(status_code=404, detail="Nothing playing")
 
-    cover_url = None
-    if track.cover_path:
-        cover_url = f"/api/v1/library/artwork/{track.cover_path.split('/')[-1]}"
+    cover_url = cover_url_for_client(track.cover_path)
 
     return {
         "title": track.title,
@@ -916,7 +915,7 @@ async def now_listening():
                         "title": track.title,
                         "artist": track.artist_name,
                         "album": track.album_title,
-                        "cover_path": track.cover_path,
+                        "cover_path": cover_url_for_client(track.cover_path),
                         "duration_ms": track.duration_ms,
                     },
                     "position_ms": zone.player.position_ms,
@@ -957,7 +956,7 @@ async def widget_data():
         "title": track.title,
         "artist": track.artist_name,
         "album": track.album_title,
-        "cover_url": f"/api/v1/library/artwork/{track.cover_path.split('/')[-1]}" if track.cover_path and not track.cover_path.startswith("http") else track.cover_path,
+        "cover_url": cover_url_for_client(track.cover_path),
         "position_ms": active.player.position_ms,
         "duration_ms": track.duration_ms,
         "volume": active.player.volume,
