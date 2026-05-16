@@ -106,22 +106,30 @@ class LocalOutput(OutputTarget):
         self._start_time = time.monotonic()
         self._elapsed_before_pause = 0.0
 
-        dtype_map = {
-            8: "int8",
-            16: "int16",
-            24: "float32",  # 24-bit → float32 for universal DAC compatibility
-            32: "float32",
-        }
+        from tune_server.config import settings as _s
+        exclusive = _s.local_exclusive_mode
+
+        if exclusive:
+            dtype_map = {
+                8: "int8",
+                16: "int16",
+                24: "int32",   # WASAPI Exclusive: native 24-in-32 for bit-perfect
+                32: "int32",
+            }
+        else:
+            dtype_map = {
+                8: "int8",
+                16: "int16",
+                24: "float32",  # Shared mode: float32 for universal compatibility
+                32: "float32",
+            }
         dtype = dtype_map.get(stream_info.bit_depth, "int16")
 
         try:
-            from tune_server.config import settings as _s
             device = None
             if self._device_name:
                 device = _find_device_index(self._device_name)
 
-            # Exclusive mode: use ALSA hw: device directly (bypass PulseAudio/PipeWire mixer)
-            exclusive = _s.local_exclusive_mode
             latency_s = _s.local_latency_ms / 1000.0
             blocksize = max(256, int(stream_info.sample_rate * latency_s / 4))
 
@@ -130,11 +138,18 @@ class LocalOutput(OutputTarget):
                 try:
                     dev_info = sd.query_devices(device)
                     dev_name = dev_info.get("name", "")
-                    # Try to find ALSA hw: device for exclusive access
                     hostapi = sd.query_hostapis(dev_info.get("hostapi", 0))
-                    if hostapi.get("name", "").lower() == "alsa":
+                    hostapi_name = hostapi.get("name", "").lower()
+                    if "wasapi" in hostapi_name and hasattr(sd, "WasapiSettings"):
+                        extra_settings = sd.WasapiSettings(exclusive=True)
+                        logger.info("local_exclusive_wasapi", device=dev_name)
+                    elif hostapi_name == "alsa":
                         extra_settings = sd.AsioSettings(channel_selectors=[0, 1]) if hasattr(sd, "AsioSettings") else None
-                        logger.info("local_exclusive_mode", device=dev_name)
+                        logger.info("local_exclusive_alsa", device=dev_name)
+                    elif "core audio" in hostapi_name:
+                        logger.info("local_exclusive_coreaudio", device=dev_name)
+                    else:
+                        logger.info("local_exclusive_generic", device=dev_name, hostapi=hostapi_name)
                 except Exception:
                     logger.debug("local_exclusive_mode_detection_failed")
 
