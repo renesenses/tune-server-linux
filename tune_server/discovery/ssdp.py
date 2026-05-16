@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 from urllib.parse import urlparse
+from xml.etree import ElementTree
 
+import aiohttp
 import structlog
 
 from tune_server.event_bus import Event, EventBus, EventType
@@ -41,6 +43,32 @@ class SsdpDiscovery:
             location=location, usn=usn, name=name,
             error=str(exc), failure_count=count,
         )
+
+    @staticmethod
+    async def _resolve_sonos_name(host: str, model_name: str) -> str | None:
+        """Fetch the Sonos room name from its device description XML.
+
+        Returns a friendly name like "Sonos Play:1 - Salon" or None on failure.
+        """
+        url = f"http://{host}:1400/xml/device_description.xml"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                    if resp.status != 200:
+                        return None
+                    text = await resp.text()
+            root = ElementTree.fromstring(text)
+            # Namespace-agnostic search for <roomName>
+            for elem in root.iter():
+                if elem.tag.endswith("}roomName") or elem.tag == "roomName":
+                    room = (elem.text or "").strip()
+                    if room:
+                        short_model = model_name or "Speaker"
+                        return f"Sonos {short_model} - {room}"
+            return None
+        except Exception as exc:
+            logger.debug("sonos_room_name_fetch_failed", host=host, error=str(exc))
+            return None
 
     async def _try_minimal_dmr(self, dev_id: str, location: str, name: str) -> bool:
         """Probe common control URLs with a MinimalDmrDevice as fallback."""
@@ -231,6 +259,15 @@ class SsdpDiscovery:
                                 logger.debug("ssdp_skip_chromecast", name=name)
                                 return
 
+                            # Resolve Sonos room name for friendlier display
+                            if "sonos" in manufacturer or "sonos" in (device.model_name or "").lower():
+                                sonos_name = await self._resolve_sonos_name(
+                                    parsed.hostname or "", device.model_name or ""
+                                )
+                                if sonos_name:
+                                    logger.info("sonos_room_resolved", raw=name, resolved=sonos_name)
+                                    name = sonos_name
+
                             disc_device = DiscoveredDevice(
                                 id=dev_id,
                                 name=name,
@@ -403,6 +440,15 @@ class SsdpDiscovery:
                 if "google" in manufacturer:
                     logger.debug("ssdp_skip_chromecast_rescan", name=name)
                     return
+
+                # Resolve Sonos room name for friendlier display
+                if "sonos" in manufacturer or "sonos" in (device.model_name or "").lower():
+                    sonos_name = await self._resolve_sonos_name(
+                        parsed.hostname or "", device.model_name or ""
+                    )
+                    if sonos_name:
+                        logger.info("sonos_room_resolved", raw=name, resolved=sonos_name)
+                        name = sonos_name
 
                 disc_device = DiscoveredDevice(
                     id=dev_id,
