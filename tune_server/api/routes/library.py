@@ -2115,6 +2115,12 @@ async def report_artist_image(artist_id: int):
     artist = await deps.artist_repo.get(artist_id)
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
+
+    # Report to community cache if artist has a MusicBrainz ID
+    if artist.musicbrainz_id:
+        from tune_server.library.enrichment import _report_community_image
+        asyncio.create_task(_report_community_image(artist.musicbrainz_id))
+
     artist.image_path = None
     artist.image_source = None
     await deps.artist_repo.update(artist)
@@ -2147,4 +2153,12 @@ async def upload_artist_image(artist_id: int, file: UploadFile):
     artist.image_source = "user"
     await deps.artist_repo.update(artist)
     logger.info("artist_image_uploaded", artist_id=artist_id, name=artist.name)
+
+    # Share user-uploaded image to community cache (highest priority)
+    if artist.musicbrainz_id and cover_path:
+        from tune_server.library.enrichment import _share_image_to_community
+        asyncio.create_task(_share_image_to_community(
+            artist.musicbrainz_id, artist.name, cover_path, "user"
+        ))
+
     return await deps.artist_repo.get(artist_id)

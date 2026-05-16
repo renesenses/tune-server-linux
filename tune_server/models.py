@@ -62,7 +62,7 @@ class Artist(BaseModel):
     discogs_id: Optional[str] = None
     bio: Optional[str] = None
     image_path: Optional[str] = None
-    image_source: Optional[str] = None  # "user", "discogs", "musicbrainz", "wikipedia"
+    image_source: Optional[str] = None  # "user", "discogs", "community", "musicbrainz", "wikipedia"
     source_id: Optional[str] = None
     similar_artists: Optional[list[dict]] = None
     concerts: Optional[list[dict]] = None

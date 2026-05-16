@@ -20,8 +20,9 @@ _IMAGE_SOURCE_PRIORITY = {
     None: 0,
     "wikipedia": 1,
     "musicbrainz": 2,
-    "discogs": 3,
-    "user": 4,
+    "community": 3,
+    "discogs": 4,
+    "user": 5,
 }
 
 
@@ -149,6 +150,86 @@ async def _fetch_discogs_artist_image(name: str, token: str, cache_dir: str) -> 
         return None
 
 
+async def _fetch_community_image(mbid: str, cache_dir: str) -> str | None:
+    """Check mozaiklabs.fr community cache for an artist image. Returns local path or None."""
+    from tune_server.config import settings as _s
+    if not _s.community_cache_enabled or not mbid:
+        return None
+    url = f"{_s.community_api_url}/{mbid}/image"
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                image_url = data.get("image_url")
+                if not image_url:
+                    return None
+
+            # Download the image
+            full_url = f"https://mozaiklabs.fr{image_url}" if image_url.startswith("/") else image_url
+            async with session.get(full_url) as img_resp:
+                if img_resp.status != 200:
+                    return None
+                img_data = await img_resp.read()
+                if len(img_data) < 1000:
+                    return None
+
+            # Save to local cache
+            cache_path = Path(cache_dir) / f"community_{mbid}.jpg"
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_bytes(img_data)
+            logger.info("community_artist_image_cached", mbid=mbid, path=str(cache_path))
+            return str(cache_path)
+    except Exception:
+        logger.debug("community_image_fetch_failed", mbid=mbid)
+        return None
+
+
+async def _share_image_to_community(mbid: str, artist_name: str, image_path: str, source: str) -> None:
+    """Upload a successfully fetched artist image to the mozaiklabs.fr community cache."""
+    from tune_server.config import settings as _s
+    if not _s.community_cache_enabled or not _s.community_api_key or not mbid:
+        return
+    url = f"{_s.community_api_url}/{mbid}/image"
+    try:
+        file_path = Path(image_path)
+        if not file_path.exists():
+            return
+        headers = {"Authorization": f"Bearer {_s.community_api_key}"}
+        data = aiohttp.FormData()
+        data.add_field("file", file_path.read_bytes(), filename=f"{mbid}.jpg", content_type="image/jpeg")
+        data.add_field("source", source)
+        data.add_field("artist_name", artist_name or "")
+
+        async with aiohttp.ClientSession(headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.post(url, data=data) as resp:
+                if resp.status in (200, 201):
+                    logger.info("community_image_shared", mbid=mbid, artist=artist_name)
+                else:
+                    logger.debug("community_image_share_failed", mbid=mbid, status=resp.status)
+    except Exception:
+        logger.debug("community_image_share_error", mbid=mbid)
+
+
+async def _report_community_image(mbid: str) -> None:
+    """Report an incorrect image to the mozaiklabs.fr community cache."""
+    from tune_server.config import settings as _s
+    if not _s.community_cache_enabled or not _s.community_api_key or not mbid:
+        return
+    url = f"{_s.community_api_url}/{mbid}/image/report"
+    try:
+        headers = {"Authorization": f"Bearer {_s.community_api_key}"}
+        async with aiohttp.ClientSession(headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.post(url) as resp:
+                if resp.status == 200:
+                    logger.info("community_image_reported", mbid=mbid)
+                else:
+                    logger.debug("community_image_report_failed", mbid=mbid, status=resp.status)
+    except Exception:
+        logger.debug("community_image_report_error", mbid=mbid)
+
+
 class MetadataEnricher:
     """Background enrichment from MusicBrainz and Discogs."""
 
@@ -211,16 +292,33 @@ class MetadataEnricher:
                     logger.debug("musicbrainz_lookup_failed", artist=artist.name)
                 await asyncio.sleep(1.2)
 
-            # Enrich artist images from Discogs
+            # Enrich artist images: community cache first, then Discogs
             from tune_server.config import settings as _s
-            if _s.discogs_token:
-                all_artists = await self._artist_repo.list(limit=200)
-                # Only target artists without image or with a lower-priority source than discogs
-                candidates = [a for a in all_artists
-                              if (not a.image_path and a.image_source != "user")
-                              or (a.image_path and a.image_source not in ("discogs", "user"))]
-                enriched_count = 0
-                for artist in candidates:
+            all_artists = await self._artist_repo.list(limit=200)
+            # Only target artists without image or with a lower-priority source
+            candidates = [a for a in all_artists
+                          if (not a.image_path and a.image_source != "user")
+                          or (a.image_path and a.image_source not in ("discogs", "user", "community"))]
+            enriched_count = 0
+            for artist in candidates:
+                # Step 1: Try community cache (free, no rate limit issues)
+                if artist.musicbrainz_id:
+                    community_path = await _fetch_community_image(
+                        artist.musicbrainz_id, _s.artwork_cache_dir
+                    )
+                    if community_path:
+                        artist.image_path = community_path
+                        artist.image_source = "community"
+                        try:
+                            await self._artist_repo.update(artist)
+                        except Exception:
+                            logger.debug("artist_image_update_failed", name=artist.name)
+                            continue
+                        enriched_count += 1
+                        continue
+
+                # Step 2: Fall back to Discogs (rate-limited)
+                if _s.discogs_token:
                     img_path = await _fetch_discogs_artist_image(
                         artist.name, _s.discogs_token, _s.artwork_cache_dir
                     )
@@ -233,9 +331,14 @@ class MetadataEnricher:
                             logger.debug("artist_image_update_failed", name=artist.name)
                             continue
                         enriched_count += 1
+                        # Share to community cache (fire-and-forget)
+                        if artist.musicbrainz_id:
+                            asyncio.create_task(_share_image_to_community(
+                                artist.musicbrainz_id, artist.name, img_path, "discogs"
+                            ))
                     await asyncio.sleep(1.5)
-                if enriched_count:
-                    logger.info("artist_images_enriched", count=enriched_count)
+            if enriched_count:
+                logger.info("artist_images_enriched", count=enriched_count)
 
             # Enrich albums
             all_albums = await self._album_repo.list(limit=50)
@@ -323,18 +426,36 @@ class MetadataEnricher:
                     # Rate limit: MusicBrainz allows 1 request per second
                     await asyncio.sleep(1.5)
 
-                # Enrich artist images from Discogs
+                # Enrich artist images: community cache first, then Discogs
                 from tune_server.config import settings as _s
-                if _s.discogs_token:
-                    all_artists = await self._artist_repo.list(limit=200)
-                    # Only target artists without image or with a lower-priority source than discogs
-                    no_image = [a for a in all_artists
-                                if (not a.image_path and a.image_source != "user")
-                                or (a.image_path and a.image_source not in ("discogs", "user"))]
-                    enriched_count = 0
-                    for artist in no_image:
-                        if not self._running:
-                            break
+                all_artists = await self._artist_repo.list(limit=200)
+                # Only target artists without image or with a lower-priority source
+                no_image = [a for a in all_artists
+                            if (not a.image_path and a.image_source != "user")
+                            or (a.image_path and a.image_source not in ("discogs", "user", "community"))]
+                enriched_count = 0
+                for artist in no_image:
+                    if not self._running:
+                        break
+
+                    # Step 1: Try community cache (free, no rate limit issues)
+                    if artist.musicbrainz_id:
+                        community_path = await _fetch_community_image(
+                            artist.musicbrainz_id, _s.artwork_cache_dir
+                        )
+                        if community_path:
+                            artist.image_path = community_path
+                            artist.image_source = "community"
+                            try:
+                                await self._artist_repo.update(artist)
+                            except Exception:
+                                logger.debug("artist_image_update_failed", name=artist.name)
+                                continue
+                            enriched_count += 1
+                            continue
+
+                    # Step 2: Fall back to Discogs (rate-limited)
+                    if _s.discogs_token:
                         img_path = await _fetch_discogs_artist_image(
                             artist.name, _s.discogs_token, _s.artwork_cache_dir
                         )
@@ -347,9 +468,14 @@ class MetadataEnricher:
                                 logger.debug("artist_image_update_failed", name=artist.name)
                                 continue
                             enriched_count += 1
+                            # Share to community cache (fire-and-forget)
+                            if artist.musicbrainz_id:
+                                asyncio.create_task(_share_image_to_community(
+                                    artist.musicbrainz_id, artist.name, img_path, "discogs"
+                                ))
                         await asyncio.sleep(1.5)
-                    if enriched_count:
-                        logger.info("artist_images_enriched", count=enriched_count)
+                if enriched_count:
+                    logger.info("artist_images_enriched", count=enriched_count)
 
                 # Enrich albums without year or genre
                 all_albums = await self._album_repo.list(limit=50)

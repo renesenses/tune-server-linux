@@ -155,6 +155,11 @@ class Settings(BaseSettings):
     artist_metadata_url: str = "https://mozaiklabs.fr/api/v1/artists"
     artist_metadata_enabled: bool = True
 
+    # Community shared artist image cache (mozaiklabs.fr)
+    community_api_url: str = "https://mozaiklabs.fr/api/v1/artists"
+    community_api_key: str = ""  # TUNE_COMMUNITY_API_KEY — shared across installations
+    community_cache_enabled: bool = True
+
     # Artwork
     artwork_cache_dir: str = "artwork_cache"
 
