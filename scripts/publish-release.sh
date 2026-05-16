@@ -18,13 +18,29 @@ MIN_LINUX_SIZE=50000000  # 50MB minimum for Linux tar.gz
 
 echo "=== Publishing Tune v${VERSION} to mozaiklabs.fr ==="
 
-# 1. Wait for CI to finish
-echo "[1/5] Checking CI status..."
-STATUS=$(gh run list --repo "$REPO" --limit 1 --json status -q '.[0].status' 2>/dev/null || echo "unknown")
-if [ "$STATUS" = "in_progress" ] || [ "$STATUS" = "queued" ]; then
-    echo "  CI still running — waiting..."
-    gh run watch --repo "$REPO" --exit-status 2>/dev/null || true
-fi
+# 1. Wait for ALL CI runs to finish (especially the Release workflow)
+echo "[1/5] Waiting for CI to finish..."
+for i in $(seq 1 60); do
+    RUNNING=$(gh run list --repo "$REPO" --limit 5 --json status -q '[.[] | select(.status == "in_progress" or .status == "queued")] | length' 2>/dev/null || echo "0")
+    if [ "$RUNNING" = "0" ]; then
+        echo "  All CI runs complete ✓"
+        break
+    fi
+    echo "  $RUNNING run(s) still active — waiting 30s (attempt $i/60)..."
+    sleep 30
+done
+
+# Extra: wait for all expected assets to appear (>=10 files)
+echo "  Checking asset count..."
+for i in $(seq 1 20); do
+    ASSET_COUNT=$(gh release view "v${VERSION}" --repo "$REPO" --json assets -q '.assets | length' 2>/dev/null || echo "0")
+    if [ "$ASSET_COUNT" -ge 10 ]; then
+        echo "  $ASSET_COUNT assets found ✓"
+        break
+    fi
+    echo "  Only $ASSET_COUNT assets — waiting 15s for uploads to complete..."
+    sleep 15
+done
 
 # 2. Download all assets from GitHub
 echo "[2/5] Downloading assets from GitHub..."
