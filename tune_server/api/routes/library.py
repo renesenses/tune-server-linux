@@ -731,6 +731,20 @@ async def history_dashboard(
             tuple(params) + (top_n,),
         )
 
+    async def q_top_radios():
+        return await deps.db.fetchall(
+            f"""SELECT track_title as station_name,
+                       COUNT(*) as plays,
+                       COALESCE(SUM(listened_ms), 0) as listening_ms
+                FROM playback_history {where_clause}
+                  {'AND' if where_parts else 'WHERE'} source = 'radio'
+                  AND track_title IS NOT NULL
+                GROUP BY track_title
+                ORDER BY listening_ms DESC
+                LIMIT ?""",
+            tuple(params) + (top_n,),
+        )
+
     async def q_trend():
         return await deps.db.fetchall(
             f"""SELECT DATE(played_at) as day, COUNT(*) as plays,
@@ -925,10 +939,10 @@ async def history_dashboard(
         )
 
     # Fan out — total wall time = max query, not sum.
-    (totals_row, top_artists, top_albums, top_tracks, trend, hourly,
+    (totals_row, top_artists, top_albums, top_tracks, top_radios, trend, hourly,
      by_zone, by_source, by_genre, weekday_hourly, streak, on_this_day,
      completion_row) = await asyncio.gather(
-        q_totals(), q_top_artists(), q_top_albums(), q_top_tracks(),
+        q_totals(), q_top_artists(), q_top_albums(), q_top_tracks(), q_top_radios(),
         q_trend(), q_hourly(), q_by_zone(), q_by_source(), q_by_genre(),
         q_weekday_hourly(), q_streak(), q_on_this_day(),
         q_completion(),
@@ -964,6 +978,9 @@ async def history_dashboard(
             {"track_id": r["track_id"], "title": r["track_title"],
              "artist_name": r["artist_name"], "plays": r["plays"],
              "listening_ms": r["listening_ms"]} for r in top_tracks],
+        "top_radios": [
+            {"station_name": r["station_name"], "plays": r["plays"],
+             "listening_ms": r["listening_ms"]} for r in top_radios],
         "trend": [{"day": r["day"], "plays": r["plays"],
                    "listening_ms": r["ms"]} for r in trend],
         "hourly": [{"hour": r["hour"], "plays": r["plays"]} for r in hourly],
