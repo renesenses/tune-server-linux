@@ -173,9 +173,9 @@ class LocalOutput(OutputTarget):
                 # find the highest rate the device actually supports. This
                 # helps USB DACs (e.g. Chord Mojo) that support high rates but
                 # whose Windows default is stuck at 44.1kHz.
+                _all_rates = [768000, 384000, 352800, 192000, 176400, 96000, 88200, 48000, 44100]
                 _candidate_rates = sorted(
-                    [r for r in [768000, 384000, 352800, 192000, 176400, 96000, 88200, 48000, 44100]
-                     if r < out_rate and r >= default_rate],
+                    [r for r in _all_rates if r < out_rate],
                     reverse=True,
                 )
                 best_rate = default_rate

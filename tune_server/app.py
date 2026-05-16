@@ -388,10 +388,13 @@ class TuneServer:
         # Initialize zones from DB (now devices should be available)
         await self._zone_manager.initialize()
 
-        # Retry unavailable zones after discovery has had more time
+        # Retry unavailable zones with progressive delays
         async def _retry_zones():
-            await asyncio.sleep(60)
-            await self._zone_manager.retry_pending_zones()
+            for delay in [15, 30, 60]:
+                await asyncio.sleep(delay)
+                await self._zone_manager.retry_pending_zones()
+                if not self._zone_manager._pending_zones:
+                    break
         asyncio.create_task(_retry_zones())
 
         # Streaming services already created above (before http_streamer.start
