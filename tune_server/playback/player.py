@@ -223,6 +223,18 @@ class Player:
                     fn=getattr(fn, "__qualname__", repr(fn)),
                 )
 
+    async def _cache_queue_covers(self, tracks: list[Track]) -> None:
+        """Pre-cache HTTP cover URLs for queued tracks in background."""
+        try:
+            from tune_server.library.artwork import cache_cover_url
+            for track in tracks:
+                if track.cover_path and track.cover_path.startswith("http"):
+                    cached = await asyncio.to_thread(cache_cover_url, track.cover_path)
+                    if cached:
+                        track.cover_path = cached
+        except Exception:
+            logger.debug("cache_queue_covers_error", zone_id=self._zone_id)
+
     def _is_dlna_output(self) -> bool:
         """Check if current output is a DLNA renderer."""
         if not self._output:
@@ -394,6 +406,8 @@ class Player:
             if tracks:
                 self._queue.set_tracks(tracks, start_position)
                 await self._persist_queue()
+                # Pre-cache HTTP cover URLs in background (Qobuz/Tidal CDN expiry)
+                asyncio.create_task(self._cache_queue_covers(tracks))
 
             track = self._queue.current
             if not track:
@@ -409,6 +423,16 @@ class Player:
     async def _start_track(self, track: Track, seek_ms: int = 0) -> None:
         # Stop any current playback
         await self._stop_pipeline()
+
+        # Cache HTTP cover URLs locally (Qobuz/Tidal CDN URLs expire)
+        if track.cover_path and track.cover_path.startswith("http"):
+            try:
+                from tune_server.library.artwork import cache_cover_url
+                cached = await asyncio.to_thread(cache_cover_url, track.cover_path)
+                if cached:
+                    track.cover_path = cached
+            except Exception:
+                logger.debug("cover_cache_failed", track=track.title)
 
         if not self._output:
             logger.error("play_no_output", zone_id=self._zone_id)

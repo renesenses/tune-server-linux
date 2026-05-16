@@ -176,6 +176,52 @@ def _musicbrainz_rate_limit() -> None:
     _last_musicbrainz_request = time.monotonic()
 
 
+def cache_cover_url(url: str) -> Optional[str]:
+    """Download and cache an HTTP cover URL locally.
+
+    Used for streaming service covers (Qobuz, Tidal) whose CDN URLs expire.
+    Returns the local cached file path, or None on failure.
+    The cache key is a stable MD5 hash of the URL (without query params).
+    """
+    if not url or not url.startswith("http"):
+        return None
+
+    # Strip query params for a stable cache key (CDN signatures change)
+    base_url = url.split("?")[0]
+    cache_key = hashlib.md5(base_url.encode()).hexdigest()
+    cache_dir = _get_cache_dir()
+    output_path = cache_dir / f"{cache_key}.jpg"
+
+    if output_path.exists():
+        return str(output_path)
+
+    try:
+        result = subprocess.run(
+            ["curl", "-4sfL", "--max-time", "10", "-o", str(output_path), url],
+            capture_output=True, timeout=15, **subprocess_hide_window(),
+        )
+        if result.returncode != 0 or not output_path.exists():
+            output_path.unlink(missing_ok=True)
+            logger.debug("cache_cover_url_download_failed", url=base_url)
+            return None
+
+        # Verify it's a valid image and resize if needed
+        img = Image.open(output_path)
+        img = img.convert("RGB")
+        max_size = settings.artwork_max_size
+        if img.width > max_size or img.height > max_size:
+            img.thumbnail((max_size, max_size), Image.LANCZOS)
+        img.save(output_path, "JPEG", quality=90)
+
+        logger.info("cover_url_cached", url=base_url, path=str(output_path))
+        return str(output_path)
+
+    except Exception:
+        logger.debug("cache_cover_url_error", url=base_url)
+        output_path.unlink(missing_ok=True)
+        return None
+
+
 def fetch_cover_from_musicbrainz(
     artist_name: str,
     album_title: str,

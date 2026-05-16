@@ -154,10 +154,37 @@ class LocalOutput(OutputTarget):
             except sd.PortAudioError:
                 dev_info = sd.query_devices(device if device is not None else sd.default.device[1])
                 default_rate = int(dev_info.get("default_samplerate", 48000))
+                # Try progressively lower rates from the source rate down to
+                # find the highest rate the device actually supports. This
+                # helps USB DACs (e.g. Chord Mojo) that support high rates but
+                # whose Windows default is stuck at 44.1kHz.
+                _candidate_rates = sorted(
+                    [r for r in [768000, 384000, 352800, 192000, 176400, 96000, 88200, 48000, 44100]
+                     if r < out_rate and r >= default_rate],
+                    reverse=True,
+                )
+                best_rate = default_rate
+                for candidate in _candidate_rates:
+                    try:
+                        test_stream = sd.OutputStream(
+                            samplerate=candidate,
+                            channels=stream_info.channels,
+                            dtype=dtype,
+                            device=device,
+                            blocksize=blocksize,
+                            latency="low" if exclusive else "high",
+                            extra_settings=extra_settings,
+                        )
+                        test_stream.close()
+                        best_rate = candidate
+                        break
+                    except sd.PortAudioError:
+                        continue
                 logger.warning("local_output_resample",
-                               source_rate=out_rate, device_rate=default_rate)
-                self._resample_ratio = default_rate / out_rate
-                out_rate = default_rate
+                               source_rate=out_rate, device_rate=best_rate,
+                               default_rate=default_rate)
+                self._resample_ratio = best_rate / out_rate
+                out_rate = best_rate
                 blocksize = max(256, int(out_rate * latency_s / 4))
                 self._stream = sd.OutputStream(
                     samplerate=out_rate,
