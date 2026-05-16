@@ -97,6 +97,12 @@ async def update_config(body: dict):
         persist_env_var("TUNE_ENRICH_ON_SCAN", str(val))
         updated["enrich_on_scan"] = val
 
+    if "local_exclusive_mode" in body:
+        val = bool(body["local_exclusive_mode"])
+        settings.local_exclusive_mode = val
+        persist_env_var("TUNE_LOCAL_EXCLUSIVE_MODE", str(val))
+        updated["local_exclusive_mode"] = val
+
     if not updated:
         raise HTTPException(status_code=400, detail="No valid configuration fields provided")
 
