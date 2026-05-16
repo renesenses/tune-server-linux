@@ -1,7 +1,10 @@
 """Plugin Store API — browse, install, uninstall, update plugins."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 
 from tune_server.api import deps
 
@@ -47,3 +50,12 @@ async def update_plugin(name: str):
     if not result["success"]:
         raise HTTPException(400, result.get("error") or result.get("message"))
     return result
+
+
+@router.get("/docs", response_class=PlainTextResponse)
+async def plugin_dev_docs():
+    """Serve the plugin development guide as markdown."""
+    doc_path = Path(__file__).resolve().parents[3] / "docs" / "plugin-development.md"
+    if not doc_path.is_file():
+        raise HTTPException(404, "Plugin development guide not found")
+    return doc_path.read_text(encoding="utf-8")
