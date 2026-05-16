@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import structlog
 import uvicorn
@@ -766,29 +767,183 @@ class TuneServer:
         self._event_bus.on(EventType.PLAYBACK_TRACK_CHANGED, _on_track_changed)
 
         # Last.fm scrobbling
-        if settings.lastfm_scrobble_enabled and settings.lastfm_api_key and settings.lastfm_api_secret:
-            from tune_server.metadata.lastfm_scrobbler import LastfmScrobbler
-            scrobbler = LastfmScrobbler(
-                api_key=settings.lastfm_api_key,
-                api_secret=settings.lastfm_api_secret,
-                session_key=settings.lastfm_session_key or None,
+        self._setup_lastfm_scrobbling()
+
+    def _setup_lastfm_scrobbling(self) -> None:
+        """Wire Last.fm scrobbling to the event bus.
+
+        Credentials are loaded from the DB first (set via the web UI), with a
+        fallback to env-var settings for backwards compatibility.
+
+        Scrobble rules (per Last.fm spec):
+        - Send "now playing" when a track starts.
+        - Scrobble after the track has been listened to for >= 50% of its
+          duration or 4 minutes, whichever comes first.
+        - Tracks shorter than 30 seconds are not scrobbled.
+        - Skipped tracks (insufficient play time) are not scrobbled.
+        """
+        import json as _json
+        from tune_server.metadata.lastfm_scrobbler import LastfmScrobbler, should_scrobble
+
+        # Mutable state shared across closures — keyed by zone_id.
+        # Each entry: {"track": <track obj>, "started_at": <epoch>, "start_mono": <monotonic>}
+        _playing: dict[str, dict] = {}
+        _scrobbler_ref: list[LastfmScrobbler | None] = [None]
+        _scrobble_enabled_ref: list[bool] = [False]
+
+        async def _load_scrobbler() -> LastfmScrobbler | None:
+            """Load or refresh the scrobbler from DB-stored or env credentials."""
+            api_key = ""
+            api_secret = ""
+            session_key = ""
+            scrobble_enabled = False
+
+            # Try DB first (web UI configuration)
+            try:
+                row = await deps.db.fetchone(
+                    "SELECT token_data FROM streaming_auth WHERE service = ?",
+                    ("lastfm",),
+                )
+                if row:
+                    payload = _json.loads(row["token_data"])
+                    api_key = (payload.get("api_key") or "").strip()
+                    api_secret = (payload.get("api_secret") or "").strip()
+                    session_key = (payload.get("session_key") or "").strip()
+                    scrobble_enabled = bool(payload.get("scrobble_enabled"))
+            except Exception:
+                logger.debug("lastfm_db_load_error", exc_info=True)
+
+            # Fallback to env vars
+            if not api_key:
+                api_key = getattr(settings, "lastfm_api_key", "") or ""
+            if not api_secret:
+                api_secret = getattr(settings, "lastfm_api_secret", "") or ""
+            if not session_key:
+                session_key = getattr(settings, "lastfm_session_key", "") or ""
+            if not scrobble_enabled:
+                scrobble_enabled = getattr(settings, "lastfm_scrobble_enabled", False)
+
+            _scrobble_enabled_ref[0] = scrobble_enabled
+            if not api_key or not api_secret or not session_key or not scrobble_enabled:
+                _scrobbler_ref[0] = None
+                return None
+
+            scrobbler = _scrobbler_ref[0]
+            if scrobbler is None:
+                scrobbler = LastfmScrobbler(
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    session_key=session_key,
+                )
+                _scrobbler_ref[0] = scrobbler
+                logger.info("lastfm_scrobbling_enabled")
+            else:
+                # Refresh session key in case it changed (re-auth via UI)
+                scrobbler.set_session_key(session_key)
+            return scrobbler
+
+        async def _maybe_scrobble_previous(zone_id: str) -> None:
+            """Scrobble the previously-playing track for this zone if eligible."""
+            prev = _playing.pop(zone_id, None)
+            if not prev:
+                return
+
+            scrobbler = await _load_scrobbler()
+            if not scrobbler or not scrobbler.is_authenticated:
+                return
+
+            track = prev["track"]
+            if not track or not track.artist_name or not track.title:
+                return
+
+            listened_ms = int((time.monotonic() - prev["start_mono"]) * 1000)
+            if not should_scrobble(track.duration_ms, listened_ms):
+                logger.debug("lastfm_scrobble_skip_insufficient",
+                             track=track.title, listened_ms=listened_ms,
+                             duration_ms=track.duration_ms)
+                return
+
+            await scrobbler.scrobble(
+                artist=track.artist_name,
+                track=track.title,
+                album=track.album_title,
+                duration=track.duration_ms,
+                timestamp=int(prev["started_at"]),
             )
 
-            async def _on_scrobble(event: Event):
-                data = event.data or {}
-                zone_id = data.get("zone_id")
-                zone = self._zone_manager.get_zone(zone_id) if zone_id else None
-                track = zone.player._queue.current if zone else None
-                if track and track.artist_name and scrobbler.is_authenticated:
-                    await scrobbler.scrobble(
-                        artist=track.artist_name,
-                        track=track.title,
-                        album=track.album_title,
-                        duration=track.duration_ms,
-                    )
+        async def _on_playback_started(event: Event) -> None:
+            """Track started — send 'now playing' and record start time."""
+            data = event.data or {}
+            zone_id = data.get("zone_id")
+            if not zone_id:
+                return
 
-            self._event_bus.on(EventType.PLAYBACK_TRACK_CHANGED, _on_scrobble)
-            logger.info("lastfm_scrobbling_enabled")
+            zone = self._zone_manager.get_zone(zone_id)
+            track = zone.player._queue.current if zone else None
+            if not track:
+                return
+
+            _playing[zone_id] = {
+                "track": track,
+                "started_at": time.time(),
+                "start_mono": time.monotonic(),
+            }
+
+            # Send "now playing" to Last.fm
+            scrobbler = await _load_scrobbler()
+            if scrobbler and scrobbler.is_authenticated and track.artist_name and track.title:
+                await scrobbler.update_now_playing(
+                    artist=track.artist_name,
+                    track=track.title,
+                    album=track.album_title,
+                    duration=track.duration_ms,
+                )
+
+        async def _on_track_changed(event: Event) -> None:
+            """Previous track ended (or was skipped) — scrobble if eligible,
+            then record the new track and send 'now playing'."""
+            data = event.data or {}
+            zone_id = data.get("zone_id")
+            if not zone_id:
+                return
+
+            # Scrobble the previous track (checks listen duration)
+            await _maybe_scrobble_previous(zone_id)
+
+            # Record the new track that just started
+            zone = self._zone_manager.get_zone(zone_id)
+            track = zone.player._queue.current if zone else None
+            if not track:
+                return
+
+            _playing[zone_id] = {
+                "track": track,
+                "started_at": time.time(),
+                "start_mono": time.monotonic(),
+            }
+
+            scrobbler = await _load_scrobbler()
+            if scrobbler and scrobbler.is_authenticated and track.artist_name and track.title:
+                await scrobbler.update_now_playing(
+                    artist=track.artist_name,
+                    track=track.title,
+                    album=track.album_title,
+                    duration=track.duration_ms,
+                )
+
+        async def _on_playback_stopped(event: Event) -> None:
+            """Playback stopped — scrobble the last track if eligible."""
+            data = event.data or {}
+            zone_id = data.get("zone_id")
+            if zone_id:
+                await _maybe_scrobble_previous(zone_id)
+
+        self._event_bus.on(EventType.PLAYBACK_STARTED, _on_playback_started)
+        self._event_bus.on(EventType.PLAYBACK_TRACK_CHANGED, _on_track_changed)
+        self._event_bus.on(EventType.PLAYBACK_STOPPED, _on_playback_stopped)
+
+        # Initial load to log status at startup
+        asyncio.create_task(_load_scrobbler())
 
     def _setup_streaming_services(self) -> None:
         if settings.tidal_enabled:

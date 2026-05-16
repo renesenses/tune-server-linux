@@ -48,6 +48,7 @@ class DeezerService(StreamingService):
         self._license_token: str | None = None
         self._user_id: str | None = None
         self._api_token: str | None = None
+        self._auth_error: str | None = None
         # Set by app.py once HttpAudioStreamer is up — when present,
         # get_stream_url returns a URL pointing to our local decrypting
         # proxy instead of the encrypted Deezer URL (which DLNA renderers
@@ -133,18 +134,37 @@ class DeezerService(StreamingService):
     # ------------------------------------------------------------------
 
     async def authenticate(self, **kwargs) -> bool:
-        """Authenticate with Deezer using ARL cookie."""
+        """Authenticate with Deezer using ARL cookie.
+
+        The ARL is a session cookie (~192 hex chars) obtained from
+        deezer.com DevTools.  It typically lasts ~3 months before Deezer
+        rotates it server-side.
+        """
         arl = kwargs.get("arl") or self._arl
         if not arl:
+            self._auth_error = "Token ARL manquant. Copiez-le depuis les cookies deezer.com (DevTools > Application > Cookies > arl)."
             logger.warning("deezer_auth_no_arl")
             return False
 
+        arl = arl.strip()
+
+        # Basic format validation — ARL is a long hex string
+        if len(arl) < 100:
+            self._auth_error = (
+                "Token ARL trop court — il doit faire ~192 caracteres. "
+                "Verifiez que vous avez copie la valeur complete du cookie 'arl' sur deezer.com."
+            )
+            logger.warning("deezer_auth_arl_too_short", length=len(arl))
+            return False
+
         self._arl = arl
+        self._auth_error = None
 
         try:
             result = await self._gw_api_call("deezer.getUserData")
             if not result:
-                logger.warning("deezer_auth_failed")
+                self._auth_error = "Deezer n'a pas repondu. Verifiez votre connexion internet."
+                logger.warning("deezer_auth_failed", reason="empty_response")
                 self._arl = None
                 return False
 
@@ -156,16 +176,31 @@ class DeezerService(StreamingService):
                 self._api_token = result["checkForm"]
 
             if not self._user_id or self._user_id == "0":
-                logger.warning("deezer_auth_invalid_arl")
+                self._auth_error = (
+                    "Token ARL invalide ou expire. "
+                    "Reconnectez-vous sur deezer.com et copiez un nouveau cookie 'arl'."
+                )
+                logger.warning("deezer_auth_invalid_arl", user_id=self._user_id)
                 self._arl = None
                 self._license_token = None
                 return False
 
+            if not self._license_token:
+                self._auth_error = (
+                    "ARL accepte mais pas de licence de streaming. "
+                    "Verifiez que votre abonnement Deezer est actif."
+                )
+                logger.warning("deezer_auth_no_license", user_id=self._user_id)
+                # Keep the ARL — catalog browsing still works without license_token
+                # but streaming will fall back to 30s previews.
+
             user_name = user.get("BLOG_NAME", self._user_id)
-            logger.info("deezer_authenticated", user_id=self._user_id, name=user_name)
+            logger.info("deezer_authenticated", user_id=self._user_id, name=user_name,
+                        has_license=bool(self._license_token))
             return True
 
         except Exception:
+            self._auth_error = "Erreur de connexion a Deezer. Reessayez dans quelques instants."
             logger.exception("deezer_auth_error")
             self._arl = None
             return False
@@ -175,6 +210,7 @@ class DeezerService(StreamingService):
         self._license_token = None
         self._user_id = None
         self._api_token = None
+        self._auth_error = None
         self._url_cache.clear()
         await db.execute("DELETE FROM streaming_auth WHERE service = ?", ("deezer",))
         await db.commit()

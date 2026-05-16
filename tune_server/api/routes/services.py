@@ -238,9 +238,68 @@ async def _validate_lastfm(payload: dict) -> tuple[bool, str]:
         return False, f"Erreur: {e}"
 
 
+async def _validate_deezer(payload: dict) -> tuple[bool, str]:
+    """Validate a Deezer ARL by calling the gateway API and, on success,
+    trigger the streaming connector auth so the user can stream immediately."""
+    arl = payload.get("arl", "").strip()
+    if not arl:
+        return False, "Token ARL vide."
+    if len(arl) < 100:
+        return False, (
+            "Token ARL trop court — il doit faire ~192 caracteres. "
+            "Verifiez que vous avez copie la valeur complete."
+        )
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+            query = {
+                "method": "deezer.getUserData",
+                "input": "3",
+                "api_version": "1.0",
+                "api_token": "",
+            }
+            async with s.post(
+                "https://www.deezer.com/ajax/gw-light.php",
+                params=query,
+                json={},
+                cookies={"arl": arl},
+            ) as resp:
+                if resp.status != 200:
+                    return False, f"Deezer a repondu HTTP {resp.status}."
+                data = await resp.json()
+                results = data.get("results", {})
+                user = results.get("USER", {})
+                user_id = str(user.get("USER_ID", ""))
+                if not user_id or user_id == "0":
+                    return False, (
+                        "Token ARL invalide ou expire. "
+                        "Reconnectez-vous sur deezer.com et copiez un nouveau cookie 'arl'."
+                    )
+                user_name = user.get("BLOG_NAME", user_id)
+                has_license = bool(user.get("OPTIONS", {}).get("license_token"))
+    except asyncio.TimeoutError:
+        return False, "Timeout (>15s) sur deezer.com."
+    except Exception as e:
+        return False, f"Erreur: {e}"
+
+    # ARL is valid — now trigger the streaming connector auth so the user
+    # can stream immediately without restarting the server.
+    svc = deps.streaming_services.get("deezer")
+    if svc:
+        try:
+            ok = await svc.authenticate(arl=arl)
+            if ok and deps.db:
+                await svc.save_auth(deps.db)
+        except Exception:
+            pass  # non-critical — the ARL itself is valid
+
+    quality = " (FLAC)" if has_license else " (previews 30s — abonnement requis pour FLAC)"
+    return True, f"Token valide — utilisateur: {user_name}{quality}."
+
+
 VALIDATORS = {
     "discogs": _validate_discogs,
     "lastfm": _validate_lastfm,
+    "deezer": _validate_deezer,
 }
 
 

@@ -198,6 +198,8 @@ async def authenticate(
             kwargs["password"] = request.password
         if request.oauth_json is not None:
             kwargs["oauth_json"] = request.oauth_json
+        if request.arl is not None:
+            kwargs["arl"] = request.arl
     try:
         success = await service.authenticate(**kwargs, db=deps.db)
     except Exception:

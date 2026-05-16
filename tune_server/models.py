@@ -696,6 +696,7 @@ class StreamingAuthRequest(BaseModel):
     username: str | None = None
     password: str | None = None
     oauth_json: str | None = None
+    arl: str | None = None  # Deezer ARL cookie token
 
 
 class StreamingAuthResponse(BaseModel):
