@@ -690,7 +690,19 @@ class TuneServer:
                                 config.set_credentials(protocol, creds)
                         logger.info("airplay_credentials_loaded", device_id=device_id)
 
-                atv = await pyatv.connect(config, asyncio.get_running_loop())
+                loop = asyncio.get_running_loop()
+                try:
+                    atv = await pyatv.connect(config, loop)
+                except Exception as first_err:
+                    logger.warning("airplay_connect_retry_no_auth",
+                                   device_id=device_id, first_error=str(first_err))
+                    for protocol in [pyatv.Protocol.AirPlay, pyatv.Protocol.RAOP, pyatv.Protocol.Companion]:
+                        svc = config.get_service(protocol)
+                        if svc is not None:
+                            svc.credentials = None
+                            svc.password = None
+                    atv = await pyatv.connect(config, loop)
+                    logger.info("airplay_connected_without_auth", device_id=device_id)
                 device = self._discovery_manager.get_device(device_id)
                 name = device.name if device else "AirPlay"
                 return AirPlayOutput(atv, device_name=name)
