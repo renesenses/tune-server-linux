@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import aiohttp
@@ -46,7 +47,6 @@ _GENRE_NORMALIZE = {
 }
 
 # Separators that tag editors use for multi-value genre fields
-import re
 _GENRE_SEPARATORS = re.compile(r"\s*[;&/]\s*|,\s+")
 
 
