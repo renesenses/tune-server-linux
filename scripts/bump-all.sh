@@ -114,3 +114,4 @@ echo "  - $IPAD"
 echo
 echo "Review with: git diff"
 echo "Then commit + tag per repo (release.sh handles that)."
+echo "After tagging, run: bash scripts/release-forum-post.sh"
