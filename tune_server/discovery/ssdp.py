@@ -64,6 +64,8 @@ class SsdpDiscovery:
                     room = (elem.text or "").strip()
                     if room:
                         short_model = model_name or "Speaker"
+                        if short_model.lower().startswith("sonos "):
+                            short_model = short_model[6:]
                         return f"Sonos {short_model} - {room}"
             return None
         except Exception as exc:
