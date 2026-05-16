@@ -226,6 +226,11 @@ class SsdpDiscovery:
                             except Exception as exc:
                                 logger.warning("ssdp_protocol_info_error", name=name, error=str(exc))
 
+                            manufacturer = (device.manufacturer or "").lower()
+                            if "google" in manufacturer:
+                                logger.debug("ssdp_skip_chromecast", name=name)
+                                continue
+
                             disc_device = DiscoveredDevice(
                                 id=dev_id,
                                 name=name,
@@ -393,6 +398,11 @@ class SsdpDiscovery:
                         sink_protocols = dmr.sink_protocol_info or []
                 except Exception as e:
                     logger.debug("ssdp_protocol_info_fetch_error", name=name, error=str(e))
+
+                manufacturer = (device.manufacturer or "").lower()
+                if "google" in manufacturer:
+                    logger.debug("ssdp_skip_chromecast_rescan", name=name)
+                    continue
 
                 disc_device = DiscoveredDevice(
                     id=dev_id,
