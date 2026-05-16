@@ -34,7 +34,29 @@ class DeezerProxy:
         self._service = service
 
     def register_routes(self, app: web.Application) -> None:
+        app.router.add_head("/deezer/{filename}", self._handle_head)
         app.router.add_get("/deezer/{filename}", self._handle_get)
+
+    async def _handle_head(self, request: web.Request) -> web.Response:
+        filename = request.match_info["filename"]
+        sng_id = filename.rsplit(".", 1)[0]
+        if not sng_id.isdigit():
+            return web.Response(status=400)
+        upstream = await self._service._get_full_stream_url(sng_id)
+        if not upstream:
+            return web.Response(status=404)
+        ext = filename.rsplit(".", 1)[1] if "." in filename else "flac"
+        content_type = {"flac": "audio/flac", "mp3": "audio/mpeg"}.get(ext.lower(), "application/octet-stream")
+        headers = {"Content-Type": content_type, "Accept-Ranges": "none", "transferMode.dlna.org": "Streaming"}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.head(upstream, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    cl = resp.headers.get("Content-Length")
+                    if cl:
+                        headers["Content-Length"] = cl
+        except Exception:
+            pass
+        return web.Response(status=200, headers=headers)
 
     @staticmethod
     def proxy_url_for(server_ip: str, port: int, sng_id: str, ext: str = "flac") -> str:
@@ -59,14 +81,20 @@ class DeezerProxy:
             "mp3": "audio/mpeg",
         }.get(ext.lower(), "application/octet-stream")
 
-        response = web.StreamResponse(
-            status=200,
-            headers={
-                "Content-Type": content_type,
-                "Accept-Ranges": "none",  # encrypted-stripe → not range-friendly
-                "transferMode.dlna.org": "Streaming",
-            },
-        )
+        headers = {
+            "Content-Type": content_type,
+            "Accept-Ranges": "none",
+            "transferMode.dlna.org": "Streaming",
+        }
+        try:
+            async with aiohttp.ClientSession() as head_session:
+                async with head_session.head(upstream, timeout=aiohttp.ClientTimeout(total=10)) as head_resp:
+                    cl = head_resp.headers.get("Content-Length")
+                    if cl:
+                        headers["Content-Length"] = cl
+        except Exception:
+            pass
+        response = web.StreamResponse(status=200, headers=headers)
         await response.prepare(request)
 
         key = compute_blowfish_key(sng_id)

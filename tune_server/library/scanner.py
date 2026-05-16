@@ -12,6 +12,7 @@ from tune_server.db.engine import Database
 from tune_server.db.repository import AlbumRepo, ArtistRepo, TrackCreditRepo, TrackRepo
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork
+from tune_server.library.enrichment import normalize_genre
 from tune_server.library.metadata_reader import SUPPORTED_EXTENSIONS, read_metadata
 from tune_server.config import settings
 from tune_server.models import Track, TrackCredit
@@ -341,10 +342,12 @@ class LibraryScanner:
 
             mb_release_id = metadata.musicbrainz_release_id
             mb_release_group_id = metadata.musicbrainz_release_group_id
+            raw_genre = metadata.genre
+            genre = normalize_genre(raw_genre) if raw_genre else None
             album_kwargs = dict(
                 year=metadata.year, original_year=metadata.original_year,
                 release_date=metadata.release_date, original_date=metadata.original_date,
-                genre=metadata.genre,
+                genre=genre,
                 label=metadata.label, catalog_number=metadata.catalog_number,
                 musicbrainz_release_id=mb_release_id,
                 musicbrainz_release_group_id=mb_release_group_id,

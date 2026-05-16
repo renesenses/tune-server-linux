@@ -32,16 +32,57 @@ _GENRE_NORMALIZE = {
     "symphony": "Classical", "chamber music": "Classical",
     "soundtrack": "Soundtrack", "score": "Soundtrack",
     "disco": "Pop", "new wave": "Pop",
+    # French genre names
+    "alternatif": "Rock", "indé": "Rock", "indépendant": "Rock",
+    "indie rock": "Rock", "alt": "Rock",
+    "classique": "Classical", "musique classique": "Classical",
+    "électronique": "Electronic", "electronique": "Electronic",
+    "musique électronique": "Electronic",
+    "variété": "Pop", "variété française": "Pop",
+    "variétés": "Pop", "variétés françaises": "Pop",
+    "musique du monde": "World", "musiques du monde": "World",
+    "bande originale": "Soundtrack", "musique de film": "Soundtrack",
+    "chanson francaise": "Chanson Française",
 }
+
+# Separators that tag editors use for multi-value genre fields
+import re
+_GENRE_SEPARATORS = re.compile(r"\s*[;&/]\s*|,\s+")
 
 
 def normalize_genre(raw: str) -> str:
-    """Normalize a raw genre tag to a Discogs-style genre."""
+    """Normalize a raw genre tag to a Discogs-style genre.
+
+    Handles multi-value separators (& / ; ,) by splitting and returning
+    the first recognized genre. Falls back to the original value (title-cased)
+    when no match is found — never returns "Other".
+    """
+    if not raw or not raw.strip():
+        return raw
+
+    # Try the whole string first (before splitting)
     lower = raw.lower().strip()
     if lower in _GENRE_NORMALIZE:
         return _GENRE_NORMALIZE[lower]
-    # Capitalize if not found
-    return raw.title()
+
+    # Split on common separators and try each part
+    parts = _GENRE_SEPARATORS.split(raw.strip())
+    if len(parts) > 1:
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            pl = part.lower()
+            if pl in _GENRE_NORMALIZE:
+                return _GENRE_NORMALIZE[pl]
+        # No part matched — use the first non-empty part as-is
+        for part in parts:
+            part = part.strip()
+            if part:
+                return part.title()
+
+    # No match, no splitting — keep original value, title-cased
+    return raw.strip().title()
 
 
 async def _fetch_discogs_artist_image(name: str, token: str, cache_dir: str) -> str | None:
