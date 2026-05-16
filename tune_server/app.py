@@ -774,38 +774,63 @@ class TuneServer:
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
 
     def _setup_playback_history(self, history_repo) -> None:
-        """Record each played track in playback_history via EventBus."""
+        """Record each played track in playback_history via EventBus.
+
+        Tracks elapsed wall-clock time per zone so that radio streams
+        (which have no duration_ms) get accurate listened_ms values.
+        """
+        _zone_play_start: dict[str, tuple] = {}
+
+        async def _flush_previous(zone_id: str):
+            prev = _zone_play_start.pop(zone_id, None)
+            if not prev:
+                return
+            track, cover, start_mono = prev
+            elapsed_ms = int((time.monotonic() - start_mono) * 1000)
+            if elapsed_ms < 2000:
+                return
+            try:
+                await history_repo.record(
+                    track_id=track.id,
+                    zone_id=zone_id,
+                    track_title=track.title,
+                    artist_name=track.artist_name,
+                    album_title=track.album_title,
+                    cover_path=cover,
+                    duration_ms=track.duration_ms,
+                    listened_ms=elapsed_ms,
+                    source=track.source.value if track.source else None,
+                )
+            except Exception:
+                logger.debug("playback_history_record_error", exc_info=True)
+
         async def _on_track_changed(event: Event):
             data = event.data or {}
-            track_id = data.get("track_id")
             zone_id = data.get("zone_id")
-            # Fetch full track info from the zone's current track
+            if zone_id:
+                await _flush_previous(zone_id)
             zone = self._zone_manager.get_zone(zone_id) if zone_id else None
             track = zone.player._queue.current if zone else None
-            if track:
-                try:
-                    # Resolve cover: track cover_path, fallback to album cover
-                    cover = track.cover_path
-                    if not cover and track.album_id and deps.album_repo:
+            if track and zone_id:
+                cover = track.cover_path
+                if not cover and track.album_id and deps.album_repo:
+                    try:
                         album = await deps.album_repo.get(track.album_id)
                         if album:
                             cover = album.cover_path
-                    await history_repo.record(
-                        track_id=track.id,
-                        zone_id=zone_id,
-                        track_title=track.title,
-                        artist_name=track.artist_name,
-                        album_title=track.album_title,
-                        cover_path=cover,
-                        duration_ms=track.duration_ms,
-                        listened_ms=zone.player.position_ms if zone else None,
-                        source=track.source.value if track.source else None,
-                    )
-                except Exception:
-                    logger.debug("playback_history_record_error", exc_info=True)
+                    except Exception:
+                        pass
+                _zone_play_start[zone_id] = (track, cover, time.monotonic())
+
+        async def _on_stopped(event: Event):
+            data = event.data or {}
+            zone_id = data.get("zone_id")
+            if zone_id:
+                await _flush_previous(zone_id)
 
         self._event_bus.on(EventType.PLAYBACK_TRACK_CHANGED, _on_track_changed)
         self._event_bus.on(EventType.PLAYBACK_STARTED, _on_track_changed)
+        self._event_bus.on(EventType.PLAYBACK_STOPPED, _on_stopped)
 
         # Last.fm scrobbling
         self._setup_lastfm_scrobbling()
