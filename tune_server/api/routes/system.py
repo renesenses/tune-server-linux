@@ -1449,6 +1449,107 @@ async def audio_check():
     }
 
 
+# ── Plugin management ──────────────────────────────────────────────────
+
+
+@router.get("/plugins")
+async def list_plugins():
+    """List all loaded and failed plugins with status and metadata."""
+    if not deps.plugin_loader:
+        return []
+    return deps.plugin_loader.list_plugins()
+
+
+@router.get("/plugins/{name}")
+async def get_plugin(name: str):
+    """Get detailed info for a single plugin."""
+    if not deps.plugin_loader:
+        raise HTTPException(status_code=503, detail="Plugin system not available")
+
+    # Check active plugins
+    plugin = deps.plugin_loader.plugins.get(name)
+    if plugin:
+        config_cls = None
+        config_fields: list[dict] = []
+        try:
+            config_cls = plugin.config_schema()
+            if config_cls:
+                for field_name, field_info in config_cls.model_fields.items():
+                    config_fields.append({
+                        "name": field_name,
+                        "type": str(field_info.annotation) if field_info.annotation else "str",
+                        "default": repr(field_info.default) if field_info.default is not None else None,
+                        "description": field_info.description or "",
+                    })
+        except Exception:
+            pass
+
+        return {
+            "name": name,
+            "version": getattr(plugin, "version", "?"),
+            "description": getattr(plugin, "description", ""),
+            "status": "active",
+            "output_types": deps.plugin_loader._registered_output_types.get(name, []),
+            "routes": deps.plugin_loader._registered_routes.get(name, []),
+            "hooks_count": deps.plugin_loader._registered_hooks.get(name, 0),
+            "config_schema": config_fields,
+        }
+
+    # Check failed/disabled plugins
+    error = deps.plugin_loader.failed.get(name)
+    if error is not None:
+        return {
+            "name": name,
+            "version": "?",
+            "description": "",
+            "status": "disabled" if error == "disabled" else "error",
+            "error": error if error != "disabled" else None,
+            "output_types": [],
+            "routes": [],
+            "hooks_count": 0,
+            "config_schema": [],
+        }
+
+    raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
+
+
+@router.post("/plugins/{name}/disable")
+async def disable_plugin(name: str):
+    """Disable a plugin. It will be skipped on next server boot."""
+    if not deps.db:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    # Verify plugin exists (active or already failed)
+    known = set(deps.plugin_loader.plugins.keys()) | set(deps.plugin_loader.failed.keys()) if deps.plugin_loader else set()
+    if name not in known:
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
+
+    token_data = json.dumps({"enabled": False})
+    await deps.db.execute(
+        "INSERT INTO streaming_auth (service, token_data) VALUES (:service, :token_data) "
+        "ON CONFLICT(service) DO UPDATE SET token_data = :token_data, updated_at = CURRENT_TIMESTAMP",
+        {"service": f"plugin_{name}", "token_data": token_data},
+    )
+    await deps.db.commit()
+    return {"name": name, "enabled": False, "message": "Plugin will be skipped on next boot"}
+
+
+@router.post("/plugins/{name}/enable")
+async def enable_plugin(name: str):
+    """Re-enable a disabled plugin. Takes effect on next server boot."""
+    if not deps.db:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    token_data = json.dumps({"enabled": True})
+    await deps.db.execute(
+        "INSERT INTO streaming_auth (service, token_data) VALUES (:service, :token_data) "
+        "ON CONFLICT(service) DO UPDATE SET token_data = :token_data, updated_at = CURRENT_TIMESTAMP",
+        {"service": f"plugin_{name}", "token_data": token_data},
+    )
+    await deps.db.commit()
+    return {"name": name, "enabled": True, "message": "Plugin will be loaded on next boot"}
+
+
 def _detect_audio_issues(
     zones: list, local_devices: list[dict], renderers: list,
 ) -> list[dict]:

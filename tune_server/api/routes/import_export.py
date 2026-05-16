@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import structlog
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile

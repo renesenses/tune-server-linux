@@ -342,6 +342,9 @@ class TuneServer:
         )
         await self._plugin_loader.discover_and_setup(plugin_ctx)
 
+        # Expose plugin loader to API routes via deps
+        deps.plugin_loader = self._plugin_loader
+
         # Wire plugin-contributed Player hooks. ZoneManager applies them to
         # every Player it creates (existing + future).
         if self._plugin_loader.pending_player_hooks:

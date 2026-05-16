@@ -81,7 +81,7 @@ class EventType(str, Enum):
 
 @dataclass
 class Event:
-    type: EventType
+    type: EventType | str
     data: dict[str, Any] = field(default_factory=dict)
     source: str = ""
 
@@ -102,11 +102,11 @@ _BUFFERED_TYPES = {
 
 class EventBus:
     def __init__(self) -> None:
-        self._listeners: dict[EventType, list[Listener]] = defaultdict(list)
+        self._listeners: dict[EventType | str, list[Listener]] = defaultdict(list)
         self._global_listeners: list[Listener] = []
         self._recent_events: deque[Event] = deque(maxlen=50)
 
-    def on(self, event_type: EventType, listener: Listener) -> Callable[[], None]:
+    def on(self, event_type: EventType | str, listener: Listener) -> Callable[[], None]:
         self._listeners[event_type].append(listener)
 
         def unsubscribe() -> None:
