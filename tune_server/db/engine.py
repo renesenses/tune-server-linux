@@ -152,6 +152,7 @@ class SQLiteDatabase:
             "ALTER TABLE tracks ADD COLUMN composer TEXT",
             "ALTER TABLE tracks ADD COLUMN year INTEGER",
             "ALTER TABLE tracks ADD COLUMN lyrics TEXT",
+            "ALTER TABLE tracks ADD COLUMN synced_lyrics TEXT",
             "ALTER TABLE tracks ADD COLUMN comment TEXT",
             "ALTER TABLE tracks ADD COLUMN musicbrainz_recording_id TEXT",
             "ALTER TABLE tracks ADD COLUMN acoustid TEXT",

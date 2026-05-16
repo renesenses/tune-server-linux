@@ -1110,16 +1110,25 @@ async def get_recommendations(limit: int = Query(20, le=100)):
 
 @router.get("/tracks/{track_id}/lyrics")
 async def get_track_lyrics(track_id: int):
-    """Get lyrics for a track. Tries DB first, then file tags, then online."""
+    """Get lyrics for a track. Tries DB first, then file tags, then online.
+
+    Returns both plain and synced (LRC) lyrics when available.
+    """
     track = await deps.track_repo.get(track_id)
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")
 
-    # 1. Check DB (lyrics column may not be in Track model)
+    # 1. Check DB (lyrics + synced_lyrics columns)
     try:
-        row = await deps.db.fetchone("SELECT lyrics FROM tracks WHERE id = ?", (track_id,))
+        row = await deps.db.fetchone(
+            "SELECT lyrics, synced_lyrics FROM tracks WHERE id = ?", (track_id,),
+        )
         if row and row["lyrics"]:
-            return {"lyrics": row["lyrics"], "source": "database"}
+            return {
+                "lyrics": row["lyrics"],
+                "synced": row.get("synced_lyrics") or None,
+                "source": "database",
+            }
     except Exception:
         pass
 
@@ -1132,13 +1141,20 @@ async def get_track_lyrics(track_id: int):
                 audio = MutagenFile(track.file_path)
                 if audio and audio.tags:
                     lyrics_text = None
-                    # FLAC/Vorbis
+                    synced_text = None
+                    # FLAC/Vorbis — check synced first (SYNCEDLYRICS tag)
+                    for key in ("SYNCEDLYRICS", "syncedlyrics"):
+                        val = audio.tags.get(key)
+                        if val:
+                            synced_text = str(val[0]) if isinstance(val, list) else str(val)
+                            break
+                    # FLAC/Vorbis — unsynced
                     for key in ("lyrics", "LYRICS", "UNSYNCEDLYRICS"):
                         val = audio.tags.get(key)
                         if val:
                             lyrics_text = str(val[0]) if isinstance(val, list) else str(val)
                             break
-                    # ID3 (MP3)
+                    # ID3 (MP3) — SYLT for synced, USLT for unsynced
                     if not lyrics_text:
                         for key in audio.tags:
                             if key.startswith("USLT"):
@@ -1150,14 +1166,26 @@ async def get_track_lyrics(track_id: int):
                         if val:
                             lyrics_text = str(val[0]) if isinstance(val, list) else str(val)
 
+                    # If we found LRC-formatted text in the lyrics field, split it
+                    if lyrics_text and not synced_text and lyrics_text.strip().startswith("["):
+                        import re
+                        if re.match(r"^\[\d{2}:\d{2}\.\d{2,3}\]", lyrics_text.strip()):
+                            synced_text = lyrics_text.strip()
+                            # Extract plain text by stripping timestamps
+                            lyrics_text = re.sub(r"\[\d{2}:\d{2}\.\d{2,3}\]\s?", "", synced_text)
+
                     if lyrics_text and lyrics_text.strip():
                         # Save to DB for next time
                         await deps.db.execute(
-                            "UPDATE tracks SET lyrics = ? WHERE id = ?",
-                            (lyrics_text.strip(), track_id),
+                            "UPDATE tracks SET lyrics = ?, synced_lyrics = ? WHERE id = ?",
+                            (lyrics_text.strip(), synced_text.strip() if synced_text else None, track_id),
                         )
                         await deps.db.commit()
-                        return {"lyrics": lyrics_text.strip(), "source": "tags"}
+                        return {
+                            "lyrics": lyrics_text.strip(),
+                            "synced": synced_text.strip() if synced_text else None,
+                            "source": "tags",
+                        }
         except Exception:
             pass
 
@@ -1175,13 +1203,14 @@ async def get_track_lyrics(track_id: int):
                 if resp.status == 200:
                     data = await resp.json()
                     if data.get("lyrics"):
+                        synced = data.get("synced") or None
                         # Cache locally
                         await deps.db.execute(
-                            "UPDATE tracks SET lyrics = ? WHERE id = ?",
-                            (data["lyrics"], track_id),
+                            "UPDATE tracks SET lyrics = ?, synced_lyrics = ? WHERE id = ?",
+                            (data["lyrics"], synced, track_id),
                         )
                         await deps.db.commit()
-                        return {"lyrics": data["lyrics"], "source": "mozaiklabs"}
+                        return {"lyrics": data["lyrics"], "synced": synced, "source": "mozaiklabs"}
     except Exception:
         pass
 
@@ -1203,10 +1232,11 @@ async def get_track_lyrics(track_id: int):
                     synced = data.get("syncedLyrics") or ""
                     lyrics_text = data.get("plainLyrics") or synced
                     if lyrics_text and lyrics_text.strip():
-                        # Cache locally
+                        synced_clean = synced.strip() if synced else None
+                        # Cache both plain and synced locally
                         await deps.db.execute(
-                            "UPDATE tracks SET lyrics = ? WHERE id = ?",
-                            (lyrics_text.strip(), track_id),
+                            "UPDATE tracks SET lyrics = ?, synced_lyrics = ? WHERE id = ?",
+                            (lyrics_text.strip(), synced_clean, track_id),
                         )
                         await deps.db.commit()
                         # Store on mozaiklabs.fr for other installations
@@ -1216,16 +1246,17 @@ async def get_track_lyrics(track_id: int):
                                     "https://mozaiklabs.fr/api/v1/lyrics",
                                     json={"title": title, "artist": artist,
                                           "album": track.album_title, "lyrics": lyrics_text.strip(),
+                                          "synced": synced_clean,
                                           "source": "lrclib"},
                                     timeout=aiohttp.ClientTimeout(total=5),
                                 )
                         except Exception:
                             pass
-                        return {"lyrics": lyrics_text.strip(), "synced": synced.strip() if synced else None, "source": "lrclib"}
+                        return {"lyrics": lyrics_text.strip(), "synced": synced_clean, "source": "lrclib"}
     except Exception:
         pass
 
-    return {"lyrics": None, "source": None}
+    return {"lyrics": None, "synced": None, "source": None}
 
 
 @router.get("/albums/{album_id}/bio")

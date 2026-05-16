@@ -113,6 +113,7 @@ tracks = sa.Table(
     sa.Column("composer", sa.Text),
     sa.Column("year", sa.Integer),
     sa.Column("lyrics", sa.Text),
+    sa.Column("synced_lyrics", sa.Text),
     sa.Column("comment", sa.Text),
     sa.Column("musicbrainz_recording_id", sa.Text),
     sa.Column("acoustid", sa.Text),
