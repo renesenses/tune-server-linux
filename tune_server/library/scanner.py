@@ -368,6 +368,12 @@ class LibraryScanner:
                     album = await self._album_repo.get_by_title(base_title)
                 elif metadata.album_artist:
                     album = await self._album_repo.get_by_title_and_artist(base_title, artist.id)
+                    if not album:
+                        existing = await self._album_repo.get_by_title(base_title)
+                        if existing and existing.artist_id != artist.id:
+                            album = existing
+                            logger.info("album_compilation_merge", title=base_title,
+                                        existing_artist=existing.artist_id, new_artist=artist.id)
                 else:
                     album = await self._album_repo.get_by_title(base_title)
                 # Don't merge into an album that belongs to a different release
