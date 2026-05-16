@@ -1615,18 +1615,32 @@ async def completeness_stats():
     )
 
 
+@router.get("/artwork/proxy")
+async def proxy_artwork(url: str):
+    """Proxy and cache a remote cover URL (Qobuz/Tidal CDN)."""
+    if not url or not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    from tune_server.library.artwork import cache_cover_url
+    cached = await asyncio.to_thread(cache_cover_url, url)
+    if not cached:
+        raise HTTPException(status_code=502, detail="Failed to fetch cover")
+    mime = "image/jpeg" if cached.endswith(".jpg") else "image/png"
+    return FileResponse(
+        cached,
+        media_type=mime,
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
+
+
 @router.get("/artwork/{filename:path}")
 async def get_artwork(filename: str):
     """Serve artwork images from the cache directory."""
-    # Try artwork_cache subdirectory first, then direct path
     cache_dir = Path(settings.artwork_cache_dir)
     file_path = cache_dir / filename
     if not file_path.exists():
-        # Maybe filename includes "artwork_cache/" prefix
         file_path = Path(settings.artwork_cache_dir).parent / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Artwork not found")
-    # Security: ensure the path is within the cache directory
     try:
         file_path.resolve().relative_to(cache_dir.resolve().parent)
     except ValueError:
