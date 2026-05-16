@@ -358,8 +358,15 @@ class LibraryScanner:
             if mb_release_id:
                 album = await self._album_repo.get_by_musicbrainz_release_id(mb_release_id)
 
+            is_compilation = metadata.compilation or (
+                metadata.album_artist and metadata.album_artist.lower() in (
+                    "various artists", "various", "compilation", "va",
+                    "artistes divers", "divers",
+                ))
             if not album:
-                if metadata.album_artist:
+                if is_compilation:
+                    album = await self._album_repo.get_by_title(base_title)
+                elif metadata.album_artist:
                     album = await self._album_repo.get_by_title_and_artist(base_title, artist.id)
                 else:
                     album = await self._album_repo.get_by_title(base_title)

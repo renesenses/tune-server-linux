@@ -56,6 +56,7 @@ class TrackMetadata:
     release_date: Optional[str] = None
     original_date: Optional[str] = None
     album_artist_sort: Optional[str] = None
+    compilation: bool = False
 
 
 def _clean_text(value: str) -> str:
@@ -281,6 +282,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             album = _get_first(tags, ["album"]) or None
             album_artist = _get_first(tags, ["albumartist", "album_artist"]) or None
             album_artist_sort = _get_first(tags, ["albumartistsort", "ALBUMARTISTSORT"]) or None
+            compilation_tag = _get_first(tags, ["compilation", "COMPILATION", "itunescompilation", "ITUNESCOMPILATION"])
+            is_compilation = compilation_tag in ("1", "true", "True")
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE", "setsubtitle", "SETSUBTITLE"]) or None
@@ -299,6 +302,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             album = _get_first(tags, ["TALB"]) or None
             album_artist = _get_first(tags, ["TPE2"]) or None
             album_artist_sort = _get_first(tags, ["TSO2", "TXXX:ALBUMARTISTSORT"]) or None
+            compilation_tag = _get_first(tags, ["TCMP", "TXXX:COMPILATION", "TXXX:ITUNESCOMPILATION"])
+            is_compilation = compilation_tag in ("1", "true", "True")
             track_num = _parse_int(_get_first(tags, ["TRCK"]))
             disc_num = _parse_int(_get_first(tags, ["TPOS"]), 1)
             disc_subtitle = _get_first(tags, ["TSST", "TXXX:DISCSUBTITLE", "TXXX:SETSUBTITLE"]) or None
@@ -317,6 +322,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             album = _get_first(tags, ["\xa9alb"]) or None
             album_artist = _get_first(tags, ["aART"]) or None
             album_artist_sort = _get_first(tags, ["soaa"]) or None
+            cpil = tags.get("cpil")
+            is_compilation = bool(cpil[0]) if cpil else False
             trkn = tags.get("trkn", [(0, 0)])[0]
             track_num = trkn[0] if isinstance(trkn, tuple) else _parse_int(str(trkn))
             disk = tags.get("disk", [(1, 1)])[0]
@@ -337,6 +344,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             album = _get_first(tags, ["album"]) or None
             album_artist = _get_first(tags, ["albumartist"]) or None
             album_artist_sort = _get_first(tags, ["albumartistsort", "ALBUMARTISTSORT"]) or None
+            compilation_tag = _get_first(tags, ["compilation", "COMPILATION", "itunescompilation", "ITUNESCOMPILATION"])
+            is_compilation = compilation_tag in ("1", "true", "True")
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber"]), 1)
             disc_subtitle = _get_first(tags, ["discsubtitle", "DISCSUBTITLE", "setsubtitle", "SETSUBTITLE"]) or None
@@ -364,6 +373,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             label = (_get_first(tags, ["TPUB"]) or None) if tags else None
             catalog_number = (_get_first(tags, ["TXXX:CATALOGNUMBER", "TXXX:CATALOGNO"]) or None) if tags else None
             album_artist_sort = (_get_first(tags, ["TSO2", "TXXX:ALBUMARTISTSORT"]) or None) if tags else None
+            compilation_tag = (_get_first(tags, ["TCMP", "TXXX:COMPILATION", "TXXX:ITUNESCOMPILATION"]) if tags else "")
+            is_compilation = compilation_tag in ("1", "true", "True")
             sample_rate = info.sample_rate  # 2822400 (DSD64), 5644800 (DSD128), etc.
             bit_depth = 1  # DSD is 1-bit
             has_cover = any(k.startswith("APIC") for k in tags.keys()) if tags else False
@@ -375,6 +386,8 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             album = _get_first(tags, ["album", "TALB", "\xa9alb"]) or None
             album_artist = _get_first(tags, ["albumartist", "TPE2", "aART"]) or None
             album_artist_sort = _get_first(tags, ["albumartistsort", "ALBUMARTISTSORT", "TSO2", "soaa"]) or None
+            compilation_tag = _get_first(tags, ["compilation", "COMPILATION", "itunescompilation", "ITUNESCOMPILATION", "TCMP"])
+            is_compilation = compilation_tag in ("1", "true", "True")
             track_num = _parse_int(_get_first(tags, ["tracknumber", "TRCK"]))
             disc_num = _parse_int(_get_first(tags, ["discnumber", "TPOS"]), 1)
             disc_subtitle = _get_first(tags, [
@@ -477,6 +490,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             musicbrainz_release_group_id=mb_ids.get("release_group_id"),
             release_date=release_date,
             original_date=original_date,
+            compilation=is_compilation,
         )
 
     except Exception:
