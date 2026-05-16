@@ -1623,7 +1623,8 @@ async def proxy_artwork(url: str):
     from tune_server.library.artwork import cache_cover_url
     cached = await asyncio.to_thread(cache_cover_url, url)
     if not cached:
-        raise HTTPException(status_code=502, detail="Failed to fetch cover")
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(url, status_code=302)
     mime = "image/jpeg" if cached.endswith(".jpg") else "image/png"
     return FileResponse(
         cached,

@@ -197,10 +197,12 @@ def cache_cover_url(url: str) -> Optional[str]:
 
     try:
         result = subprocess.run(
-            ["curl", "-4sfL", "--max-time", "10", "-o", str(output_path), url],
+            ["curl", "-4sfL", "--max-time", "10",
+             "-A", "Mozilla/5.0 (Tune Server)",
+             "-o", str(output_path), url],
             capture_output=True, timeout=15, **subprocess_hide_window(),
         )
-        if result.returncode != 0 or not output_path.exists():
+        if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
             output_path.unlink(missing_ok=True)
             logger.debug("cache_cover_url_download_failed", url=base_url)
             return None
