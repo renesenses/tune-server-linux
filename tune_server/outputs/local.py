@@ -8,6 +8,7 @@ import sounddevice as sd
 import structlog
 
 from tune_server.audio.formats import LOCAL_CAPABILITIES, AudioCapabilities
+from tune_server.config import settings as _settings
 from tune_server.models import AudioStreamInfo, Track
 from tune_server.outputs.base import OutputTarget
 
@@ -93,7 +94,15 @@ class LocalOutput(OutputTarget):
 
     @property
     def capabilities(self) -> AudioCapabilities:
-        return LOCAL_CAPABILITIES
+        capped_rate = min(LOCAL_CAPABILITIES.max_sample_rate, _settings.max_sample_rate)
+        if capped_rate == LOCAL_CAPABILITIES.max_sample_rate:
+            return LOCAL_CAPABILITIES
+        return AudioCapabilities(
+            formats=LOCAL_CAPABILITIES.formats,
+            max_sample_rate=capped_rate,
+            max_bit_depth=LOCAL_CAPABILITIES.max_bit_depth,
+            supports_gapless=LOCAL_CAPABILITIES.supports_gapless,
+        )
 
     @property
     def is_available(self) -> bool:
@@ -106,8 +115,7 @@ class LocalOutput(OutputTarget):
         self._start_time = time.monotonic()
         self._elapsed_before_pause = 0.0
 
-        from tune_server.config import settings as _s
-        exclusive = _s.local_exclusive_mode
+        exclusive = _settings.local_exclusive_mode
 
         if exclusive:
             dtype_map = {
@@ -130,7 +138,7 @@ class LocalOutput(OutputTarget):
             if self._device_name:
                 device = _find_device_index(self._device_name)
 
-            latency_s = _s.local_latency_ms / 1000.0
+            latency_s = _settings.local_latency_ms / 1000.0
             blocksize = max(256, int(stream_info.sample_rate * latency_s / 4))
 
             extra_settings = None
@@ -223,7 +231,7 @@ class LocalOutput(OutputTarget):
                 resampled=self._resample_ratio is not None,
                 exclusive=exclusive,
                 blocksize=blocksize,
-                latency_ms=_s.local_latency_ms,
+                latency_ms=_settings.local_latency_ms,
             )
         except Exception:
             logger.exception("local_output_start_error")

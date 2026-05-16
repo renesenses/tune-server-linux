@@ -113,11 +113,16 @@ class ChromecastOutput(OutputTarget):
             else:
                 thumb = f"http://{self._server_ip}:8888/api/v1/artwork/{track.cover_path}"
 
+        metadata = {"metadataType": 3, "title": title}
+        if artist:
+            metadata["artist"] = artist
+        if album:
+            metadata["albumName"] = album
+
         try:
             await self._cast_call(
                 mc.play_media, url, content_type,
-                title=title, artist=artist, album_name=album,
-                thumb=thumb,
+                title=title, thumb=thumb, metadata=metadata,
             )
             await self._cast_call(mc.block_until_active, timeout=15)
             logger.info("chromecast_playing", device=self._name, title=title, url=url[:80])
@@ -194,9 +199,13 @@ class ChromecastOutput(OutputTarget):
             fmt = track.format.value if track.format and hasattr(track.format, "value") else "flac"
             content_type = _MIME_MAP.get(fmt, "audio/flac")
 
+            enqueue_meta = {"metadataType": 3, "title": track.title}
+            if track.artist_name:
+                enqueue_meta["artist"] = track.artist_name
+
             await self._cast_call(
                 mc.play_media, url, content_type,
-                title=track.title, artist=track.artist_name,
+                title=track.title, metadata=enqueue_meta,
                 enqueue=True,
             )
             return True
