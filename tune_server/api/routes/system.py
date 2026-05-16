@@ -1170,6 +1170,7 @@ async def diagnostics(errors_limit: int = Query(50, le=200)):
         "schema_drift": await _schema_drift(),
         "music_dirs": settings.music_dirs,
         "zones_count": len(deps.zone_manager.list_zones()) if deps.zone_manager else 0,
+        "tracks_count": await deps.track_repo.count() if deps.track_repo else 0,
         "albums_count": await deps.album_repo.count() if deps.album_repo else 0,
         "artists_count": await deps.artist_repo.count() if deps.artist_repo else 0,
         "radios_count": await deps.radio_repo.count() if deps.radio_repo else 0,
