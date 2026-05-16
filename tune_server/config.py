@@ -140,6 +140,9 @@ class Settings(BaseSettings):
     # no genres yet still gets populated by Last.fm/Discogs tags.
     metadata_fix_genres_respect_vocabulary: bool = False
 
+    # Plugin Store
+    install_plugins: str = ""  # Comma-separated list of packages to auto-install at boot
+
     # Enrichment
     discogs_token: str = ""  # Personal Discogs API token for artist images
     lastfm_api_key: str = ""  # Last.fm API key for metadata enrichment

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from tune_server.metadata.artist_enrichment import ArtistEnrichmentClient
     from tune_server.network.mount_manager import MountManager
     from tune_server.plugins.loader import PluginLoader
+    from tune_server.plugins.store import PluginStoreManager
     from tune_server.spotify_connect import SpotifyConnectManager
     from tune_server.streaming.base import StreamingService
     from tune_server.updater import UpdateChecker
@@ -41,6 +42,7 @@ class AppDeps:
         self.artist_enrichment: ArtistEnrichmentClient | None = None
         self.spotify_connect: SpotifyConnectManager | None = None
         self.plugin_loader: PluginLoader | None = None
+        self.store_manager: PluginStoreManager | None = None
 
         # Repos (set after DB init)
         self.track_repo: TrackRepo | None = None

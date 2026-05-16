@@ -328,6 +328,16 @@ class TuneServer:
         # reused by run_server() to spin up uvicorn.
         self._api_app = create_api_app()
 
+        # Auto-install plugins from env var (Docker persistence)
+        if settings.install_plugins:
+            from tune_server.plugins.store import auto_install_plugins
+            await auto_install_plugins(settings.install_plugins)
+
+        # Plugin Store manager (fetches catalog from mozaiklabs.fr)
+        from tune_server.plugins.store import PluginStoreManager
+        self._store_manager = PluginStoreManager()
+        deps.store_manager = self._store_manager
+
         # Plugin discovery + setup. Each installed plugin (entry_point group
         # ``tune_server.plugins``) gets a chance to register output types,
         # router(s), event subscribers, and player hooks BEFORE zones spawn.

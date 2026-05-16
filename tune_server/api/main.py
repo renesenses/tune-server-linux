@@ -100,6 +100,8 @@ def create_api_app() -> FastAPI:
     app.include_router(alarms.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
     app.include_router(import_export.router, prefix="/api/v1")
+    from tune_server.api.routes import plugin_store
+    app.include_router(plugin_store.router, prefix="/api/v1")
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
         global _ws_manager
