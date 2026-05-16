@@ -399,6 +399,10 @@ class Player:
             track = self._queue.current
             if not track:
                 logger.warning("play_no_track", zone_id=self._zone_id)
+                await self._emit_playback_error(
+                    "no_track",
+                    "Nothing to play — queue is empty",
+                )
                 return
 
             await self._start_track(track)
@@ -409,6 +413,11 @@ class Player:
 
         if not self._output:
             logger.error("play_no_output", zone_id=self._zone_id)
+            await self._emit_playback_error(
+                "no_output",
+                "No audio output configured for this zone",
+                track,
+            )
             return
 
         if hasattr(self._output, '_available') and not self._output._available:
