@@ -21,6 +21,8 @@ class CastDiscovery:
         self._cast_devices: dict[str, object] = {}
         self._browser = None
         self._zc = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._pychromecast = None
 
     @property
     def devices(self) -> dict[str, DiscoveredDevice]:
@@ -37,6 +39,9 @@ class CastDiscovery:
             logger.warning("pychromecast_not_installed")
             return
 
+        self._pychromecast = pychromecast
+        self._loop = asyncio.get_running_loop()
+
         if shared_zc:
             self._zc = shared_zc
             self._owns_zc = False
@@ -49,69 +54,98 @@ class CastDiscovery:
                 logger.warning("cast_zeroconf_init_failed", exc_info=True)
                 return
 
-        loop = asyncio.get_running_loop()
+        def _on_add(uuid, name):
+            self._loop.call_soon_threadsafe(self._schedule_add, uuid, name)
 
-        listener = SimpleCastListener(
-            add_callback=lambda uuid, name: loop.call_soon_threadsafe(
-                loop.create_task, self._on_cast_added(uuid, name)
-            ),
-            remove_callback=lambda uuid, name, _: loop.call_soon_threadsafe(
-                loop.create_task, self._on_cast_removed(uuid)
-            ),
-        )
+        def _on_remove(uuid, name, _service):
+            self._loop.call_soon_threadsafe(self._schedule_remove, uuid)
+
+        listener = SimpleCastListener(add_callback=_on_add, remove_callback=_on_remove)
         self._browser = CastBrowser(listener, self._zc)
         self._browser.start_discovery()
         logger.info("cast_discovery_started")
 
+    def _schedule_add(self, uuid, name: str) -> None:
+        self._loop.create_task(self._on_cast_added(uuid, name))
+
+    def _schedule_remove(self, uuid) -> None:
+        self._loop.create_task(self._on_cast_removed(uuid))
+
     async def _on_cast_added(self, uuid, name: str) -> None:
         try:
-            import pychromecast
-
-            def _connect():
-                result, _ = pychromecast.get_listed_chromecasts(
-                    friendly_names=[name], zeroconf_instance=self._zc
-                )
-                if not result:
-                    return None
-                cc = result[0]
-                cc.wait(timeout=10)
-                return cc
-
-            cast = await asyncio.to_thread(_connect)
-            if cast is None:
-                return
             device_id = str(uuid)
-            self._cast_devices[device_id] = cast
+            if device_id in self._devices:
+                return
 
-            info = cast.cast_info
+            friendly = name
+            host = ""
+            port = 8009
+            manufacturer = "Google"
+            model = ""
+            cast_type = "cast"
+
+            if self._browser and hasattr(self._browser, 'services'):
+                cast_info = self._browser.services.get(uuid)
+                if cast_info:
+                    host = str(getattr(cast_info, 'host', "")) or ""
+                    port = getattr(cast_info, 'port', 8009) or 8009
+                    friendly = getattr(cast_info, 'friendly_name', name) or name
+                    manufacturer = getattr(cast_info, 'manufacturer', "Google") or "Google"
+                    model = getattr(cast_info, 'model_name', "") or ""
+                    cast_type = getattr(cast_info, 'cast_type', "cast") or "cast"
+
             device = DiscoveredDevice(
                 id=device_id,
-                name=info.friendly_name or name,
+                name=friendly,
                 type=OutputType.CHROMECAST,
-                host=str(info.host),
-                port=info.port,
+                host=host,
+                port=port,
                 capabilities={
                     "chromecast": True,
-                    "manufacturer": info.manufacturer or "Google",
-                    "model": info.model_name or "",
-                    "cast_type": cast.cast_type or "cast",
+                    "manufacturer": manufacturer,
+                    "model": model,
+                    "cast_type": cast_type,
                 },
             )
             self._devices[device_id] = device
+
+            def _connect():
+                try:
+                    result, _ = self._pychromecast.get_listed_chromecasts(
+                        friendly_names=[friendly], zeroconf_instance=self._zc
+                    )
+                    if result:
+                        cc = result[0]
+                        cc.wait(timeout=10)
+                        return cc
+                except Exception:
+                    logger.debug("cast_connect_failed", name=friendly)
+                return None
+
+            cast = await asyncio.to_thread(_connect)
+            if cast:
+                self._cast_devices[device_id] = cast
 
             await self._event_bus.emit(Event(
                 type=EventType.DEVICE_DISCOVERED,
                 data={"device_id": device_id, "name": device.name, "type": "chromecast"},
                 source="cast_discovery",
             ))
-            logger.info("cast_device_discovered", name=device.name, id=device_id, model=info.model_name)
+            logger.info("cast_device_discovered", name=device.name, id=device_id,
+                        host=host, model=model, cast_type=cast_type,
+                        connected=cast is not None)
         except Exception:
-            logger.debug("cast_add_failed", name=name, exc_info=True)
+            logger.exception("cast_add_failed", name=name)
 
     async def _on_cast_removed(self, uuid) -> None:
         device_id = str(uuid)
         device = self._devices.pop(device_id, None)
-        self._cast_devices.pop(device_id, None)
+        cc = self._cast_devices.pop(device_id, None)
+        if cc:
+            try:
+                cc.disconnect()
+            except Exception:
+                pass
         if device:
             await self._event_bus.emit(Event(
                 type=EventType.DEVICE_LOST,
