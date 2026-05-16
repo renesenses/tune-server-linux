@@ -1584,7 +1584,11 @@ async def get_artwork(filename: str):
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
     mime = "image/jpeg" if file_path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
-    return FileResponse(str(file_path), media_type=mime)
+    return FileResponse(
+        str(file_path),
+        media_type=mime,
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
 
 
 @router.post("/albums/{album_id}/artwork", response_model=Album)

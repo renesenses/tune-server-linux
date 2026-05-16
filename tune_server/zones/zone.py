@@ -176,6 +176,7 @@ class ZoneInstance:
                     "sample_rate": t.sample_rate,
                     "bit_depth": t.bit_depth,
                     "channels": t.channels,
+                    "cover_path": t.cover_path,
                     "source": t.source.value if t.source else None,
                     "source_id": t.source_id,
                 }
@@ -224,6 +225,7 @@ class ZoneInstance:
                             sample_rate=t.get("sample_rate"),
                             bit_depth=t.get("bit_depth"),
                             channels=t.get("channels", 2),
+                            cover_path=t.get("cover_path"),
                             source=Source(t["source"]) if t.get("source") else Source.LOCAL,
                             source_id=t.get("source_id"),
                         )
@@ -254,6 +256,7 @@ class ZoneInstance:
                 channels=row["channels"],
                 album_title=row.get("album_title"),
                 artist_name=row.get("artist_name"),
+                cover_path=row.get("cover_path"),
             )
             tracks.append(track)
             if row.get("is_current"):

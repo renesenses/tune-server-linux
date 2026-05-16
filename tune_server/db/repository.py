@@ -876,7 +876,8 @@ class TrackRepo:
         like_pat = f"%{query}%"
         if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
             rows = await self._db.fetchall(
-                """SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name
+                """SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name,
+                          al.cover_path as cover_path
                     FROM tracks t
                     LEFT JOIN albums al ON t.album_id = al.id
                     LEFT JOIN artists ar ON t.artist_id = ar.id
@@ -893,7 +894,8 @@ class TrackRepo:
             )
         else:
             rows = await self._db.fetchall(
-                """SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name
+                """SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name,
+                          al.cover_path as cover_path
                     FROM tracks t
                     LEFT JOIN albums al ON t.album_id = al.id
                     LEFT JOIN artists ar ON t.artist_id = ar.id
@@ -1030,7 +1032,8 @@ class PlayQueueRepo:
         rows = await self._db.fetchall(
             """SELECT pq.*, t.title, t.file_path, t.duration_ms, t.format,
                       t.sample_rate, t.bit_depth, t.channels,
-                      al.title as album_title, ar.name as artist_name
+                      al.title as album_title, ar.name as artist_name,
+                      al.cover_path as cover_path
                FROM play_queue pq
                JOIN tracks t ON pq.track_id = t.id
                LEFT JOIN albums al ON t.album_id = al.id
@@ -1044,7 +1047,8 @@ class PlayQueueRepo:
         row = await self._db.fetchone(
             """SELECT pq.*, t.title, t.file_path, t.duration_ms, t.format,
                       t.sample_rate, t.bit_depth, t.channels, t.source, t.source_id,
-                      al.title as album_title, ar.name as artist_name
+                      al.title as album_title, ar.name as artist_name,
+                      al.cover_path as cover_path
                FROM play_queue pq
                JOIN tracks t ON pq.track_id = t.id
                LEFT JOIN albums al ON t.album_id = al.id
@@ -1209,7 +1213,8 @@ class PlaylistRepo:
 
     async def get_tracks(self, playlist_id: int) -> list[Track]:
         rows = await self._db.fetchall(
-            """SELECT t.*, al.title as album_title, ar.name as artist_name
+            """SELECT t.*, al.title as album_title, ar.name as artist_name,
+                      al.cover_path as cover_path
                FROM playlist_tracks pt
                JOIN tracks t ON pt.track_id = t.id
                LEFT JOIN albums al ON t.album_id = al.id

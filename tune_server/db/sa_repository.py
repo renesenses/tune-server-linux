@@ -1345,6 +1345,7 @@ class SAPlayQueueRepo:
                 tracks.c.channels, tracks.c.source, tracks.c.source_id,
                 albums.c.title.label("album_title"),
                 artists.c.name.label("artist_name"),
+                albums.c.cover_path.label("cover_path"),
             )
             .join(tracks, play_queue.c.track_id == tracks.c.id)
             .outerjoin(albums, tracks.c.album_id == albums.c.id)
