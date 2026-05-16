@@ -347,6 +347,63 @@ async def remove_favorite(service_name: str, fav_type: str, item_id: str):
     return {"ok": ok}
 
 
+# ------------------------------------------------------------------
+# YouTube Music browse endpoints (ytmusicapi)
+# ------------------------------------------------------------------
+
+
+def _get_youtube_service():
+    from tune_server.streaming.youtube import YouTubeService
+    service = deps.streaming_services.get("youtube")
+    if not service or not isinstance(service, YouTubeService):
+        raise HTTPException(status_code=503, detail="YouTube Music not configured")
+    return service
+
+
+@router.get("/youtube/home")
+async def youtube_home():
+    """Get YouTube Music home page sections (trending, personalized shelves)."""
+    yt = _get_youtube_service()
+    sections = await yt.get_featured_sections()
+    data = {}
+    for sec in sections:
+        data[sec.id] = await yt.get_featured(sec.id)
+    return {"sections": [s.model_dump() for s in sections], "data": {k: [a.model_dump() for a in v] for k, v in data.items()}}
+
+
+@router.get("/youtube/charts")
+async def youtube_charts(country: str = Query("FR", min_length=2, max_length=2)):
+    """Get YouTube Music trending/charts for a country."""
+    yt = _get_youtube_service()
+    return await yt.get_ytm_charts(country)
+
+
+@router.get("/youtube/moods")
+async def youtube_moods():
+    """Get YouTube Music mood/genre categories (Chill, Workout, Party, etc.)."""
+    yt = _get_youtube_service()
+    return await yt.get_ytm_mood_categories()
+
+
+@router.get("/youtube/moods/{params:path}")
+async def youtube_mood_playlists(params: str):
+    """Get playlists for a specific mood category."""
+    yt = _get_youtube_service()
+    return await yt.get_ytm_mood_playlists(params)
+
+
+@router.get("/youtube/library", response_model=list[Track])
+async def youtube_library(limit: int = Query(100, ge=1, le=500)):
+    """Get the authenticated user's YouTube Music library songs."""
+    yt = _get_youtube_service()
+    return await yt.get_ytm_library_songs(limit)
+
+
+# ------------------------------------------------------------------
+# Spotify callback
+# ------------------------------------------------------------------
+
+
 @router.get("/spotify/callback")
 async def spotify_callback(code: str):
     """OAuth PKCE callback for Spotify. Spotify redirects here with ?code=..."""

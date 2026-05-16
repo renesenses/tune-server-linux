@@ -23,6 +23,13 @@ from tune_server.models import (
 from tune_server.streaming.base import StreamingService, http_request_with_retry
 from tune_server.streaming.cache import StreamUrlCache
 
+try:
+    from ytmusicapi import YTMusic
+
+    _YTMUSIC_AVAILABLE = True
+except ImportError:
+    _YTMUSIC_AVAILABLE = False
+
 if TYPE_CHECKING:
     from tune_server.db.engine import Database
 
@@ -80,6 +87,11 @@ class YouTubeService(StreamingService):
         self._poll_task: asyncio.Task | None = None
         self._session: aiohttp.ClientSession | None = None
         self._url_cache = StreamUrlCache(ttl_seconds=_STREAM_URL_TTL)
+        # ytmusicapi instances — unauthenticated for browse, authenticated for user data
+        self._ytm: object | None = None  # YTMusic() — browse only
+        self._ytm_auth: object | None = None  # YTMusic(auth=...) — user playlists/library
+        self._ytm_browse_cache: dict[str, tuple[float, object]] = {}  # key -> (timestamp, data)
+        self._ytm_browse_cache_ttl: float = 1800  # 30 minutes
 
     # ------------------------------------------------------------------
     # Properties
@@ -697,14 +709,286 @@ class YouTubeService(StreamingService):
         return playlists
 
     async def get_playlist_tracks(self, playlist_id: str) -> list[Track]:
-        return await self.get_album_tracks(playlist_id)
+        # Try Data API first (works for standard YouTube playlists)
+        tracks = await self.get_album_tracks(playlist_id)
+        if tracks:
+            return tracks
+
+        # Fallback to ytmusicapi (works for YTM-specific playlists like mood/charts)
+        ytm = self._ensure_ytm()
+        if not ytm:
+            return []
+        try:
+            playlist = await asyncio.to_thread(ytm.get_playlist, playlist_id, limit=200)
+            raw_tracks = playlist.get("tracks") or []
+            return [self._map_ytm_track(t) for t in raw_tracks if t.get("videoId")]
+        except Exception:
+            logger.exception("ytm_get_playlist_tracks_error", playlist_id=playlist_id)
+            return []
 
     # ------------------------------------------------------------------
-    # Featured — not applicable for YouTube
+    # ytmusicapi — lazy init
+    # ------------------------------------------------------------------
+
+    def _ensure_ytm(self) -> object | None:
+        """Lazy-init unauthenticated YTMusic for browse endpoints."""
+        if self._ytm is not None:
+            return self._ytm
+        if not _YTMUSIC_AVAILABLE:
+            logger.debug("ytmusicapi_not_available")
+            return None
+        try:
+            self._ytm = YTMusic()
+            logger.info("ytmusicapi_initialized", mode="browse")
+            return self._ytm
+        except Exception:
+            logger.exception("ytmusicapi_init_error")
+            return None
+
+    def _ytm_cache_get(self, key: str) -> object | None:
+        entry = self._ytm_browse_cache.get(key)
+        if entry is None:
+            return None
+        ts, data = entry
+        if time.time() - ts > self._ytm_browse_cache_ttl:
+            del self._ytm_browse_cache[key]
+            return None
+        return data
+
+    def _ytm_cache_set(self, key: str, data: object) -> None:
+        self._ytm_browse_cache[key] = (time.time(), data)
+
+    # ------------------------------------------------------------------
+    # ytmusicapi — track mapping helper
+    # ------------------------------------------------------------------
+
+    def _map_ytm_track(self, item: dict) -> Track:
+        """Map a ytmusicapi track/song dict to a Tune Track model."""
+        artists = item.get("artists") or []
+        artist_name = artists[0].get("name", "Unknown") if artists else item.get("artist", "Unknown")
+        album_info = item.get("album") or {}
+        album_title = album_info.get("name") if isinstance(album_info, dict) else None
+
+        thumbnails = item.get("thumbnails") or []
+        cover = thumbnails[-1].get("url") if thumbnails else None
+
+        duration_seconds = item.get("duration_seconds") or item.get("lengthSeconds")
+        duration_ms = 0
+        if duration_seconds:
+            duration_ms = int(duration_seconds) * 1000
+        elif item.get("duration"):
+            # Parse "M:SS" or "H:MM:SS" format
+            parts = str(item["duration"]).split(":")
+            try:
+                if len(parts) == 2:
+                    duration_ms = (int(parts[0]) * 60 + int(parts[1])) * 1000
+                elif len(parts) == 3:
+                    duration_ms = (int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])) * 1000
+            except ValueError:
+                pass
+
+        return Track(
+            title=item.get("title", "Unknown"),
+            artist_name=artist_name,
+            album_title=album_title,
+            duration_ms=duration_ms,
+            format=AudioFormat.OPUS,
+            sample_rate=48000,
+            bit_depth=16,
+            channels=2,
+            cover_path=cover,
+            source=Source.YOUTUBE,
+            source_id=item.get("videoId", ""),
+        )
+
+    def _map_ytm_playlist(self, item: dict) -> StreamingPlaylist:
+        """Map a ytmusicapi playlist dict to a StreamingPlaylist."""
+        thumbnails = item.get("thumbnails") or []
+        cover = thumbnails[-1].get("url") if thumbnails else None
+        return StreamingPlaylist(
+            source_id=item.get("playlistId", item.get("browseId", "")),
+            name=item.get("title", "Unknown"),
+            description=item.get("description") or None,
+            track_count=item.get("count", item.get("trackCount", 0)) or 0,
+            cover_path=cover,
+            source=Source.YOUTUBE,
+        )
+
+    # ------------------------------------------------------------------
+    # Featured — ytmusicapi home page sections
     # ------------------------------------------------------------------
 
     async def get_featured_sections(self) -> list[FeaturedSection]:
-        return []
+        ytm = self._ensure_ytm()
+        if not ytm:
+            return []
+        try:
+            cached = self._ytm_cache_get("home_sections")
+            if cached is not None:
+                return cached
+
+            home = await asyncio.to_thread(ytm.get_home, limit=6)
+            sections: list[FeaturedSection] = []
+            self._ytm_browse_cache.pop("home_data", None)
+            home_data: dict[str, list] = {}
+            for i, section in enumerate(home or []):
+                title = section.get("title")
+                if not title:
+                    continue
+                section_id = f"ytm-home-{i}"
+                sections.append(FeaturedSection(id=section_id, name=title))
+                home_data[section_id] = section.get("contents", [])
+
+            self._ytm_cache_set("home_sections", sections)
+            self._ytm_cache_set("home_data", home_data)
+            return sections
+        except Exception:
+            logger.exception("ytm_get_home_error")
+            return []
 
     async def get_featured(self, section: str, limit: int = 20) -> list[Album]:
-        return []
+        home_data = self._ytm_cache_get("home_data")
+        if not home_data or not isinstance(home_data, dict):
+            # Trigger a refresh
+            await self.get_featured_sections()
+            home_data = self._ytm_cache_get("home_data")
+        if not home_data or not isinstance(home_data, dict):
+            return []
+
+        contents = home_data.get(section, [])
+        albums: list[Album] = []
+        for item in contents[:limit]:
+            # Home sections can contain playlists, albums, or songs
+            browse_id = item.get("browseId", "")
+            playlist_id = item.get("playlistId", "")
+            thumbnails = item.get("thumbnails") or []
+            cover = thumbnails[-1].get("url") if thumbnails else None
+            artists = item.get("artists") or []
+            artist_name = artists[0].get("name") if artists else item.get("author", "")
+
+            albums.append(Album(
+                title=item.get("title", "Unknown"),
+                artist_name=artist_name,
+                cover_path=cover,
+                source=Source.YOUTUBE,
+                source_id=playlist_id or browse_id,
+            ))
+        return albums
+
+    # ------------------------------------------------------------------
+    # ytmusicapi — browse catalog
+    # ------------------------------------------------------------------
+
+    async def get_ytm_charts(self, country: str = "FR") -> dict:
+        """Get YouTube Music trending/charts for a country."""
+        ytm = self._ensure_ytm()
+        if not ytm:
+            return {}
+        cache_key = f"charts_{country}"
+        cached = self._ytm_cache_get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            charts = await asyncio.to_thread(ytm.get_charts, country)
+            # Convert to serializable format
+            result: dict = {}
+
+            trending = charts.get("trending", {})
+            if trending and trending.get("items"):
+                result["trending"] = [self._map_ytm_track(t).model_dump() for t in trending["items"][:20]]
+
+            top_songs = charts.get("songs", {})
+            if top_songs and top_songs.get("items"):
+                result["songs"] = [self._map_ytm_track(t).model_dump() for t in top_songs["items"][:20]]
+
+            videos = charts.get("videos", {})
+            if videos and videos.get("items"):
+                result["videos"] = [self._map_ytm_track(t).model_dump() for t in videos["items"][:20]]
+
+            artists_list = charts.get("artists", {})
+            if artists_list and artists_list.get("items"):
+                mapped_artists = []
+                for a in artists_list["items"][:20]:
+                    thumbnails = a.get("thumbnails") or []
+                    image = thumbnails[-1].get("url") if thumbnails else None
+                    mapped_artists.append({
+                        "name": a.get("title", "Unknown"),
+                        "browse_id": a.get("browseId", ""),
+                        "image_path": image,
+                    })
+                result["artists"] = mapped_artists
+
+            self._ytm_cache_set(cache_key, result)
+            return result
+        except Exception:
+            logger.exception("ytm_get_charts_error", country=country)
+            return {}
+
+    async def get_ytm_mood_categories(self) -> list[dict]:
+        """Get YouTube Music mood/genre categories (Chill, Workout, etc.)."""
+        ytm = self._ensure_ytm()
+        if not ytm:
+            return []
+        cached = self._ytm_cache_get("mood_categories")
+        if cached is not None:
+            return cached
+        try:
+            categories = await asyncio.to_thread(ytm.get_mood_categories)
+            result = []
+            for cat_title, cat_items in (categories or {}).items():
+                items = []
+                for item in cat_items:
+                    items.append({
+                        "title": item.get("title", ""),
+                        "params": item.get("params", ""),
+                    })
+                result.append({
+                    "title": cat_title,
+                    "items": items,
+                })
+            self._ytm_cache_set("mood_categories", result)
+            return result
+        except Exception:
+            logger.exception("ytm_get_mood_categories_error")
+            return []
+
+    async def get_ytm_mood_playlists(self, params: str) -> list[dict]:
+        """Get playlists for a specific mood/genre category."""
+        ytm = self._ensure_ytm()
+        if not ytm:
+            return []
+        cache_key = f"mood_{params}"
+        cached = self._ytm_cache_get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            playlists = await asyncio.to_thread(ytm.get_mood_playlists, params)
+            result = []
+            for item in (playlists or []):
+                thumbnails = item.get("thumbnails") or []
+                cover = thumbnails[-1].get("url") if thumbnails else None
+                result.append({
+                    "title": item.get("title", "Unknown"),
+                    "playlistId": item.get("playlistId", ""),
+                    "description": item.get("subtitle", ""),
+                    "cover_path": cover,
+                })
+            self._ytm_cache_set(cache_key, result)
+            return result
+        except Exception:
+            logger.exception("ytm_get_mood_playlists_error", params=params)
+            return []
+
+    async def get_ytm_library_songs(self, limit: int = 100) -> list[Track]:
+        """Get the authenticated user's library songs (requires OAuth)."""
+        if not self._access_token:
+            return []
+        ytm = self._ensure_ytm()
+        if not ytm:
+            return []
+        try:
+            songs = await asyncio.to_thread(ytm.get_library_songs, limit)
+            return [self._map_ytm_track(s) for s in (songs or [])]
+        except Exception:
+            logger.exception("ytm_get_library_songs_error")
+            return []

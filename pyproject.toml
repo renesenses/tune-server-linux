@@ -27,6 +27,7 @@ dependencies = [
     "numpy>=1.26,<2.0",
     "tidalapi>=0.7",
     "yt-dlp>=2024.1",
+    "ytmusicapi>=1.8",
     "aiohttp>=3.9",
     "aiohttp_socks>=0.10",
     "watchfiles>=0.21",
