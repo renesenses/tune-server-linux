@@ -124,16 +124,15 @@ class Player:
     async def set_audiophile_mode(self, enabled: bool) -> None:
         """Enable or disable audiophile mode.
 
-        When enabling: disables EQ, crossfade, normalization and sets volume
-        to 1.0 (bit-perfect signal path). When disabling: only clears the
-        flag — user controls individual settings separately.
+        When enabling: disables EQ, crossfade, normalization for a pure
+        signal path. Volume is NOT changed — forcing 100% is dangerous
+        on high-power DACs/amplifiers.
         """
         self._audiophile_mode = enabled
         if enabled:
             self._eq_enabled = False
             self._crossfade_enabled = False
             self._normalization_enabled = False
-            await self.set_volume(1.0)
             logger.info("audiophile_mode_enabled", zone_id=self._zone_id)
         else:
             logger.info("audiophile_mode_disabled", zone_id=self._zone_id)
