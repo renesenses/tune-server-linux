@@ -1275,6 +1275,10 @@ class SARadioStationRepo:
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_radio_station(r) for r in rows]
 
+    async def count(self) -> int:
+        row = await self._db.sa_fetchone(sa.select(sa.func.count()).select_from(radio_stations))
+        return row[0] if row else 0
+
     async def get_by_url(self, stream_url: str) -> RadioStation | None:
         row = await self._db.sa_fetchone(
             sa.select(radio_stations).where(radio_stations.c.stream_url == stream_url)
