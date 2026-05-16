@@ -55,6 +55,8 @@ class AirPlayOutput(OutputTarget):
             logger.error("airplay_no_file", device=self._device_name)
             return
 
+        await self.stop()
+
         try:
             stream = self._atv.stream
 
