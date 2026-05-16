@@ -229,7 +229,7 @@ class SsdpDiscovery:
                             manufacturer = (device.manufacturer or "").lower()
                             if "google" in manufacturer:
                                 logger.debug("ssdp_skip_chromecast", name=name)
-                                continue
+                                return
 
                             disc_device = DiscoveredDevice(
                                 id=dev_id,
@@ -402,7 +402,7 @@ class SsdpDiscovery:
                 manufacturer = (device.manufacturer or "").lower()
                 if "google" in manufacturer:
                     logger.debug("ssdp_skip_chromecast_rescan", name=name)
-                    continue
+                    return
 
                 disc_device = DiscoveredDevice(
                     id=dev_id,
