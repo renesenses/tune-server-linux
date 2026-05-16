@@ -94,10 +94,14 @@ class Player:
 
     @property
     def position_ms(self) -> int:
+        pos = self._position_ms
         if self._state == PlaybackState.PLAYING:
             elapsed = (time.monotonic() - self._position_start_time) * 1000
-            return int(self._position_ms + elapsed)
-        return self._position_ms
+            pos = int(pos + elapsed)
+        track = self._queue.current
+        if track and track.duration_ms and pos > track.duration_ms:
+            return track.duration_ms
+        return pos
 
     @property
     def volume(self) -> float:
