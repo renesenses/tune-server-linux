@@ -792,6 +792,7 @@ class TuneServer:
                     logger.debug("playback_history_record_error", exc_info=True)
 
         self._event_bus.on(EventType.PLAYBACK_TRACK_CHANGED, _on_track_changed)
+        self._event_bus.on(EventType.PLAYBACK_STARTED, _on_track_changed)
 
         # Last.fm scrobbling
         self._setup_lastfm_scrobbling()
