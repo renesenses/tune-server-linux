@@ -188,19 +188,19 @@ class UpdateChecker:
 
     @property
     def is_source_install(self) -> bool:
-        """True when running from a git clone + venv (e.g. .18 dev/prod box).
-
-        The release tarballs ship a PyInstaller bundle (`_internal/`,
-        `tune-server` binary, `librespot`, `install.sh`, ...) and
-        unpacking that on top of a source checkout pollutes the repo and
-        leaves the venv's installed `tune-server` package out of sync.
-        Detect the case so we can refuse the in-app installer with a
-        clear message instead of silently breaking the install.
-        """
         if getattr(sys, "frozen", False):
             return False
         cwd = Path.cwd()
         return (cwd / "pyproject.toml").is_file() and (cwd / ".git").exists()
+
+    @property
+    def is_homebrew_install(self) -> bool:
+        """True when running from a Homebrew-managed install (Cellar/Linuxbrew)."""
+        try:
+            exe = Path(sys.executable).resolve()
+            return "Cellar" in str(exe) or "Linuxbrew" in str(exe) or "homebrew" in str(exe).lower()
+        except Exception:
+            return False
 
     def start(self) -> None:
         """Start periodic update checking."""
@@ -498,16 +498,42 @@ exit /b 0
                             installer=str(archive_path))
                 return True
 
-            # macOS: download the DMG to ~/Downloads and open it in Finder.
-            # In-place file replacement breaks codesign on macOS bundles, so
-            # we let the user drag-install from the DMG instead.
+            # macOS Homebrew: run brew upgrade instead of DMG dance
+            if platform.system().lower() == "darwin" and self.is_homebrew_install:
+                import subprocess
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                logger.info("update_homebrew_start", version=self._latest_version)
+
+                proc = await asyncio.create_subprocess_exec(
+                    "/bin/sh", "-c", "brew update && brew upgrade tune-server",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+
+                if proc.returncode == 0:
+                    logger.info("update_homebrew_success", version=self._latest_version,
+                                output=stdout.decode()[:200])
+                    if self._event_bus:
+                        from tune_server.event_bus import Event, EventType
+                        await self._event_bus.emit(Event(
+                            type=EventType.SYSTEM_UPDATE_INSTALLED,
+                            data={"version": self._latest_version, "restart_required": True,
+                                  "homebrew": True},
+                        ))
+                    return True
+                else:
+                    logger.warning("update_homebrew_failed",
+                                   stderr=stderr.decode()[:300])
+                    return False
+
+            # macOS DMG: download to ~/Downloads and open in Finder.
             if platform.system().lower() == "darwin":
                 import subprocess
                 dmg_dest = Path.home() / "Downloads" / self._asset_name
                 shutil.move(str(archive_path), str(dmg_dest))
                 logger.info("update_dmg_ready", path=str(dmg_dest))
 
-                # Open the DMG in Finder so the user sees the drag-install window
                 subprocess.Popen(["/usr/bin/open", str(dmg_dest)])
 
                 self._install_state = {
@@ -516,7 +542,6 @@ exit /b 0
                     "version": self._latest_version,
                 }
 
-                # Notify via event bus
                 if self._event_bus:
                     from tune_server.event_bus import Event, EventType
                     await self._event_bus.emit(Event(
@@ -528,7 +553,6 @@ exit /b 0
                         },
                     ))
 
-                # Clean up temp dir (DMG already moved to Downloads)
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return True
 

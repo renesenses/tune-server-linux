@@ -755,9 +755,13 @@ async def check_update():
         "latest_version": None,
         "update_available": False,
     }
+    homebrew_install = deps.update_checker.is_homebrew_install
     payload["installable"] = not source_install
+    payload["homebrew"] = homebrew_install
     if source_install:
         payload["install_hint"] = "Source install detected. Run `git pull && pip install -e .` then restart."
+    elif homebrew_install:
+        payload["install_hint"] = "Homebrew install detected. Update will run `brew upgrade tune-server`."
     return payload
 
 
