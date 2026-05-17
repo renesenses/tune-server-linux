@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS albums (
     title TEXT NOT NULL,
     artist_id INTEGER REFERENCES artists(id) ON DELETE SET NULL,
     year INTEGER,
+    original_year INTEGER,
     genre TEXT,
     disc_count INTEGER DEFAULT 1,
     track_count INTEGER DEFAULT 0,
