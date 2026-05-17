@@ -594,12 +594,10 @@ class DlnaOutput(OutputTarget):
                 return True
 
             # Local file or pipeline-based: serve via HTTP streamer
-            # Use the track's native format for MIME when serving a local file directly
+            # Always use the pipeline's output format for gapless next track
+            # to avoid format mismatch (e.g. current=WAV, next=AAC would glitch)
             is_local_file = track.file_path and not track.file_path.startswith("http")
-            if is_local_file and track.format:
-                mime = mime_type_for_format(AudioFormat(track.format))
-            else:
-                mime = mime_type_for_format(stream_info.format)
+            mime = mime_type_for_format(stream_info.format)
 
             stream_id = self._streamer.create_session(stream_info, track.file_path)
             stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
