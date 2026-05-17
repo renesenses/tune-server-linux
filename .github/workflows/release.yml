@@ -571,18 +571,32 @@ jobs:
     runs-on: [self-hosted, macOS, X64, intel]
     permissions:
       contents: write
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: "/bin/echo"
+      SSH_ASKPASS: "/bin/echo"
+      DISPLAY: ""
 
     steps:
-      - name: Clean stale keychains and disable osxkeychain
+      - name: Checkout (self-hosted, no keychain)
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           security list-keychains -d user -s ~/Library/Keychains/login.keychain-db
           rm -f "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
-          git config --global credential.helper store
-          echo "Keychain reset + git credential helper set to 'store' (no GUI prompts)"
-
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+          REPO_DIR="${GITHUB_WORKSPACE}"
+          mkdir -p "$REPO_DIR"
+          cd "$REPO_DIR"
+          if [ -d .git ]; then
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+            git fetch --depth 1 origin "${{ github.sha }}"
+          else
+            git clone --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" .
+            git fetch --depth 1 origin "${{ github.sha }}"
+          fi
+          git checkout "${{ github.sha }}"
+          git remote set-url origin "https://github.com/${{ github.repository }}.git"
 
       - name: Set up Python 3.12 (self-hosted)
         shell: bash
