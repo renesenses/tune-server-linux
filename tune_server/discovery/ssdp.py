@@ -15,6 +15,21 @@ logger = structlog.get_logger()
 
 MEDIA_RENDERER_URN = "urn:schemas-upnp-org:device:MediaRenderer:1"
 
+# OpenHome / Linn search targets — these devices often don't respond to
+# the standard MediaRenderer URN but *do* support DLNA AVTransport for
+# basic play/pause/stop once discovered.
+OPENHOME_SEARCH_TARGETS = [
+    "urn:av-openhome-org:service:Product:1",
+    "urn:av-openhome-org:service:Playlist:1",
+    "urn:linn-co-uk:device:Source:1",
+]
+
+# URN prefixes that indicate an OpenHome / Linn device in SSDP responses
+_OPENHOME_PREFIXES = (
+    "urn:av-openhome-org:",
+    "urn:linn-co-uk:",
+)
+
 
 class SsdpDiscovery:
     """SSDP discovery for DLNA/UPnP Media Renderers."""
@@ -166,11 +181,18 @@ class SsdpDiscovery:
             except Exception as e:
                 logger.debug("ssdp_requester_close_error", error=str(e))
 
+    @staticmethod
+    def _is_relevant_urn(st: str) -> bool:
+        """Check if an SSDP search target is a MediaRenderer or OpenHome URN."""
+        if MEDIA_RENDERER_URN in st:
+            return True
+        return any(st.startswith(p) for p in _OPENHOME_PREFIXES)
+
     async def _on_ssdp_alive(self, headers) -> None:
         """Real-time SSDP NOTIFY ssdp:alive — device is announcing itself."""
         usn = headers.get("usn", "") or ""
         st = headers.get("nt", "") or ""
-        if MEDIA_RENDERER_URN not in st:
+        if not self._is_relevant_urn(st):
             return
         async with self._lock:
             # Only interesting if we haven't seen it yet, or it was marked lost
@@ -189,7 +211,7 @@ class SsdpDiscovery:
         """Real-time SSDP NOTIFY ssdp:byebye — device is going offline."""
         usn = headers.get("usn", "") or ""
         st = headers.get("nt", "") or ""
-        if MEDIA_RENDERER_URN not in st:
+        if not self._is_relevant_urn(st):
             return
         async with self._lock:
             device = self._devices.get(usn)
@@ -222,7 +244,10 @@ class SsdpDiscovery:
                         location = response.get("location", "")
                         st = response.get("st", "")
 
-                        if MEDIA_RENDERER_URN not in st:
+                        is_media_renderer = MEDIA_RENDERER_URN in st
+                        is_openhome = any(st.startswith(p) for p in _OPENHOME_PREFIXES)
+
+                        if not is_media_renderer and not is_openhome:
                             return
 
                         if usn in discovered:
@@ -230,10 +255,21 @@ class SsdpDiscovery:
                         discovered.add(usn)
 
                         try:
+                            # If already registered via a previous search target, skip
+                            dev_id = usn or location
+                            async with self._lock:
+                                if dev_id in self._devices and self._devices[dev_id].available:
+                                    return
+
+                            if is_openhome and not is_media_renderer:
+                                logger.info(
+                                    "openhome_ssdp_response",
+                                    usn=usn, st=st, location=location,
+                                )
+
                             device = await self._factory.async_create_device(location)
                             dmr = DmrDevice(device, event_handler=None)
 
-                            dev_id = usn or location
                             name = device.friendly_name or "Unknown DLNA"
                             parsed = urlparse(device.device_url or location)
 
@@ -270,6 +306,16 @@ class SsdpDiscovery:
                                     logger.info("sonos_room_resolved", raw=name, resolved=sonos_name)
                                     name = sonos_name
 
+                            capabilities = {
+                                "dlna": True,
+                                "manufacturer": device.manufacturer or "",
+                                "model": device.model_name or "",
+                                "sink_protocols": sink_protocols,
+                                "device_name": device.friendly_name or "",
+                            }
+                            if is_openhome:
+                                capabilities["openhome"] = True
+
                             disc_device = DiscoveredDevice(
                                 id=dev_id,
                                 name=name,
@@ -277,13 +323,7 @@ class SsdpDiscovery:
                                 host=parsed.hostname or "",
                                 port=parsed.port or 0,
                                 available=True,
-                                capabilities={
-                                    "dlna": True,
-                                    "manufacturer": device.manufacturer or "",
-                                    "model": device.model_name or "",
-                                    "sink_protocols": sink_protocols,
-                                    "device_name": device.friendly_name or "",
-                                },
+                                capabilities=capabilities,
                             )
 
                             self._create_failures.pop(usn, None)
@@ -300,8 +340,9 @@ class SsdpDiscovery:
                                     source="ssdp",
                                 ))
                                 dsd_support = any("dsf" in p.lower() or "dsd" in p.lower() or "dff" in p.lower() for p in sink_protocols)
+                                log_event = "openhome_dlna_device_found" if is_openhome else "dlna_device_found"
                                 logger.info(
-                                    "dlna_device_found", name=name, model=device.model_name,
+                                    log_event, name=name, model=device.model_name,
                                     id=dev_id, recovered=was_lost, dsd_native=dsd_support,
                                     sink_protocol_count=len(sink_protocols),
                                 )
@@ -317,6 +358,12 @@ class SsdpDiscovery:
                                         self._devices[fallback_id].available = True
                                     return
 
+                            if is_openhome:
+                                logger.info(
+                                    "openhome_dmr_create_failed_trying_fallback",
+                                    usn=usn, location=location, error=str(exc),
+                                )
+
                             self._log_create_failure(usn, location, _name, exc)
 
                             # Try MinimalDmrDevice (probe SOAP directly, bypass XML)
@@ -326,6 +373,16 @@ class SsdpDiscovery:
                             # Last resort: visible but not controllable
                             parsed_loc = urlparse(location)
                             fallback_name = _name or "Unknown DLNA"
+                            fallback_caps: dict = {
+                                "dlna": True,
+                                "model": "",
+                                "sink_protocols": [],
+                                "device_name": fallback_name,
+                                "xml_unavailable": True,
+                                "description_url": location,
+                            }
+                            if is_openhome:
+                                fallback_caps["openhome"] = True
                             fallback_device = DiscoveredDevice(
                                 id=fallback_id,
                                 name=fallback_name,
@@ -333,14 +390,7 @@ class SsdpDiscovery:
                                 host=parsed_loc.hostname or "",
                                 port=parsed_loc.port or 0,
                                 available=True,
-                                capabilities={
-                                    "dlna": True,
-                                    "model": "",
-                                    "sink_protocols": [],
-                                    "device_name": fallback_name,
-                                    "xml_unavailable": True,
-                                    "description_url": location,
-                                },
+                                capabilities=fallback_caps,
                             )
                             async with self._lock:
                                 if fallback_id not in self._devices:
@@ -353,11 +403,18 @@ class SsdpDiscovery:
                                     logger.info(
                                         "dlna_device_fallback_registered",
                                         name=fallback_name, host=parsed_loc.hostname,
+                                        openhome=is_openhome,
                                     )
 
                     # Try SSDP search — handle Windows multicast errors gracefully
+                    async def _run_search(target: str, source_ip: str | None = None) -> None:
+                        kwargs: dict = {"timeout": 10, "search_target": target}
+                        if source_ip:
+                            kwargs["source"] = source_ip
+                        await async_search(_on_response, **kwargs)
+
                     try:
-                        await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN)
+                        await _run_search(MEDIA_RENDERER_URN)
                     except OSError as os_err:
                         # WinError 10065 (host unreachable) or similar — retry with source IP
                         logger.warning("ssdp_multicast_error", error=str(os_err))
@@ -365,13 +422,25 @@ class SsdpDiscovery:
                             source_ip = self._get_local_ip()
                             if source_ip:
                                 logger.info("ssdp_retry_with_source", source=source_ip)
-                                await async_search(
-                                    _on_response, timeout=10,
-                                    search_target=MEDIA_RENDERER_URN,
-                                    source=source_ip,
-                                )
+                                await _run_search(MEDIA_RENDERER_URN, source_ip)
                         except Exception:
                             logger.debug("ssdp_retry_also_failed")
+
+                    # Search for OpenHome / Linn devices that may not respond
+                    # to the standard MediaRenderer URN
+                    for oh_target in OPENHOME_SEARCH_TARGETS:
+                        try:
+                            await _run_search(oh_target)
+                        except OSError:
+                            # Multicast may fail on some networks; try with explicit source
+                            try:
+                                source_ip = self._get_local_ip()
+                                if source_ip:
+                                    await _run_search(oh_target, source_ip)
+                            except Exception:
+                                pass
+                        except Exception:
+                            logger.debug("ssdp_openhome_search_error", target=oh_target)
 
                     # Mark lost devices
                     async with self._lock:
@@ -418,15 +487,27 @@ class SsdpDiscovery:
             location = response.get("location", "")
             st = response.get("st", "")
 
-            if MEDIA_RENDERER_URN not in st or usn in discovered:
+            is_media_renderer = MEDIA_RENDERER_URN in st
+            is_openhome = any(st.startswith(p) for p in _OPENHOME_PREFIXES)
+
+            if not is_media_renderer and not is_openhome:
+                return
+            if usn in discovered:
                 return
             discovered.add(usn)
 
             try:
+                dev_id = usn or location
+                async with self._lock:
+                    if dev_id in self._devices and self._devices[dev_id].available:
+                        return
+
+                if is_openhome and not is_media_renderer:
+                    logger.info("openhome_ssdp_response", usn=usn, st=st, location=location)
+
                 device = await self._factory.async_create_device(location)
                 dmr = DmrDevice(device, event_handler=None)
 
-                dev_id = usn or location
                 name = device.friendly_name or "Unknown DLNA"
                 parsed = urlparse(device.device_url or location)
 
@@ -452,6 +533,16 @@ class SsdpDiscovery:
                         logger.info("sonos_room_resolved", raw=name, resolved=sonos_name)
                         name = sonos_name
 
+                capabilities = {
+                    "dlna": True,
+                    "manufacturer": device.manufacturer or "",
+                    "model": device.model_name or "",
+                    "sink_protocols": sink_protocols,
+                    "device_name": device.friendly_name or "",
+                }
+                if is_openhome:
+                    capabilities["openhome"] = True
+
                 disc_device = DiscoveredDevice(
                     id=dev_id,
                     name=name,
@@ -459,13 +550,7 @@ class SsdpDiscovery:
                     host=parsed.hostname or "",
                     port=parsed.port or 0,
                     available=True,
-                    capabilities={
-                        "dlna": True,
-                        "manufacturer": device.manufacturer or "",
-                        "model": device.model_name or "",
-                        "sink_protocols": sink_protocols,
-                        "device_name": device.friendly_name or "",
-                    },
+                    capabilities=capabilities,
                 )
 
                 self._create_failures.pop(usn, None)
@@ -481,7 +566,8 @@ class SsdpDiscovery:
                         data=disc_device.model_dump(),
                         source="ssdp",
                     ))
-                    logger.info("dlna_device_found", name=name, id=dev_id, recovered=was_lost)
+                    log_event = "openhome_dlna_device_found" if is_openhome else "dlna_device_found"
+                    logger.info(log_event, name=name, id=dev_id, recovered=was_lost)
 
             except Exception as exc:
                 _name = usn.split("uuid:")[-1].split("::")[0] if "uuid:" in usn else usn
@@ -500,6 +586,13 @@ class SsdpDiscovery:
 
                 parsed_loc = urlparse(location)
                 fallback_name = _name or "Unknown DLNA"
+                fallback_caps: dict = {
+                    "dlna": True, "model": "", "sink_protocols": [],
+                    "device_name": fallback_name, "xml_unavailable": True,
+                    "description_url": location,
+                }
+                if is_openhome:
+                    fallback_caps["openhome"] = True
                 fallback_device = DiscoveredDevice(
                     id=fallback_id,
                     name=fallback_name,
@@ -507,23 +600,44 @@ class SsdpDiscovery:
                     host=parsed_loc.hostname or "",
                     port=parsed_loc.port or 0,
                     available=True,
-                    capabilities={
-                        "dlna": True, "model": "", "sink_protocols": [],
-                        "device_name": fallback_name, "xml_unavailable": True,
-                        "description_url": location,
-                    },
+                    capabilities=fallback_caps,
                 )
                 async with self._lock:
                     if fallback_id not in self._devices:
                         self._devices[fallback_id] = fallback_device
-                        logger.info("dlna_device_fallback_registered", name=fallback_name, host=parsed_loc.hostname)
+                        logger.info(
+                            "dlna_device_fallback_registered",
+                            name=fallback_name, host=parsed_loc.hostname,
+                            openhome=is_openhome,
+                        )
+
+        async def _run_search(target: str, source_ip: str | None = None) -> None:
+            kwargs: dict = {"timeout": 10, "search_target": target}
+            if source_ip:
+                kwargs["source"] = source_ip
+            await async_search(_on_response, **kwargs)
 
         try:
-            await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN)
+            await _run_search(MEDIA_RENDERER_URN)
         except OSError:
             source_ip = self._get_local_ip()
             if source_ip:
-                await async_search(_on_response, timeout=10, search_target=MEDIA_RENDERER_URN, source=source_ip)
+                await _run_search(MEDIA_RENDERER_URN, source_ip)
+
+        # Search for OpenHome / Linn devices
+        for oh_target in OPENHOME_SEARCH_TARGETS:
+            try:
+                await _run_search(oh_target)
+            except OSError:
+                try:
+                    source_ip = self._get_local_ip()
+                    if source_ip:
+                        await _run_search(oh_target, source_ip)
+                except Exception:
+                    pass
+            except Exception:
+                logger.debug("ssdp_openhome_rescan_error", target=oh_target)
+
         return list(self._devices.values())
 
     @staticmethod
