@@ -422,6 +422,7 @@ class TuneServer:
         history_repo = PlaybackHistoryRepo(self._db)
         deps.history_repo = history_repo
         self._setup_playback_history(history_repo)
+        self._setup_auto_resume()
         from tune_server.db.sa_repository import SARadioFavoriteRepo, SAPartyVoteRepo, SAAlbumRatingRepo
         deps.radio_fav_repo = SARadioFavoriteRepo(self._db)
         deps.party_vote_repo = SAPartyVoteRepo(self._db)
@@ -791,6 +792,54 @@ class TuneServer:
         self._zone_manager.register_output_factory(OutputType.BLUOS, create_bluos_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
         self._zone_manager.register_output_factory(OutputType.OPENHOME, create_openhome_output)
+
+    def _setup_auto_resume(self) -> None:
+        """Save playback state on events and auto-resume on startup."""
+        zm = self._zone_manager
+
+        async def _save_state(event: Event):
+            data = event.data or {}
+            zone_id = data.get("zone_id")
+            if not zone_id or not zm:
+                return
+            zone = zm.get_zone(zone_id)
+            if zone:
+                is_playing = zone.player.state.value == "playing"
+                pos = zone.player.position_ms
+                await zone.save_playback_state(is_playing, pos)
+
+        async def _save_stopped(event: Event):
+            data = event.data or {}
+            zone_id = data.get("zone_id")
+            if not zone_id or not zm:
+                return
+            zone = zm.get_zone(zone_id)
+            if zone:
+                await zone.save_playback_state(False, 0)
+
+        self._event_bus.on(EventType.PLAYBACK_STARTED, _save_state)
+        self._event_bus.on(EventType.PLAYBACK_TRACK_CHANGED, _save_state)
+        self._event_bus.on(EventType.PLAYBACK_STOPPED, _save_stopped)
+
+        async def _auto_resume():
+            await asyncio.sleep(5)
+            if not zm:
+                return
+            for zone in zm.list_zones():
+                try:
+                    row = await self._db.fetchone(
+                        "SELECT was_playing, last_position_ms FROM zones WHERE id = ?",
+                        (zone.zone_id,),
+                    )
+                    if row and row.get("was_playing"):
+                        pos = row.get("last_position_ms", 0) or 0
+                        logger.info("auto_resume_playback", zone_id=zone.zone_id,
+                                    zone_name=zone.name, position_ms=pos)
+                        await zone.player.play(seek_ms=pos)
+                except Exception:
+                    logger.debug("auto_resume_failed", zone_id=zone.zone_id, exc_info=True)
+
+        asyncio.create_task(_auto_resume())
 
     def _setup_playback_history(self, history_repo) -> None:
         """Record each played track in playback_history via EventBus.

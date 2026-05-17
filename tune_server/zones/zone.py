@@ -269,6 +269,17 @@ class ZoneInstance:
         if self._zone_repo:
             await self._zone_repo.update(self._zone_id, volume=volume)
 
+    async def save_playback_state(self, is_playing: bool, position_ms: int = 0) -> None:
+        if self._zone_repo:
+            try:
+                await self._zone_repo.update(
+                    self._zone_id,
+                    was_playing=1 if is_playing else 0,
+                    last_position_ms=position_ms,
+                )
+            except Exception:
+                pass
+
     async def update_output(
         self,
         output_type: OutputType,

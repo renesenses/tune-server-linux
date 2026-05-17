@@ -192,6 +192,8 @@ class SQLiteDatabase:
             "ALTER TABLE albums ADD COLUMN original_date TEXT",
             # Artist image source tracking (priority: user > discogs > musicbrainz > wikipedia)
             "ALTER TABLE artists ADD COLUMN image_source TEXT",
+            "ALTER TABLE zones ADD COLUMN was_playing INTEGER DEFAULT 0",
+            "ALTER TABLE zones ADD COLUMN last_position_ms INTEGER DEFAULT 0",
         ]
         for sql in migrations:
             try:
