@@ -223,6 +223,10 @@ class Settings(BaseSettings):
     cast_enabled: bool = True
     bluos_enabled: bool = True
 
+    # OpenHome renderers (Linn, Naim, Auralic, Lumin, dCS, etc.)
+    openhome_auto_standby: bool = False  # put device to standby on stop
+    openhome_queue_size: int = 20  # max tracks to push to device playlist
+
     # UPnP MediaServer
     upnp_server_enabled: bool = True
     upnp_server_name: str = "Tune Server"
