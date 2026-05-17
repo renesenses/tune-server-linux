@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from tune_server.api.deps import deps
-from tune_server.api.routes import alarms, artist_metadata, dashboard, devices, dj, export, import_export, library, network, party, peers, playback, playlist_manager, playlists, podcasts, profiles, radio_favorites, radios, search, services, smart_collections, spotify_connect, streaming, system, zone_manager, zones
+from tune_server.api.routes import alarms, artist_metadata, bug_report, dashboard, devices, dj, export, import_export, library, network, party, peers, playback, playlist_manager, playlist_sync, playlists, podcasts, profiles, radio_favorites, radios, search, services, smart_collections, spotify_connect, streaming, system, zone_manager, zones
 from tune_server.api.routes import metadata
 from tune_server.api.websocket import WebSocketManager
 from tune_server.config import settings
@@ -89,6 +89,7 @@ def create_api_app() -> FastAPI:
     app.include_router(profiles.router, prefix="/api/v1")
     app.include_router(podcasts.router, prefix="/api/v1")
     app.include_router(playlist_manager.router, prefix="/api/v1")
+    app.include_router(playlist_sync.router, prefix="/api/v1")
     app.include_router(party.router, prefix="/api/v1")
     app.include_router(dj.router, prefix="/api/v1")
     app.include_router(zone_manager.router, prefix="/api/v1")
@@ -102,6 +103,7 @@ def create_api_app() -> FastAPI:
     app.include_router(export.router, prefix="/api/v1")
     app.include_router(import_export.router, prefix="/api/v1")
     app.include_router(dashboard.router, prefix="/api/v1")
+    app.include_router(bug_report.router, prefix="/api/v1")
     from tune_server.api.routes import plugin_store
     app.include_router(plugin_store.router, prefix="/api/v1")
     @app.websocket("/ws")
