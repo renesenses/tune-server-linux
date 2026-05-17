@@ -85,6 +85,7 @@ MACOS_TAR_SIZE=$(stat -f%z "$TMPDIR/tune-server-${VERSION}-macos.tar.gz" 2>/dev/
 WIN_SETUP_SIZE=$(stat -f%z "$TMPDIR/tune-server-${VERSION}-windows-setup.exe" 2>/dev/null || echo 0)
 WIN_ZIP_SIZE=$(stat -f%z "$TMPDIR/tune-server-${VERSION}-windows.zip" 2>/dev/null || echo 0)
 
+SLUG=$(echo "$VERSION" | tr '.' '')
 ssh "$VPS" "docker exec $CONTAINER php artisan tinker --execute=\"
 \\\$assets = json_encode([
     'linux' => [['name' => 'tune-server-${VERSION}-linux.tar.gz', 'url' => '/storage/releases/${VERSION}/tune-server-${VERSION}-linux.tar.gz', 'size' => ${LINUX_SIZE}]],
@@ -99,7 +100,7 @@ ssh "$VPS" "docker exec $CONTAINER php artisan tinker --execute=\"
 ]);
 \DB::table('forum_releases')->updateOrInsert(
     ['version' => '${VERSION}'],
-    ['name' => 'v${VERSION}', 'slug' => 'tune-v-${VERSION//./', 'description' => 'Release v${VERSION}', 'released_at' => now(), 'is_active' => true, 'order' => 999, 'download_assets' => \\\$assets, 'updated_at' => now()]
+    ['name' => 'v${VERSION}', 'slug' => 'tune-v-${SLUG}', 'description' => 'Release v${VERSION}', 'released_at' => now(), 'is_active' => true, 'order' => 999, 'download_assets' => \\\$assets, 'updated_at' => now()]
 );
 echo 'DB updated';
 \""
