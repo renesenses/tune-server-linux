@@ -200,6 +200,7 @@ class TuneServer:
         self._sync_engine: SyncEngine | None = None
         self._discovery_manager: DiscoveryManager | None = None
         self._http_streamer: HttpAudioStreamer | None = None
+        self._oh_event_listener = None  # OpenHomeEventListener, shared across outputs
         self._mount_manager = None
         self._ws_manager = None
         self._scan_task: asyncio.Task | None = None
@@ -369,6 +370,15 @@ class TuneServer:
         # Discovery — start BEFORE zone init so DLNA devices can be found
         self._discovery_manager = DiscoveryManager(self._event_bus)
         await self._discovery_manager.start()
+
+        # OpenHome event listener — shared receiver for UPnP NOTIFY callbacks
+        try:
+            from tune_server.outputs.oh_events import OpenHomeEventListener
+            self._oh_event_listener = OpenHomeEventListener(self._server_ip)
+            await self._oh_event_listener.start()
+        except Exception:
+            logger.warning("oh_event_listener_start_failed", exc_info=True)
+            self._oh_event_listener = None
 
         # Mount manager for network shares
         if settings.network_shares_enabled or settings.network_media_servers_enabled:
@@ -790,6 +800,8 @@ class TuneServer:
                 server_ip=self._server_ip,
                 streamer=self._http_streamer,
                 base_url=disc.capabilities.get("base_url", ""),
+                event_listener=self._oh_event_listener,
+                event_sub_urls=oh.get_event_sub_urls(device_id),
             )
 
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
@@ -1241,6 +1253,9 @@ class TuneServer:
 
         if hasattr(self, "_spotify_connect") and self._spotify_connect:
             await self._safe_stop("spotify_connect", self._spotify_connect.disable())
+
+        if self._oh_event_listener:
+            await self._safe_stop("oh_event_listener", self._oh_event_listener.stop())
 
         if self._discovery_manager:
             await self._safe_stop("discovery", self._discovery_manager.stop())
