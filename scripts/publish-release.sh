@@ -85,7 +85,7 @@ MACOS_TAR_SIZE=$(stat -f%z "$TMPDIR/tune-server-${VERSION}-macos.tar.gz" 2>/dev/
 WIN_SETUP_SIZE=$(stat -f%z "$TMPDIR/tune-server-${VERSION}-windows-setup.exe" 2>/dev/null || echo 0)
 WIN_ZIP_SIZE=$(stat -f%z "$TMPDIR/tune-server-${VERSION}-windows.zip" 2>/dev/null || echo 0)
 
-SLUG=$(echo "$VERSION" | tr '.' '')
+SLUG=$(echo "$VERSION" | tr -d '.')
 ssh "$VPS" "docker exec $CONTAINER php artisan tinker --execute=\"
 \\\$assets = json_encode([
     'linux' => [['name' => 'tune-server-${VERSION}-linux.tar.gz', 'url' => '/storage/releases/${VERSION}/tune-server-${VERSION}-linux.tar.gz', 'size' => ${LINUX_SIZE}]],
