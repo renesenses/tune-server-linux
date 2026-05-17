@@ -219,6 +219,8 @@ class ChromecastOutput(OutputTarget):
     async def close(self) -> None:
         await self.stop()
         try:
+            if hasattr(self._cast, 'socket_client') and self._cast.socket_client:
+                await self._cast_call(self._cast.socket_client.disconnect)
             await self._cast_call(self._cast.disconnect)
         except Exception:
             pass

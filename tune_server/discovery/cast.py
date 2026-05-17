@@ -39,9 +39,12 @@ class CastDiscovery:
         old = self._cast_devices.pop(device_id, None)
         if old:
             try:
+                if hasattr(old, 'socket_client') and old.socket_client:
+                    old.socket_client.disconnect()
                 old.disconnect()
             except Exception:
                 pass
+            await asyncio.sleep(1)
 
         def _connect():
             try:
