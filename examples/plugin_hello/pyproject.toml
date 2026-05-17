@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tune-plugin-hello"
+version = "0.1.0"
+description = "Example Tune plugin -- logs a greeting on startup"
+requires-python = ">=3.11"
+dependencies = [
+    "tune-server",
+]
+
+[project.entry-points."tune.plugins"]
+hello = "hello_plugin:HelloPlugin"

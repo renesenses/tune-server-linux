@@ -1,0 +1,34 @@
+services:
+  tune-server:
+    # Build from local Dockerfile:
+    build: .
+    # Or use the official image:
+    # image: mozaiklabs/tune:latest
+    container_name: tune-server
+    restart: unless-stopped
+    # host networking is required for DLNA/SSDP multicast discovery,
+    # AirPlay (mDNS), and Chromecast
+    network_mode: host
+    volumes:
+      - ./data:/data
+      - ./music:/music:ro
+      # Multiple music directories:
+      # - /path/to/flac:/music/flac:ro
+      # - /path/to/hires:/music/hires:ro
+    environment:
+      - TUNE_MUSIC_DIRS=["/music"]
+      - TUNE_DB_PATH=/data/tune.db
+      - TUNE_ARTWORK_CACHE_DIR=/data/artwork_cache
+      - TUNE_WEB_DIR=/app/web
+      - TUNE_API_PORT=8888
+      - TUNE_LOG_LEVEL=INFO
+      # Security (optional):
+      # - TUNE_API_KEY=your_secret_key
+      # PostgreSQL (optional, recommended for >50k tracks):
+      # - TUNE_DB_ENGINE=postgres
+      # - TUNE_DB_URL=postgresql://tune:tune@127.0.0.1:5432/tune
+      # USB DAC bit-perfect output (optional):
+      # - TUNE_LOCAL_EXCLUSIVE_MODE=true
+    # For USB DAC attached to the host:
+    # devices:
+    #   - /dev/snd:/dev/snd
