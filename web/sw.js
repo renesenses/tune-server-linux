@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tune-v1';
+const CACHE_NAME = 'tune-v2';
 const PRECACHE = ['/', '/index.html'];
 
 self.addEventListener('install', (e) => {
@@ -16,9 +16,19 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  // Network-first for API calls and WebSocket — never cache these
-  if (e.request.url.includes('/api/') || e.request.url.includes('/ws')) return;
+  const url = e.request.url;
+  if (url.includes('/api/') || url.includes('/ws')) return;
+  if (url.includes('/assets/')) {
+    e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+    return;
+  }
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
+    fetch(e.request).then(resp => {
+      if (resp.ok) {
+        const clone = resp.clone();
+        caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+      }
+      return resp;
+    }).catch(() => caches.match(e.request))
   );
 });
