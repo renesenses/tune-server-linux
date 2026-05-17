@@ -568,34 +568,65 @@ jobs:
           retention-days: 30
 
   build-intel:
-    runs-on: macos-15-large
+    runs-on: [self-hosted, macOS, X64, intel]
     permissions:
       contents: write
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: "/bin/echo"
+      SSH_ASKPASS: "/bin/echo"
+      DISPLAY: ""
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (no keychain)
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
+          security list-keychains -d user -s ~/Library/Keychains/login.keychain-db 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
+          cd "${GITHUB_WORKSPACE}"
+          if [ -d .git ]; then
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+            git fetch --depth 1 origin "${{ github.sha }}"
+          else
+            git clone --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" .
+            git fetch --depth 1 origin "${{ github.sha }}"
+          fi
+          git checkout "${{ github.sha }}"
+          git remote set-url origin "https://github.com/${{ github.repository }}.git"
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+        shell: bash
+        run: |
+          export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
+          brew install python@3.12 2>/dev/null || brew upgrade python@3.12 2>/dev/null || true
+          PYTHON=$(brew --prefix python@3.12)/bin/python3.12
+          $PYTHON --version
+          $PYTHON -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
 
       - name: Extract version
         id: version
         shell: bash
         run: |
-          VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
+          VERSION=$(.venv/bin/python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies and PyInstaller
         run: |
-          pip install pyinstaller
-          pip install .
+          .venv/bin/pip install pyinstaller
+          .venv/bin/pip install .
 
-      - name: Set up Node 20 (for web client)
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+      - name: Set up Node
+        shell: bash
+        run: |
+          export PATH="/usr/local/bin:$PATH"
+          brew install node@20 2>/dev/null || brew upgrade node@20 2>/dev/null || true
+          node --version
+          npm --version
 
       - name: Rebuild web client from tune-web-client (always fresh)
         shell: bash
