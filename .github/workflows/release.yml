@@ -146,22 +146,29 @@ jobs:
             echo "::warning::librespot not found — Spotify Connect feature will be unavailable in this build"
           fi
 
-      - name: Bundle FFmpeg for macOS
+      - name: Bundle FFmpeg for macOS (static build)
         if: matrix.platform == 'macos'
         shell: bash
         run: |
-          # Homebrew ffmpeg is already installed (build dep or pre-installed on runner)
-          brew install ffmpeg 2>/dev/null || true
-          FFMPEG_BIN=$(brew --prefix ffmpeg)/bin/ffmpeg
-          FFPROBE_BIN=$(brew --prefix ffmpeg)/bin/ffprobe
-          if [ -x "$FFMPEG_BIN" ]; then
-            cp "$FFMPEG_BIN" dist/tune-server/ffmpeg
-            cp "$FFPROBE_BIN" dist/tune-server/ffprobe
-            echo "Bundled ffmpeg + ffprobe from Homebrew"
-            dist/tune-server/ffmpeg -version | head -1
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ]; then
+            FFMPEG_URL="https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip"
+            FFPROBE_URL="https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffprobe.zip"
           else
-            echo "::warning::ffmpeg not found — audio transcoding will require manual install"
+            FFMPEG_URL="https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffmpeg.zip"
+            FFPROBE_URL="https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffprobe.zip"
           fi
+          echo "Downloading static ffmpeg ($ARCH)..."
+          curl -sL "$FFMPEG_URL" -o /tmp/ffmpeg.zip
+          curl -sL "$FFPROBE_URL" -o /tmp/ffprobe.zip
+          unzip -o /tmp/ffmpeg.zip -d /tmp/ffmpeg-bin
+          unzip -o /tmp/ffprobe.zip -d /tmp/ffprobe-bin
+          cp /tmp/ffmpeg-bin/ffmpeg dist/tune-server/ffmpeg
+          cp /tmp/ffprobe-bin/ffprobe dist/tune-server/ffprobe
+          chmod +x dist/tune-server/ffmpeg dist/tune-server/ffprobe
+          echo "Bundled static ffmpeg + ffprobe ($ARCH)"
+          dist/tune-server/ffmpeg -version | head -1
+          file dist/tune-server/ffmpeg
 
       - name: Bundle librespot binary (Windows)
         if: matrix.platform == 'windows'
@@ -719,21 +726,19 @@ jobs:
             echo "Bundled librespot at dist/tune-server/librespot"
           fi
 
-      - name: Bundle FFmpeg (macOS Intel)
+      - name: Bundle FFmpeg (macOS Intel, static build)
         shell: bash
         run: |
-          export PATH="/usr/local/bin:$PATH"
-          brew install ffmpeg 2>/dev/null || true
-          FFMPEG_BIN=$(brew --prefix ffmpeg)/bin/ffmpeg
-          FFPROBE_BIN=$(brew --prefix ffmpeg)/bin/ffprobe
-          if [ -x "$FFMPEG_BIN" ]; then
-            cp "$FFMPEG_BIN" dist/tune-server/ffmpeg
-            cp "$FFPROBE_BIN" dist/tune-server/ffprobe
-            echo "Bundled ffmpeg + ffprobe from Homebrew"
-            dist/tune-server/ffmpeg -version | head -1
-          else
-            echo "::warning::ffmpeg not found"
-          fi
+          echo "Downloading static ffmpeg (amd64)..."
+          curl -sL "https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffmpeg.zip" -o /tmp/ffmpeg.zip
+          curl -sL "https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffprobe.zip" -o /tmp/ffprobe.zip
+          unzip -o /tmp/ffmpeg.zip -d /tmp/ffmpeg-bin
+          unzip -o /tmp/ffprobe.zip -d /tmp/ffprobe-bin
+          cp /tmp/ffmpeg-bin/ffmpeg dist/tune-server/ffmpeg
+          cp /tmp/ffprobe-bin/ffprobe dist/tune-server/ffprobe
+          chmod +x dist/tune-server/ffmpeg dist/tune-server/ffprobe
+          echo "Bundled static ffmpeg + ffprobe (amd64)"
+          dist/tune-server/ffmpeg -version | head -1
 
       - name: Package tarball (macOS Intel)
         run: |
