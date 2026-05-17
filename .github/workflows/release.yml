@@ -568,7 +568,7 @@ jobs:
           retention-days: 30
 
   build-intel:
-    runs-on: macos-13
+    runs-on: macos-15-large
     permissions:
       contents: write
 
