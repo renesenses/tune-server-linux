@@ -575,6 +575,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Clean stale keychains from previous runs
+        run: |
+          security list-keychains -d user -s ~/Library/Keychains/login.keychain-db
+          rm -f "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
+          echo "Keychain search list reset to login keychain only"
+          security list-keychains -d user
+
       - name: Set up Python (self-hosted)
         shell: bash
         run: |
@@ -682,6 +689,11 @@ jobs:
           cp install.sh README.md CHANGELOG.md dist/tune-server/
           cd dist && tar czf "../tune-server-${VERSION}-macos-intel.tar.gz" tune-server/
           cd .. && shasum -a 256 "tune-server-${VERSION}-macos-intel.tar.gz" | awk '{print $1}' > "tune-server-${VERSION}-macos-intel.tar.gz.sha256"
+
+      - name: Save original keychain state (macOS Intel)
+        run: |
+          security list-keychains -d user | tr -d '"' | tr '\n' ':' > /tmp/original-keychains.txt
+          echo "Saved original keychain list"
 
       - name: Import Developer ID certificate (macOS Intel)
         if: env.MACOS_CERT_P12_BASE64 != ''
@@ -889,6 +901,19 @@ jobs:
       - name: Compute DMG checksum (macOS Intel)
         run: |
           shasum -a 256 "${DMG_NAME}" | awk '{print $1}' > "${DMG_NAME}.sha256"
+
+      - name: Cleanup keychain (macOS Intel)
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/build.keychain" ]; then
+            security delete-keychain "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
+          fi
+          if [ -f /tmp/original-keychains.txt ]; then
+            ORIGINAL=$(cat /tmp/original-keychains.txt | tr ':' ' ')
+            security list-keychains -d user -s $ORIGINAL
+            rm -f /tmp/original-keychains.txt
+          fi
+          rm -f /tmp/cert.p12 /tmp/AuthKey_*.p8
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
