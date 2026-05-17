@@ -146,6 +146,23 @@ jobs:
             echo "::warning::librespot not found — Spotify Connect feature will be unavailable in this build"
           fi
 
+      - name: Bundle FFmpeg for macOS
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          # Homebrew ffmpeg is already installed (build dep or pre-installed on runner)
+          brew install ffmpeg 2>/dev/null || true
+          FFMPEG_BIN=$(brew --prefix ffmpeg)/bin/ffmpeg
+          FFPROBE_BIN=$(brew --prefix ffmpeg)/bin/ffprobe
+          if [ -x "$FFMPEG_BIN" ]; then
+            cp "$FFMPEG_BIN" dist/tune-server/ffmpeg
+            cp "$FFPROBE_BIN" dist/tune-server/ffprobe
+            echo "Bundled ffmpeg + ffprobe from Homebrew"
+            dist/tune-server/ffmpeg -version | head -1
+          else
+            echo "::warning::ffmpeg not found — audio transcoding will require manual install"
+          fi
+
       - name: Bundle librespot binary (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
@@ -700,6 +717,22 @@ jobs:
           if [ -x "$HOME/.cargo/bin/librespot" ]; then
             cp "$HOME/.cargo/bin/librespot" dist/tune-server/librespot
             echo "Bundled librespot at dist/tune-server/librespot"
+          fi
+
+      - name: Bundle FFmpeg (macOS Intel)
+        shell: bash
+        run: |
+          export PATH="/usr/local/bin:$PATH"
+          brew install ffmpeg 2>/dev/null || true
+          FFMPEG_BIN=$(brew --prefix ffmpeg)/bin/ffmpeg
+          FFPROBE_BIN=$(brew --prefix ffmpeg)/bin/ffprobe
+          if [ -x "$FFMPEG_BIN" ]; then
+            cp "$FFMPEG_BIN" dist/tune-server/ffmpeg
+            cp "$FFPROBE_BIN" dist/tune-server/ffprobe
+            echo "Bundled ffmpeg + ffprobe from Homebrew"
+            dist/tune-server/ffmpeg -version | head -1
+          else
+            echo "::warning::ffmpeg not found"
           fi
 
       - name: Package tarball (macOS Intel)
