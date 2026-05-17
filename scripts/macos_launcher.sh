@@ -40,6 +40,12 @@ export TUNE_ARTWORK_CACHE_DIR="${TUNE_ARTWORK_CACHE_DIR:-${DATA_DIR}/artwork_cac
 echo "" >> "$LOG_FILE"
 echo "=== Tune Server v${VERSION} starting at $(date -Iseconds) (data: ${DATA_DIR}) ===" >> "$LOG_FILE"
 
+# Kill any running Tune Server instance before starting
+for pid in $(pgrep -f "tune-server" 2>/dev/null); do
+    [ "$pid" != "$$" ] && kill "$pid" 2>/dev/null && echo "Killed previous instance (PID $pid)" >> "$LOG_FILE"
+done
+sleep 1
+
 if [ ! -x "$RUNTIME" ]; then
     osascript -e "display dialog \"Tune Server: binaire introuvable.\" & return & \"${RUNTIME}\" buttons {\"OK\"} default button 1 with icon stop with title \"Tune Server\""
     exit 1
