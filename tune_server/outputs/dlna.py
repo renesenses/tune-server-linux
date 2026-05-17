@@ -593,12 +593,22 @@ class DlnaOutput(OutputTarget):
                 logger.info("dlna_next_track_set_native_dsd", device=self.name, track=track.title)
                 return True
 
-            # Local file or pipeline-based: serve via HTTP streamer
-            # Always use the pipeline's output format for gapless next track
-            # to avoid format mismatch (e.g. current=WAV, next=AAC would glitch)
+            # Local file: only use SetNextAVTransportURI if the renderer can
+            # play the native format directly (passthrough). If transcoding is
+            # needed (e.g. AAC→WAV), skip gapless — the streamer would serve the
+            # raw file while the renderer expects the transcoded format.
             is_local_file = track.file_path and not track.file_path.startswith("http")
-            mime = mime_type_for_format(stream_info.format)
+            if is_local_file and track.format:
+                native_fmt = AudioFormat(track.format)
+                if native_fmt != stream_info.format:
+                    logger.info(
+                        "dlna_next_track_skip_transcode", device=self.name,
+                        track=track.title, native=native_fmt.value,
+                        pipeline=stream_info.format.value,
+                    )
+                    return False
 
+            mime = mime_type_for_format(stream_info.format)
             stream_id = self._streamer.create_session(stream_info, track.file_path)
             stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
             metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info)
