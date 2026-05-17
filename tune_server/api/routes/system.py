@@ -1202,10 +1202,11 @@ async def diagnostics(errors_limit: int = Query(50, le=200)):
 
     # ffmpeg version
     diag["ffmpeg_version"] = _ffmpeg_version()
+    diag["ffmpeg_path"] = settings.ffmpeg_path
 
     # ffprobe available
     import shutil
-    diag["ffprobe_available"] = shutil.which("ffprobe") is not None
+    diag["ffprobe_available"] = shutil.which(settings.ffprobe_path) is not None or Path(settings.ffprobe_path).is_file()
 
     # Disk free on DB partition
     diag["disk_free_mb"] = _disk_free_mb()
@@ -1227,7 +1228,7 @@ def _ffmpeg_version() -> str | None:
     try:
         import subprocess
         result = subprocess.run(
-            ["ffmpeg", "-version"], capture_output=True, text=True, timeout=5,
+            [settings.ffmpeg_path, "-version"], capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0 and result.stdout:
             return result.stdout.splitlines()[0]
