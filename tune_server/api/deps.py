@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from tune_server.spotify_connect import SpotifyConnectManager
     from tune_server.streaming.base import StreamingService
     from tune_server.updater import UpdateChecker
+    from tune_server.utils.health_monitor import HealthMonitor
     from tune_server.zones.group import GroupManager
     from tune_server.zones.manager import ZoneManager
 
@@ -43,6 +44,7 @@ class AppDeps:
         self.spotify_connect: SpotifyConnectManager | None = None
         self.plugin_loader: PluginLoader | None = None
         self.store_manager: PluginStoreManager | None = None
+        self.health_monitor: HealthMonitor | None = None
 
         # Repos (set after DB init)
         self.track_repo: TrackRepo | None = None

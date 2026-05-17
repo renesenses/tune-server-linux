@@ -55,7 +55,7 @@ class WebSocketManager:
         for event in self._event_bus.get_recent_events():
             try:
                 msg = json.dumps({
-                    "type": event.type.value,
+                    "type": event.type.value if hasattr(event.type, "value") else str(event.type),
                     "data": event.data,
                     "source": event.source,
                 })
@@ -72,7 +72,7 @@ class WebSocketManager:
         if not self._subscriptions:
             return
 
-        event_type = event.type.value
+        event_type = event.type.value if hasattr(event.type, "value") else str(event.type)
         message = json.dumps({
             "type": event_type,
             "data": event.data,

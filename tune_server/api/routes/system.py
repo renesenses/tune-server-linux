@@ -1560,6 +1560,37 @@ async def enable_plugin(name: str):
     return {"name": name, "enabled": True, "message": "Plugin will be loaded on next boot"}
 
 
+# ── Health monitor endpoints ───────────────────────────────────────────
+
+
+@router.get("/health/monitor")
+async def health_monitor():
+    """Live health status from the background health monitor."""
+    monitor = getattr(deps, "health_monitor", None)
+    if not monitor:
+        return {
+            "status": "ok",
+            "uptime_seconds": 0,
+            "checks": {},
+            "alerts": [],
+        }
+    return {
+        "status": monitor.status,
+        "uptime_seconds": monitor.uptime_seconds,
+        "checks": monitor.checks,
+        "alerts": monitor.alerts,
+    }
+
+
+@router.get("/health/alerts")
+async def health_alerts():
+    """Recent health alerts only."""
+    monitor = getattr(deps, "health_monitor", None)
+    if not monitor:
+        return []
+    return monitor.alerts
+
+
 def _detect_audio_issues(
     zones: list, local_devices: list[dict], renderers: list,
 ) -> list[dict]:

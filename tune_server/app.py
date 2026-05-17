@@ -527,6 +527,12 @@ class TuneServer:
         await self._scan_scheduler.start()
         deps.scan_scheduler = self._scan_scheduler
 
+        # Health monitor (background resource & playback checks)
+        from tune_server.utils.health_monitor import HealthMonitor
+        self._health_monitor = HealthMonitor(self._event_bus)
+        await self._health_monitor.start()
+        deps.health_monitor = self._health_monitor
+
         # Initial scan
         if settings.scan_on_startup:
             self._scan_task = asyncio.create_task(self._scanner.scan(settings.music_dirs))
@@ -1198,6 +1204,9 @@ class TuneServer:
         # core: event_bus, db, etc. — drain them before tearing down core).
         if self._plugin_loader:
             await self._safe_stop("plugins", self._plugin_loader.teardown_all())
+
+        if hasattr(self, "_health_monitor") and self._health_monitor:
+            await self._safe_stop("health_monitor", self._health_monitor.stop())
 
         if self._scan_task and not self._scan_task.done():
             self._scan_task.cancel()
