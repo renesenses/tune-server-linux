@@ -576,6 +576,8 @@ jobs:
       GIT_ASKPASS: "/bin/echo"
       SSH_ASKPASS: "/bin/echo"
       DISPLAY: ""
+      HOMEBREW_PREFIX: /usr/local
+      PATH: /usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
 
     steps:
       - name: Checkout (self-hosted, no keychain)
