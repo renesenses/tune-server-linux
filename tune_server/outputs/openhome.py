@@ -526,11 +526,15 @@ class OpenHomeOutput(OutputTarget):
             await self._client.transport_play()
             self._available = True
 
-            # Start position monitor
+            # Phase 4: subscribe to UPnP events (falls back to polling)
+            await self._subscribe_events()
+
+            # Start position monitor (lighter in eventing mode)
             self._start_monitor()
 
             logger.info("openhome_play_started", device=self._device_name,
-                        track=track.title, uri=uri[:80])
+                        track=track.title, uri=uri[:80],
+                        eventing=self._eventing_active)
         else:
             logger.error("openhome_insert_failed", device=self._device_name)
             self._available = False
@@ -549,6 +553,7 @@ class OpenHomeOutput(OutputTarget):
 
     async def stop(self) -> None:
         self._stop_monitor()
+        await self._unsubscribe_events()
         await self._client.transport_stop()
         self._current_oh_id = None
         self._current_track_uri = ""
@@ -645,11 +650,15 @@ class OpenHomeOutput(OutputTarget):
 
         await self._client.playlist_play()
 
-        # Start position monitor
+        # Phase 4: subscribe to UPnP events (falls back to polling)
+        await self._subscribe_events()
+
+        # Start position monitor (lighter in eventing mode)
         self._start_monitor()
 
         logger.info("openhome_queue_pushed", device=self._device_name,
-                    tracks=len(self._playlist_ids), start_index=start_index)
+                    tracks=len(self._playlist_ids), start_index=start_index,
+                    eventing=self._eventing_active)
 
     async def sync_queue(self, tracks: list[Track]) -> None:
         """Sync Tune's queue to the device Playlist.
@@ -697,5 +706,6 @@ class OpenHomeOutput(OutputTarget):
 
     async def close(self) -> None:
         self._stop_monitor()
+        await self._unsubscribe_events()
         await self.stop()
         await self._client.close()
