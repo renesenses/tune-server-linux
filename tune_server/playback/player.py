@@ -834,6 +834,14 @@ class Player:
                 # Prefer output-reported position (some DLNA renderers)
                 output_pos = await self._output.get_position_ms() if self._output else -1
 
+                # Update duration from output if available (BluOS reports totlen)
+                if self._output and hasattr(self._output, 'reported_duration_ms'):
+                    rd = self._output.reported_duration_ms
+                    if rd > 0 and rd != duration_ms:
+                        duration_ms = rd
+                        if track.duration_ms != rd:
+                            track.duration_ms = rd
+
                 # Track cumulative position for minimum play duration check
                 if output_pos >= 0:
                     cumulative_pos_ms = output_pos

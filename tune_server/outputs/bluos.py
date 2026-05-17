@@ -51,6 +51,7 @@ class BluosOutput(OutputTarget):
         self._stream_id: str | None = None
         self._direct_url: bool = False
         self._session: aiohttp.ClientSession | None = None
+        self._last_totlen_ms: int = 0
 
     @property
     def name(self) -> str:
@@ -123,8 +124,13 @@ class BluosOutput(OutputTarget):
             play_params["album"] = album
         if track and track.cover_path:
             cover = track.cover_path
-            if cover.startswith("/"):
+            if cover.startswith("http"):
+                pass
+            elif cover.startswith("/"):
                 cover = f"http://{self._server_ip}:8888{cover}"
+            else:
+                filename = cover.split("/")[-1]
+                cover = f"http://{self._server_ip}:8888/api/v1/library/artwork/{filename}"
             play_params["image"] = cover
 
         try:
@@ -188,6 +194,17 @@ class BluosOutput(OutputTarget):
         try:
             text = await self._api_get("Status")
             root = ElementTree.fromstring(text)
+
+            state_el = root.find("state")
+            state = (state_el.text or "").strip().lower() if state_el is not None else ""
+
+            if state in ("stop", ""):
+                return -2
+
+            totlen_el = root.find("totlen")
+            if totlen_el is not None and totlen_el.text:
+                self._last_totlen_ms = int(float(totlen_el.text) * 1000)
+
             secs_el = root.find("secs")
             if secs_el is not None and secs_el.text:
                 return int(float(secs_el.text) * 1000)
@@ -195,8 +212,11 @@ class BluosOutput(OutputTarget):
             pass
         return -1
 
+    @property
+    def reported_duration_ms(self) -> int:
+        return self._last_totlen_ms
+
     async def set_next_track(self, stream_info: AudioStreamInfo, track: Track) -> bool:
-        # BluOS does not have a native gapless queue API like DLNA
         return False
 
     async def close(self) -> None:
