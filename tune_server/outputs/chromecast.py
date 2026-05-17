@@ -109,9 +109,10 @@ class ChromecastOutput(OutputTarget):
         thumb = None
         if track and track.cover_path:
             if track.cover_path.startswith("http"):
-                thumb = track.cover_path
+                thumb = f"http://{self._server_ip}:8888/api/v1/library/artwork/proxy?url={track.cover_path}"
             else:
-                thumb = f"http://{self._server_ip}:8888/api/v1/artwork/{track.cover_path}"
+                filename = track.cover_path.split("/")[-1]
+                thumb = f"http://{self._server_ip}:8888/api/v1/library/artwork/{filename}"
 
         metadata = {"metadataType": 3, "title": title}
         if artist:
