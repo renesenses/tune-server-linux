@@ -575,27 +575,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Set up Python (self-hosted)
+        shell: bash
+        run: |
+          if ! command -v python3 >/dev/null 2>&1; then
+            echo "Installing Python via Homebrew..."
+            brew install python@3.12
+          fi
+          python3 --version
+          python3 -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Extract version
         id: version
         shell: bash
         run: |
-          VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
+          VERSION=$(.venv/bin/python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies and PyInstaller
         run: |
-          pip install pyinstaller
-          pip install .
+          .venv/bin/pip install pyinstaller
+          .venv/bin/pip install .
 
-      - name: Set up Node 20 (for web client)
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+      - name: Set up Node (self-hosted)
+        shell: bash
+        run: |
+          if ! command -v node >/dev/null 2>&1; then
+            echo "Installing Node via Homebrew..."
+            brew install node@20
+          fi
+          node --version
+          npm --version
 
       - name: Rebuild web client from tune-web-client (always fresh)
         shell: bash
@@ -649,7 +660,7 @@ jobs:
 
       - name: Build binary with PyInstaller
         run: |
-          pyinstaller --name tune-server --onedir \
+          .venv/bin/pyinstaller --name tune-server --onedir \
             --add-data "web:web" \
             --collect-all tune_server \
             --exclude-module _bootlocale \
@@ -892,7 +903,7 @@ jobs:
 
   release:
     needs: [build, build-intel]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
