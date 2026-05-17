@@ -568,72 +568,34 @@ jobs:
           retention-days: 30
 
   build-intel:
-    runs-on: [self-hosted, macOS, X64, intel]
+    runs-on: macos-13
     permissions:
       contents: write
-    env:
-      GIT_TERMINAL_PROMPT: "0"
-      GIT_ASKPASS: "/bin/echo"
-      SSH_ASKPASS: "/bin/echo"
-      DISPLAY: ""
-      HOMEBREW_PREFIX: /usr/local
-      PATH: /usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
 
     steps:
-      - name: Checkout (self-hosted, no keychain)
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          security list-keychains -d user -s ~/Library/Keychains/login.keychain-db
-          rm -f "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
-          REPO_DIR="${GITHUB_WORKSPACE}"
-          mkdir -p "$REPO_DIR"
-          cd "$REPO_DIR"
-          if [ -d .git ]; then
-            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-            git fetch --depth 1 origin "${{ github.sha }}"
-          else
-            git clone --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" .
-            git fetch --depth 1 origin "${{ github.sha }}"
-          fi
-          git checkout "${{ github.sha }}"
-          git remote set-url origin "https://github.com/${{ github.repository }}.git"
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12 (self-hosted)
-        shell: bash
-        run: |
-          brew install python@3.12 2>/dev/null || brew upgrade python@3.12 2>/dev/null || true
-          PYTHON=$(brew --prefix python@3.12)/bin/python3.12
-          if [ ! -x "$PYTHON" ]; then
-            echo "::error::Python 3.12 not found after brew install"
-            exit 1
-          fi
-          $PYTHON --version
-          $PYTHON -m venv .venv
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Extract version
         id: version
         shell: bash
         run: |
-          VERSION=$(.venv/bin/python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
+          VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies and PyInstaller
         run: |
-          .venv/bin/pip install pyinstaller
-          .venv/bin/pip install .
+          pip install pyinstaller
+          pip install .
 
-      - name: Set up Node (self-hosted)
-        shell: bash
-        run: |
-          if ! command -v node >/dev/null 2>&1; then
-            echo "Installing Node via Homebrew..."
-            brew install node@20
-          fi
-          node --version
-          npm --version
+      - name: Set up Node 20 (for web client)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
       - name: Rebuild web client from tune-web-client (always fresh)
         shell: bash
@@ -687,7 +649,7 @@ jobs:
 
       - name: Build binary with PyInstaller
         run: |
-          .venv/bin/pyinstaller --name tune-server --onedir \
+          pyinstaller --name tune-server --onedir \
             --add-data "web:web" \
             --collect-all tune_server \
             --exclude-module _bootlocale \
@@ -709,11 +671,6 @@ jobs:
           cp install.sh README.md CHANGELOG.md dist/tune-server/
           cd dist && tar czf "../tune-server-${VERSION}-macos-intel.tar.gz" tune-server/
           cd .. && shasum -a 256 "tune-server-${VERSION}-macos-intel.tar.gz" | awk '{print $1}' > "tune-server-${VERSION}-macos-intel.tar.gz.sha256"
-
-      - name: Save original keychain state (macOS Intel)
-        run: |
-          security list-keychains -d user | tr -d '"' | tr '\n' ':' > /tmp/original-keychains.txt
-          echo "Saved original keychain list"
 
       - name: Import Developer ID certificate (macOS Intel)
         if: env.MACOS_CERT_P12_BASE64 != ''
@@ -921,19 +878,6 @@ jobs:
       - name: Compute DMG checksum (macOS Intel)
         run: |
           shasum -a 256 "${DMG_NAME}" | awk '{print $1}' > "${DMG_NAME}.sha256"
-
-      - name: Cleanup keychain (macOS Intel)
-        if: always()
-        run: |
-          if [ -f "$RUNNER_TEMP/build.keychain" ]; then
-            security delete-keychain "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
-          fi
-          if [ -f /tmp/original-keychains.txt ]; then
-            ORIGINAL=$(cat /tmp/original-keychains.txt | tr ':' ' ')
-            security list-keychains -d user -s $ORIGINAL
-            rm -f /tmp/original-keychains.txt
-          fi
-          rm -f /tmp/cert.p12 /tmp/AuthKey_*.p8
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
