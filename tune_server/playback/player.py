@@ -569,10 +569,6 @@ class Player:
             pipeline_seek_ms = 0
 
         eq_filter = self._build_eq_filter()
-        # Short fade-in to prevent DAC click/pop on network renderers
-        if hasattr(self._output, 'set_next_track') and seek_ms == 0:
-            fade_in = "afade=t=in:d=0.015"
-            eq_filter = f"{eq_filter},{fade_in}" if eq_filter else fade_in
         self._pipeline = AudioPipeline(capabilities, icy_callback=icy_cb, channel_filter=self._channel_filter)
         try:
             stream_info = await asyncio.wait_for(
