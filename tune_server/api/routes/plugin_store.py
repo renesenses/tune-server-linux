@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 
-from tune_server.api import deps
+from tune_server.api.deps import deps
 
 router = APIRouter(prefix="/store", tags=["plugin-store"])
 
