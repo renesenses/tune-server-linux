@@ -628,7 +628,9 @@ jobs:
         shell: bash
         run: |
           export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
-          /usr/local/bin/brew install node@20 2>/dev/null || /usr/local/bin/brew upgrade node@20 2>/dev/null || true
+          brew install node@20 2>/dev/null || brew upgrade node@20 2>/dev/null || true
+          echo "/usr/local/opt/node@20/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/local/opt/node@20/bin:$PATH"
           node --version
           npm --version
 
