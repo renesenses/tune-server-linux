@@ -46,6 +46,7 @@ class ChromecastOutput(OutputTarget):
         self._available = True
         self._stream_id: str | None = None
         self._direct_url: bool = False
+        self._last_content_id: str | None = None
 
     @property
     def name(self) -> str:
@@ -126,6 +127,7 @@ class ChromecastOutput(OutputTarget):
                 title=title, thumb=thumb, metadata=metadata,
             )
             await self._cast_call(mc.block_until_active, timeout=15)
+            self._last_content_id = url
             logger.info("chromecast_playing", device=self._name, title=title, url=url[:80])
         except Exception:
             logger.exception("chromecast_start_error", device=self._name)
@@ -182,8 +184,12 @@ class ChromecastOutput(OutputTarget):
     async def get_position_ms(self) -> int:
         try:
             status = self._cast.media_controller.status
-            if status and status.current_time is not None:
-                return int(status.current_time * 1000)
+            if status:
+                # IDLE with idle_reason FINISHED = track ended
+                if status.player_is_idle:
+                    return -2
+                if status.current_time is not None:
+                    return int(status.current_time * 1000)
         except Exception:
             pass
         return -1
@@ -213,6 +219,23 @@ class ChromecastOutput(OutputTarget):
         except Exception:
             logger.debug("chromecast_set_next_error", device=self._name)
             return False
+
+    def has_uri_changed(self) -> bool:
+        try:
+            status = self._cast.media_controller.status
+            if status and status.content_id and self._last_content_id:
+                return status.content_id != self._last_content_id
+        except Exception:
+            pass
+        return False
+
+    def sync_last_uri(self) -> None:
+        try:
+            status = self._cast.media_controller.status
+            if status and status.content_id:
+                self._last_content_id = status.content_id
+        except Exception:
+            pass
 
     async def close(self) -> None:
         await self.stop()
