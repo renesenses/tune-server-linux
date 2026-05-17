@@ -888,13 +888,18 @@ async def get_logs(lines: int = 100):
         )
         return {"logs": result.stdout, "lines": lines}
     except FileNotFoundError:
-        # Not a systemd system — try log file
-        log_file = Path("/tmp/tune-server.log")
-        if log_file.exists():
-            text = log_file.read_text()
+        pass
+    for candidate in [
+        Path.home() / "Library" / "Logs" / "Tune Server.log",
+        Path("/tmp/tune-server.log"),
+        Path("/var/log/tune-server.log"),
+        Path("/usr/local/var/log/tune-server.log"),
+    ]:
+        if candidate.exists():
+            text = candidate.read_text()
             log_lines = text.strip().split("\n")
             return {"logs": "\n".join(log_lines[-lines:]), "lines": len(log_lines[-lines:])}
-        return {"logs": "", "lines": 0}
+    return {"logs": "", "lines": 0}
 
 
 @router.get("/config/export")
