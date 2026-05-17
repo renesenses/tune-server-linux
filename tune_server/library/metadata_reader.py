@@ -327,7 +327,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             album_artist = _get_first(tags, ["aART"]) or None
             album_artist_sort = _get_first(tags, ["soaa"]) or None
             cpil = tags.get("cpil")
-            is_compilation = bool(cpil[0]) if cpil else False
+            is_compilation = bool(cpil) if isinstance(cpil, (bool, int)) else (bool(cpil[0]) if cpil else False)
             trkn = tags.get("trkn", [(0, 0)])[0]
             track_num = trkn[0] if isinstance(trkn, tuple) else _parse_int(str(trkn))
             disk = tags.get("disk", [(1, 1)])[0]
