@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, HTTPException
 
 from tune_server.api.deps import deps
 from tune_server.models import Zone, ZoneCreateRequest, ZoneUpdateRequest, ZoneGroupRequest, ZoneGroupResponse, StereoPairRequest, StereoPairResponse
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/zones", tags=["zones"])
 
@@ -237,3 +240,142 @@ async def set_zone_crossfade(zone_id: int, body: dict = {}):
     zone.player._crossfade_enabled = enabled
     zone.player._crossfade_duration = duration
     return {"enabled": enabled, "duration": duration}
+
+
+# =========================================================================
+# OpenHome Pins / Presets (Phase 5)
+# =========================================================================
+
+def _get_openhome_output(zone_id: int):
+    """Return the OpenHomeOutput for a zone, or raise 400/404."""
+    from tune_server.outputs.openhome import OpenHomeOutput
+
+    zone = deps.zone_manager.get_zone(zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    output = zone.output
+    if not isinstance(output, OpenHomeOutput):
+        raise HTTPException(status_code=400, detail="Zone is not an OpenHome device")
+    return zone, output
+
+
+@router.get("/{zone_id}/pins")
+async def get_zone_pins(zone_id: int):
+    """List all pins/presets for an OpenHome device zone."""
+    _, output = _get_openhome_output(zone_id)
+    if not output.has_pins():
+        return {"supported": False, "pins": [], "max_slots": 0}
+    try:
+        pins = await output.get_pins()
+        max_slots = await output.get_device_max_pins()
+        return {"supported": True, "pins": pins, "max_slots": max_slots}
+    except Exception as exc:
+        logger.warning("pins_get_error", zone_id=zone_id, error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Failed to read pins: {exc}")
+
+
+@router.post("/{zone_id}/pins")
+async def set_zone_pin(zone_id: int, body: dict = {}):
+    """Set a pin on an OpenHome device.
+
+    Body: ``{"index": 0, "title": "...", "uri": "...",
+             "mode": "local", "type": "playlist",
+             "description": "", "artwork_uri": "", "shuffle": false}``
+    """
+    _, output = _get_openhome_output(zone_id)
+    if not output.has_pins():
+        raise HTTPException(status_code=400, detail="Device does not support pins")
+
+    index = body.get("index")
+    title = body.get("title", "")
+    uri = body.get("uri", "")
+    if index is None or not title:
+        raise HTTPException(status_code=422, detail="index and title are required")
+
+    try:
+        await output.set_pin(
+            index=int(index),
+            title=title,
+            uri=uri,
+            mode=body.get("mode", "local"),
+            type_=body.get("type", "playlist"),
+            description=body.get("description", ""),
+            artwork_uri=body.get("artwork_uri", ""),
+            shuffle=body.get("shuffle", False),
+        )
+        return {"status": "ok", "index": index}
+    except Exception as exc:
+        logger.warning("pins_set_error", zone_id=zone_id, error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Failed to set pin: {exc}")
+
+
+@router.delete("/{zone_id}/pins/{index}")
+async def clear_zone_pin(zone_id: int, index: int):
+    """Clear a pin slot on an OpenHome device by its slot index.
+
+    Finds the pin ID at the given index and clears it.
+    """
+    _, output = _get_openhome_output(zone_id)
+    if not output.has_pins():
+        raise HTTPException(status_code=400, detail="Device does not support pins")
+
+    try:
+        pins = await output.get_pins()
+        # Find pin at the requested index
+        target_pin = None
+        for pin in pins:
+            if pin.get("index") == index:
+                target_pin = pin
+                break
+        if not target_pin:
+            raise HTTPException(status_code=404, detail=f"No pin at index {index}")
+
+        pin_id = target_pin.get("id", 0)
+        await output.clear_pin(pin_id)
+        return {"status": "ok", "index": index}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("pins_clear_error", zone_id=zone_id, index=index, error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Failed to clear pin: {exc}")
+
+
+@router.post("/{zone_id}/pins/{index}/invoke")
+async def invoke_zone_pin(zone_id: int, index: int):
+    """Invoke (trigger playback of) a pin on an OpenHome device."""
+    _, output = _get_openhome_output(zone_id)
+    if not output.has_pins():
+        raise HTTPException(status_code=400, detail="Device does not support pins")
+
+    try:
+        await output.invoke_pin(index)
+        return {"status": "ok", "index": index}
+    except Exception as exc:
+        logger.warning("pins_invoke_error", zone_id=zone_id, index=index, error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Failed to invoke pin: {exc}")
+
+
+@router.post("/{zone_id}/pins/from-queue")
+async def save_queue_as_pin(zone_id: int, body: dict = {}):
+    """Save the current queue as a pin/preset on the OpenHome device.
+
+    Body: ``{"title": "My Preset", "index": null}``
+    If ``index`` is null, the first available slot is used.
+    """
+    _, output = _get_openhome_output(zone_id)
+    if not output.has_pins():
+        raise HTTPException(status_code=400, detail="Device does not support pins")
+
+    title = body.get("title", "Tune Queue")
+    index = body.get("index")
+
+    try:
+        slot = await output.save_queue_as_pin(title=title, index=index)
+        if slot < 0:
+            raise HTTPException(status_code=409, detail="Could not save pin (queue empty or no slots)")
+        return {"status": "ok", "index": slot, "title": title}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("pins_save_queue_error", zone_id=zone_id, error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Failed to save queue as pin: {exc}")

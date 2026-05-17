@@ -704,6 +704,119 @@ class OpenHomeOutput(OutputTarget):
                         tracks=len(self._playlist_ids),
                         resumed=resume_id is not None)
 
+    # -- Phase 5: Pins / Presets -----------------------------------------------
+
+    def has_pins(self) -> bool:
+        """Return ``True`` if the device supports the Pins service."""
+        return self._client.has_pins_service()
+
+    async def get_pins(self) -> list[dict]:
+        """Read all pins from the device.
+
+        Returns a list of pin dicts with keys: id, index, mode, type,
+        uri, title, description, artworkUri, shuffle.  Empty slots are
+        omitted.
+        """
+        if not self.has_pins():
+            return []
+        ids = await self._client.pins_get_id_array()
+        if not ids:
+            return []
+        # Filter out zero-value IDs (empty slots)
+        valid_ids = [i for i in ids if i != 0]
+        if not valid_ids:
+            return []
+        pins = await self._client.pins_read_list(valid_ids)
+        return pins
+
+    async def get_device_max_pins(self) -> int:
+        """Return the maximum number of pin slots on the device."""
+        if not self.has_pins():
+            return 0
+        return await self._client.pins_get_device_max()
+
+    async def set_pin(
+        self,
+        index: int,
+        title: str,
+        uri: str,
+        mode: str = "local",
+        type_: str = "playlist",
+        description: str = "",
+        artwork_uri: str = "",
+        shuffle: bool = False,
+    ) -> None:
+        """Set a pin on the device at the given slot index."""
+        await self._client.pins_set(
+            index=index,
+            mode=mode,
+            type_=type_,
+            uri=uri,
+            title=title,
+            description=description,
+            artwork_uri=artwork_uri,
+            shuffle=shuffle,
+        )
+        logger.info("openhome_pin_set", device=self._device_name,
+                     index=index, title=title)
+
+    async def clear_pin(self, id_: int) -> None:
+        """Clear a pin by its ID."""
+        await self._client.pins_clear(id_)
+        logger.info("openhome_pin_cleared", device=self._device_name, id=id_)
+
+    async def invoke_pin(self, index: int) -> None:
+        """Invoke (start playback of) a pin at the given slot index."""
+        await self._client.pins_invoke_index(index)
+        logger.info("openhome_pin_invoked", device=self._device_name,
+                     index=index)
+
+    async def save_queue_as_pin(self, title: str, index: int | None = None) -> int:
+        """Save the current queue as a pin on the device.
+
+        If *index* is ``None``, uses the first available (empty) slot.
+        Returns the slot index used, or ``-1`` on failure.
+        """
+        if not self.has_pins():
+            logger.warning("openhome_pins_not_supported", device=self._device_name)
+            return -1
+
+        # Build a URI that represents the current queue
+        # Use the first track's stream URL as the pin URI
+        if not self._playlist_ids or not self._track_uri_map:
+            logger.warning("openhome_pin_save_empty_queue", device=self._device_name)
+            return -1
+
+        first_id = self._playlist_ids[0]
+        uri = self._track_uri_map.get(first_id, "")
+        if not uri:
+            return -1
+
+        # Find an available slot if index not specified
+        if index is None:
+            max_pins = await self._client.pins_get_device_max()
+            ids = await self._client.pins_get_id_array()
+            # Find first slot with id==0 (empty)
+            for i, pin_id in enumerate(ids):
+                if pin_id == 0 and i < max_pins:
+                    index = i
+                    break
+            if index is None:
+                # All slots full, use last slot
+                index = max_pins - 1 if max_pins > 0 else 0
+
+        await self._client.pins_set(
+            index=index,
+            mode="local",
+            type_="playlist",
+            uri=uri,
+            title=title,
+            description=f"Saved from Tune queue ({len(self._playlist_ids)} tracks)",
+        )
+        logger.info("openhome_queue_saved_as_pin", device=self._device_name,
+                     index=index, title=title, tracks=len(self._playlist_ids))
+        return index
+
     async def close(self) -> None:
         self._stop_monitor()
         await self._unsubscribe_events()

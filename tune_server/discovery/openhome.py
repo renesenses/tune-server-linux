@@ -24,6 +24,7 @@ OH_TRANSPORT_URN = "urn:av-openhome-org:service:Transport:1"
 OH_VOLUME_URN = "urn:av-openhome-org:service:Volume:1"
 OH_INFO_URN = "urn:av-openhome-org:service:Info:1"
 OH_TIME_URN = "urn:av-openhome-org:service:Time:1"
+OH_PINS_URN = "urn:av-openhome-org:service:Pins:1"
 
 _NS = {"upnp": "urn:schemas-upnp-org:device-1-0"}
 
@@ -207,6 +208,8 @@ class OpenHomeDiscovery:
                         key = "info"
                     elif "Time" in stype:
                         key = "time"
+                    if "Pins" in stype:
+                        key = "pins"
                     if key:
                         services[key] = control_url
                         if event_url:

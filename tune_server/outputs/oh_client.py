@@ -32,6 +32,7 @@ SVC_TRANSPORT = "urn:av-openhome-org:service:Transport:1"
 SVC_VOLUME = "urn:av-openhome-org:service:Volume:1"
 SVC_INFO = "urn:av-openhome-org:service:Info:1"
 SVC_TIME = "urn:av-openhome-org:service:Time:1"
+SVC_PINS = "urn:av-openhome-org:service:Pins:1"
 
 _SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
 _DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=5)
@@ -479,3 +480,133 @@ class OpenHomeClient:
                 return True
         logger.debug("oh_no_playlist_source", device=self._device_name)
         return False
+
+    # =========================================================================
+    # Pins service (Phase 5)
+    # =========================================================================
+
+    def has_pins_service(self) -> bool:
+        """Return ``True`` if the device exposes the Pins service."""
+        return self._has_service("pins") is not None
+
+    async def pins_get_device_max(self) -> int:
+        """Return the total number of pin slots on the device."""
+        url = self._has_service("pins")
+        if not url:
+            return 0
+        root = await self._soap_call(url, SVC_PINS, "GetDeviceMax")
+        return self._extract_int(root, "DeviceMax", 0)
+
+    async def pins_get_id_array(self) -> list[int]:
+        """Return the list of pin IDs currently set on the device.
+
+        The response is a base64-encoded array of big-endian 32-bit
+        integers, same format as Playlist IdArray.
+        """
+        url = self._has_service("pins")
+        if not url:
+            return []
+        root = await self._soap_call(url, SVC_PINS, "GetIdArray")
+        b64 = self._extract(root, "IdArray")
+        if not b64:
+            return []
+        try:
+            raw = base64.b64decode(b64)
+            ids: list[int] = []
+            for i in range(0, len(raw), 4):
+                ids.append(int.from_bytes(raw[i:i + 4], byteorder="big"))
+            return ids
+        except Exception:
+            return []
+
+    async def pins_read_list(self, ids: list[int]) -> list[dict]:
+        """Read pin details for the given IDs.
+
+        Returns a list of dicts with keys: ``id``, ``index``, ``mode``,
+        ``type``, ``uri``, ``title``, ``description``, ``artworkUri``,
+        ``shuffle``.
+        """
+        url = self._has_service("pins")
+        if not url:
+            return []
+        id_str = ",".join(str(i) for i in ids)
+        root = await self._soap_call(url, SVC_PINS, "ReadList",
+                                     {"Ids": id_str})
+        xml_str = self._extract(root, "List")
+        if not xml_str:
+            return []
+        try:
+            list_root = ElementTree.fromstring(f"<Pins>{xml_str}</Pins>")
+        except ElementTree.ParseError:
+            # Try wrapping if it's a fragment
+            try:
+                list_root = ElementTree.fromstring(xml_str)
+            except ElementTree.ParseError:
+                return []
+        result: list[dict] = []
+        for entry in list_root:
+            pin: dict[str, Any] = {}
+            for child in entry:
+                tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                text = (child.text or "").strip()
+                if tag.lower() in ("id", "index"):
+                    try:
+                        pin[tag.lower()] = int(text)
+                    except (ValueError, TypeError):
+                        pin[tag.lower()] = 0
+                elif tag.lower() == "shuffle":
+                    pin["shuffle"] = text.lower() in ("true", "1")
+                else:
+                    pin[tag.lower()] = text
+            if pin:
+                result.append(pin)
+        return result
+
+    async def pins_set(
+        self,
+        index: int,
+        mode: str,
+        type_: str,
+        uri: str,
+        title: str,
+        description: str = "",
+        artwork_uri: str = "",
+        shuffle: bool = False,
+    ) -> None:
+        """Set a pin at the given slot index."""
+        url = self._has_service("pins")
+        if not url:
+            return
+        await self._soap_call(url, SVC_PINS, "Set", {
+            "Index": str(index),
+            "Mode": mode,
+            "Type": type_,
+            "Uri": uri,
+            "Title": title,
+            "Description": description,
+            "ArtworkUri": artwork_uri,
+            "Shuffle": "1" if shuffle else "0",
+        })
+
+    async def pins_clear(self, id_: int) -> None:
+        """Clear (remove) a pin by its ID."""
+        url = self._has_service("pins")
+        if not url:
+            return
+        await self._soap_call(url, SVC_PINS, "Clear", {"Id": str(id_)})
+
+    async def pins_invoke_index(self, index: int) -> None:
+        """Invoke (trigger playback of) the pin at the given slot index."""
+        url = self._has_service("pins")
+        if not url:
+            return
+        await self._soap_call(url, SVC_PINS, "InvokeIndex",
+                              {"Index": str(index)})
+
+    async def pins_invoke_id(self, id_: int) -> None:
+        """Invoke (trigger playback of) the pin with the given ID."""
+        url = self._has_service("pins")
+        if not url:
+            return
+        await self._soap_call(url, SVC_PINS, "InvokeId",
+                              {"Id": str(id_)})
