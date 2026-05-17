@@ -584,15 +584,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python (self-hosted)
+      - name: Set up Python 3.12 (self-hosted)
         shell: bash
         run: |
-          if ! command -v python3 >/dev/null 2>&1; then
-            echo "Installing Python via Homebrew..."
-            brew install python@3.12
+          brew install python@3.12 2>/dev/null || brew upgrade python@3.12 2>/dev/null || true
+          PYTHON=$(brew --prefix python@3.12)/bin/python3.12
+          if [ ! -x "$PYTHON" ]; then
+            echo "::error::Python 3.12 not found after brew install"
+            exit 1
           fi
-          python3 --version
-          python3 -m venv .venv
+          $PYTHON --version
+          $PYTHON -m venv .venv
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Extract version
