@@ -573,12 +573,12 @@ jobs:
       contents: write
 
     steps:
-      - name: Clean stale keychains from previous runs
+      - name: Clean stale keychains and disable osxkeychain
         run: |
           security list-keychains -d user -s ~/Library/Keychains/login.keychain-db
           rm -f "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
-          echo "Keychain search list reset to login keychain only"
-          security list-keychains -d user
+          git config --global credential.helper store
+          echo "Keychain reset + git credential helper set to 'store' (no GUI prompts)"
 
       - uses: actions/checkout@v4
         with:
