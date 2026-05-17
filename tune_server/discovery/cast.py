@@ -31,6 +31,36 @@ class CastDiscovery:
     def get_cast_device(self, device_id: str):
         return self._cast_devices.get(device_id)
 
+    async def reconnect_cast_device(self, device_id: str):
+        """Create a fresh pychromecast connection, replacing any stale one."""
+        device = self._devices.get(device_id)
+        if not device or not self._pychromecast:
+            return None
+        old = self._cast_devices.pop(device_id, None)
+        if old:
+            try:
+                old.disconnect()
+            except Exception:
+                pass
+
+        def _connect():
+            try:
+                result, _ = self._pychromecast.get_listed_chromecasts(
+                    friendly_names=[device.name], zeroconf_instance=self._zc
+                )
+                if result:
+                    cc = result[0]
+                    cc.wait(timeout=10)
+                    return cc
+            except Exception:
+                logger.debug("cast_reconnect_failed", name=device.name)
+            return None
+
+        cast = await asyncio.to_thread(_connect)
+        if cast:
+            self._cast_devices[device_id] = cast
+        return cast
+
     async def start(self, shared_zc=None) -> None:
         try:
             import pychromecast

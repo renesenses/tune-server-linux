@@ -195,30 +195,9 @@ class ChromecastOutput(OutputTarget):
         return -1
 
     async def set_next_track(self, stream_info: AudioStreamInfo, track: Track) -> bool:
-        try:
-            mc = self._cast.media_controller
-            if track.file_path and track.file_path.startswith(("http://", "https://")):
-                url = track.file_path
-            else:
-                sid = self._streamer.create_session(stream_info, track.file_path)
-                url = self._streamer.get_stream_url(sid, self._server_ip)
-
-            fmt = track.format.value if track.format and hasattr(track.format, "value") else "flac"
-            content_type = _MIME_MAP.get(fmt, "audio/flac")
-
-            enqueue_meta = {"metadataType": 3, "title": track.title}
-            if track.artist_name:
-                enqueue_meta["artist"] = track.artist_name
-
-            await self._cast_call(
-                mc.play_media, url, content_type,
-                title=track.title, metadata=enqueue_meta,
-                enqueue=True,
-            )
-            return True
-        except Exception:
-            logger.debug("chromecast_set_next_error", device=self._name)
-            return False
+        # Chromecast enqueue is unreliable (can replace current media on some
+        # devices/firmware). Rely on auto-advance via _direct_url_monitor instead.
+        return False
 
     def has_uri_changed(self) -> bool:
         try:
