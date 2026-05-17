@@ -796,6 +796,7 @@ jobs:
 
       - name: Sign .app (macOS Intel, if cert present)
         if: env.MACOS_CERT_P12_BASE64 != ''
+        continue-on-error: true
         env:
           MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
