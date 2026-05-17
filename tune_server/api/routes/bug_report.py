@@ -404,7 +404,7 @@ function copyReport() {{
 
 
 @router.get("/bug-report")
-async def bug_report(format: str = Query("markdown", regex="^(markdown|json)$")):
+async def bug_report(format: str = Query("markdown", pattern="^(markdown|json)$")):
     """Generate a pre-filled bug report for the mozaiklabs.fr forum.
 
     - ``?format=markdown`` (default) — returns markdown text ready to paste.
