@@ -11,6 +11,7 @@ from tune_server.discovery.cast import CastDiscovery
 from tune_server.discovery.mdns import MdnsDiscovery
 from tune_server.discovery.openhome import OpenHomeDiscovery
 from tune_server.discovery.ssdp import SsdpDiscovery
+from tune_server.discovery.tune_discovery import TuneDiscovery
 from tune_server.event_bus import EventBus
 from tune_server.models import DiscoveredDevice
 
@@ -32,6 +33,7 @@ class DiscoveryManager:
         self._cast = CastDiscovery(event_bus) if getattr(settings, 'cast_enabled', True) else None
         self._bluos = BluosDiscovery(event_bus) if getattr(settings, 'bluos_enabled', True) else None
         self._openhome = OpenHomeDiscovery(event_bus) if settings.ssdp_enabled else None
+        self._tune = TuneDiscovery(event_bus) if settings.peer_discovery_enabled else None
         self._network_shares: NetworkShareDiscovery | None = None
         self._media_servers: MediaServerDiscovery | None = None
 
@@ -64,6 +66,10 @@ class DiscoveryManager:
         return self._openhome
 
     @property
+    def tune(self) -> TuneDiscovery | None:
+        return self._tune
+
+    @property
     def network_shares(self) -> NetworkShareDiscovery | None:
         return self._network_shares
 
@@ -76,9 +82,9 @@ class DiscoveryManager:
             logger.info("discovery_disabled")
             return
 
-        # Create a shared Zeroconf instance for mDNS + Cast + BluOS discovery
+        # Create a shared Zeroconf instance for mDNS + Cast + BluOS + Tune peer discovery
         # to avoid port 5353 conflicts from multiple instances.
-        if self._mdns or self._cast or self._bluos:
+        if self._mdns or self._cast or self._bluos or self._tune:
             try:
                 from zeroconf import Zeroconf
                 self._shared_zc = Zeroconf()
@@ -95,6 +101,8 @@ class DiscoveryManager:
             await self._bluos.start(shared_zc=self._shared_zc)
         if self._openhome:
             await self._openhome.start()
+        if self._tune:
+            await self._tune.start(shared_zc=self._shared_zc)
         if self._network_shares:
             await self._network_shares.start()
         if self._media_servers:
@@ -113,6 +121,8 @@ class DiscoveryManager:
             await self._bluos.stop()
         if self._openhome:
             await self._openhome.stop()
+        if self._tune:
+            await self._tune.stop()
         if self._shared_zc:
             self._shared_zc.close()
             self._shared_zc = None

@@ -72,6 +72,11 @@ class EventType(str, Enum):
     RADIO_UPDATED = "radio.updated"
     RADIO_DELETED = "radio.deleted"
 
+    # Peer discovery events
+    PEER_DISCOVERED = "peer.discovered"
+    PEER_LOST = "peer.lost"
+    PEER_UPDATED = "peer.updated"
+
     # System events
     SYSTEM_STARTED = "system.started"
     SYSTEM_STOPPING = "system.stopping"

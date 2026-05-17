@@ -223,6 +223,10 @@ class Settings(BaseSettings):
     cast_enabled: bool = True
     bluos_enabled: bool = True
 
+    # Peer discovery (find other Tune servers on the LAN via mDNS)
+    peer_discovery_enabled: bool = True
+    server_name: str | None = None  # Friendly name for this server (defaults to hostname)
+
     # OpenHome renderers (Linn, Naim, Auralic, Lumin, dCS, etc.)
     openhome_auto_standby: bool = False  # put device to standby on stop
     openhome_queue_size: int = 20  # max tracks to push to device playlist
