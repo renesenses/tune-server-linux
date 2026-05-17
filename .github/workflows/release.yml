@@ -573,14 +573,16 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Clean stale keychains from previous runs
         run: |
           security list-keychains -d user -s ~/Library/Keychains/login.keychain-db
           rm -f "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
           echo "Keychain search list reset to login keychain only"
           security list-keychains -d user
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python (self-hosted)
         shell: bash
