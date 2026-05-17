@@ -87,8 +87,12 @@ def _parse_int(value: str, default: int = 0) -> int:
         return default
 
 
-def _detect_format(path: Path) -> str:
+def _detect_format(path: Path, audio=None) -> str:
     ext = path.suffix.lower()
+    if ext == ".m4a" and audio is not None:
+        codec = getattr(getattr(audio, "info", None), "codec", None)
+        if codec and "alac" in codec.lower():
+            return "alac"
     format_map = {
         ".flac": "flac",
         ".mp3": "mp3",
@@ -473,7 +477,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             original_year=original_year,
             genre=str(genre) if genre else None,
             duration_ms=duration_ms,
-            format=_detect_format(path),
+            format=_detect_format(path, audio),
             sample_rate=sample_rate or 44100,
             bit_depth=bit_depth or 16,
             channels=channels or 2,

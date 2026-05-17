@@ -117,20 +117,12 @@ class LocalOutput(OutputTarget):
 
         exclusive = _settings.local_exclusive_mode
 
-        if exclusive:
-            dtype_map = {
-                8: "int8",
-                16: "int16",
-                24: "int32",   # WASAPI Exclusive: native 24-in-32 for bit-perfect
-                32: "int32",
-            }
-        else:
-            dtype_map = {
-                8: "int8",
-                16: "int16",
-                24: "float32",  # Shared mode: float32 for universal compatibility
-                32: "float32",
-            }
+        dtype_map = {
+            8: "int8",
+            16: "int16",
+            24: "int32",
+            32: "int32",
+        }
         dtype = dtype_map.get(stream_info.bit_depth, "int16")
 
         try:
@@ -253,12 +245,11 @@ class LocalOutput(OutputTarget):
             else:
                 trim = len(data) % 4
                 arr = np.frombuffer(data[:len(data) - trim] if trim else data, dtype=np.int32)
-                # Convert int32 → float32 [-1.0, 1.0] for DAC compatibility
-                arr = arr.astype(np.float32) / 2147483648.0
 
             # Apply volume (skip in exclusive mode for bit-perfect output)
             if self._volume < 1.0 and not self._exclusive:
-                arr = (arr * self._volume).astype(arr.dtype)
+                vol_arr = arr.astype(np.float64) * self._volume
+                arr = vol_arr.astype(arr.dtype)
 
             # Reshape for channels
             if info.channels > 1 and len(arr) >= info.channels:

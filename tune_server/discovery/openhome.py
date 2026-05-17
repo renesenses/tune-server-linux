@@ -35,6 +35,7 @@ class OpenHomeDiscovery:
         self._event_bus = event_bus
         self._devices: dict[str, DiscoveredDevice] = {}
         self._service_urls: dict[str, dict[str, str]] = {}
+        self._event_sub_urls: dict[str, dict[str, str]] = {}  # device_id -> {service_key: eventSubURL}
         self._task: asyncio.Task | None = None
         self._running = False
 
@@ -44,6 +45,10 @@ class OpenHomeDiscovery:
 
     def get_service_urls(self, device_id: str) -> dict[str, str] | None:
         return self._service_urls.get(device_id)
+
+    def get_event_sub_urls(self, device_id: str) -> dict[str, str] | None:
+        """Return eventSubURL mapping for the device, or None."""
+        return self._event_sub_urls.get(device_id)
 
     async def start(self) -> None:
         if self._running:
@@ -167,34 +172,45 @@ class OpenHomeDiscovery:
         if "google" in manufacturer_lower:
             return
 
-        # Extract service control URLs
+        # Extract service control URLs and event subscription URLs
         services: dict[str, str] = {}
+        event_sub_urls: dict[str, str] = {}
         for service_elem in root.iter():
             stag = service_elem.tag.split("}")[-1] if "}" in service_elem.tag else service_elem.tag
             if stag == "service":
                 stype = ""
                 control_url = ""
+                event_url = ""
                 for child in service_elem:
                     ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
                     if ctag == "serviceType":
                         stype = (child.text or "").strip()
                     elif ctag == "controlURL":
                         control_url = (child.text or "").strip()
+                    elif ctag == "eventSubURL":
+                        event_url = (child.text or "").strip()
                 if stype and control_url:
                     if not control_url.startswith("http"):
                         control_url = base_url + ("" if control_url.startswith("/") else "/") + control_url
+                    if event_url and not event_url.startswith("http"):
+                        event_url = base_url + ("" if event_url.startswith("/") else "/") + event_url
+                    key = None
                     if "Product" in stype:
-                        services["product"] = control_url
+                        key = "product"
                     elif "Playlist" in stype:
-                        services["playlist"] = control_url
+                        key = "playlist"
                     elif "Transport" in stype:
-                        services["transport"] = control_url
+                        key = "transport"
                     elif "Volume" in stype:
-                        services["volume"] = control_url
+                        key = "volume"
                     elif "Info" in stype:
-                        services["info"] = control_url
+                        key = "info"
                     elif "Time" in stype:
-                        services["time"] = control_url
+                        key = "time"
+                    if key:
+                        services[key] = control_url
+                        if event_url:
+                            event_sub_urls[key] = event_url
 
         if "playlist" not in services:
             logger.debug("openhome_no_playlist_service", name=friendly_name, services=list(services.keys()))
@@ -216,6 +232,8 @@ class OpenHomeDiscovery:
 
         self._devices[dev_id] = device
         self._service_urls[dev_id] = services
+        if event_sub_urls:
+            self._event_sub_urls[dev_id] = event_sub_urls
 
         logger.info("openhome_device_found",
                      name=friendly_name, manufacturer=manufacturer,

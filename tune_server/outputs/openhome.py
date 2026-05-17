@@ -18,12 +18,17 @@ Phase 3: Source Selection + Standby + Rich Metadata
   - Wake from standby on start, optionally standby on stop
   - DIDL-Lite metadata with full audio format details (sample rate, bit depth,
     channels, duration, album art)
+
+Phase 4: UPnP Eventing
+  - Subscribe to device event URLs for instant state change notifications
+  - Falls back to 2s polling when eventing is unavailable
+  - Shared :class:`OpenHomeEventListener` across all outputs
 """
 from __future__ import annotations
 
 import asyncio
 import os
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import structlog
 
@@ -31,6 +36,9 @@ from tune_server.audio.formats import AudioCapabilities, AudioFormat, mime_type_
 from tune_server.models import AudioStreamInfo, Track
 from tune_server.outputs.base import OutputTarget
 from tune_server.outputs.oh_client import OpenHomeClient
+
+if TYPE_CHECKING:
+    from tune_server.outputs.oh_events import OpenHomeEventListener
 
 logger = structlog.get_logger()
 
@@ -142,6 +150,8 @@ class OpenHomeOutput(OutputTarget):
         server_ip: str,
         streamer: object,
         base_url: str = "",
+        event_listener: OpenHomeEventListener | None = None,
+        event_sub_urls: dict[str, str] | None = None,
     ) -> None:
         self._client = OpenHomeClient(service_urls, device_name=device_name)
         self._device_name = device_name
@@ -159,10 +169,16 @@ class OpenHomeOutput(OutputTarget):
         # Source selection (Phase 3)
         self._previous_source_index: int | None = None
 
-        # Position monitor
+        # Position monitor (polling fallback)
         self._monitor_task: asyncio.Task | None = None
         self._last_position_ms: int = -1
         self._current_track_uri: str = ""
+
+        # UPnP eventing (Phase 4)
+        self._event_listener = event_listener
+        self._event_sub_urls = event_sub_urls or {}
+        self._active_sub_ids: list[str] = []  # path_ids from listener.subscribe()
+        self._eventing_active = False  # True when at least one subscription succeeded
 
         # Track change callback — set by the player to be notified
         # when the device autonomously advances to the next track
@@ -262,10 +278,127 @@ class OpenHomeOutput(OutputTarget):
             logger.warning("openhome_standby_set_failed", device=self._device_name,
                            error=str(exc))
 
+    # -- UPnP Eventing (Phase 4) ---------------------------------------------
+
+    async def _subscribe_events(self) -> None:
+        """Subscribe to all available OpenHome event URLs.
+
+        If at least one subscription succeeds, ``_eventing_active`` is set
+        to ``True`` and the position monitor switches to a lighter mode
+        that only polls for position (since state/track changes arrive
+        via NOTIFY).
+
+        If no subscription succeeds, falls back to full polling.
+        """
+        if not self._event_listener or not self._event_sub_urls:
+            logger.debug("oh_eventing_unavailable", device=self._device_name,
+                         reason="no listener" if not self._event_listener else "no event URLs")
+            return
+
+        # Services to subscribe to, in priority order
+        services = ["transport", "info", "volume", "time", "playlist"]
+        subscribed = 0
+
+        for svc in services:
+            url = self._event_sub_urls.get(svc)
+            if not url:
+                continue
+            path_id = await self._event_listener.subscribe(url, self._handle_event)
+            if path_id:
+                self._active_sub_ids.append(path_id)
+                subscribed += 1
+                logger.debug("oh_service_subscribed", device=self._device_name,
+                             service=svc)
+            else:
+                logger.debug("oh_service_subscribe_failed", device=self._device_name,
+                             service=svc)
+
+        if subscribed > 0:
+            self._eventing_active = True
+            logger.info("oh_eventing_active", device=self._device_name,
+                        subscribed=subscribed, total=len(services))
+        else:
+            logger.info("oh_eventing_fallback_polling", device=self._device_name)
+
+    async def _unsubscribe_events(self) -> None:
+        """Unsubscribe from all active event subscriptions."""
+        if not self._event_listener:
+            return
+        for path_id in self._active_sub_ids:
+            await self._event_listener.unsubscribe(path_id)
+        self._active_sub_ids.clear()
+        self._eventing_active = False
+
+    async def _handle_event(self, properties: dict[str, str]) -> None:
+        """Process parsed UPnP event properties from a NOTIFY callback.
+
+        Called by the shared :class:`OpenHomeEventListener` when the
+        device pushes a state change.
+        """
+        logger.debug("oh_event_received", device=self._device_name,
+                      properties=list(properties.keys()))
+
+        # -- Transport state ---------------------------------------------------
+        transport_state = properties.get("TransportState")
+        if transport_state:
+            logger.info("oh_event_transport_state", device=self._device_name,
+                        state=transport_state)
+            # No direct action needed — the player queries state when needed.
+            # But we can update availability.
+            if transport_state in ("Playing", "Paused", "Buffering"):
+                self._available = True
+
+        # -- Track URI change (Info service) -----------------------------------
+        track_uri = properties.get("Uri")
+        if track_uri is not None and track_uri != self._current_track_uri and self._current_track_uri:
+            prev = self._current_track_uri
+            self._current_track_uri = track_uri
+            logger.info("oh_event_track_changed", device=self._device_name,
+                        from_uri=prev[:60], to_uri=track_uri[:60])
+
+            # Update current OH ID
+            for oh_id, uri in self._track_uri_map.items():
+                if uri == track_uri:
+                    self._current_oh_id = oh_id
+                    break
+
+            # Signal track advancement to the player
+            if self.on_track_advanced:
+                self.on_track_advanced.set()
+        elif track_uri is not None and not self._current_track_uri:
+            # First URI report — just store it
+            self._current_track_uri = track_uri
+
+        # -- Position / Time ---------------------------------------------------
+        seconds = properties.get("Seconds")
+        if seconds is not None:
+            try:
+                self._last_position_ms = int(seconds) * 1000
+            except (ValueError, TypeError):
+                pass
+
+        # -- Volume ------------------------------------------------------------
+        volume_val = properties.get("Volume")
+        if volume_val is not None:
+            try:
+                self._volume = int(volume_val) / 100.0
+            except (ValueError, TypeError):
+                pass
+
+        mute_val = properties.get("Mute")
+        if mute_val is not None:
+            # We don't track mute state currently, but log it
+            logger.debug("oh_event_mute", device=self._device_name, mute=mute_val)
+
     # -- Position monitor (Phase 3) ------------------------------------------
 
     def _start_monitor(self) -> None:
-        """Start the background position polling loop."""
+        """Start the background position polling loop.
+
+        When UPnP eventing is active, runs a lighter loop that only
+        polls position (state/track changes come via NOTIFY).
+        When eventing is unavailable, runs the full polling loop.
+        """
         self._stop_monitor()
         self._monitor_task = asyncio.create_task(self._position_monitor())
 
@@ -276,20 +409,30 @@ class OpenHomeOutput(OutputTarget):
             self._monitor_task = None
 
     async def _position_monitor(self) -> None:
-        """Poll device position every 2s, detect track changes."""
+        """Poll device position, detect track changes.
+
+        In eventing mode: only polls position via Time service (track
+        changes arrive instantly via NOTIFY).
+        In polling mode: polls both position and track URI every 2s.
+        """
         try:
             prev_track_uri = self._current_track_uri
             while True:
                 await asyncio.sleep(_POLL_INTERVAL_S)
 
-                # Get position from Time service
+                # Get position from Time service (always needed, even with
+                # eventing, since not all devices push Time events reliably)
                 try:
                     dur, pos = await self._client.time_get()
                     self._last_position_ms = pos * 1000 if pos >= 0 else -1
                 except Exception:
                     continue
 
-                # Detect track change by checking Info service
+                # In eventing mode, skip track-change polling — NOTIFY handles it
+                if self._eventing_active:
+                    continue
+
+                # Full polling fallback: detect track change via Info service
                 try:
                     info = await self._client.info_track()
                     current_uri = info.get("Uri", "")
