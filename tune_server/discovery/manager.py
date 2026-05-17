@@ -131,6 +131,11 @@ class DiscoveryManager:
         if self._media_servers:
             await self._media_servers.stop()
 
+    _TYPE_PRIORITY = {
+        "openhome": 6, "bluos": 5, "chromecast": 4,
+        "airplay": 3, "dlna": 2, "local": 1,
+    }
+
     def list_devices(self) -> list[DiscoveredDevice]:
         devices: list[DiscoveredDevice] = []
         if self._ssdp:
@@ -144,6 +149,25 @@ class DiscoveryManager:
         if self._openhome:
             devices.extend(self._openhome.devices.values())
         return devices
+
+    def list_devices_deduped(self) -> list[DiscoveredDevice]:
+        """Deduplicated device list for UI display.
+
+        When the same IP is discovered via multiple protocols, keep only
+        the most specific one (OpenHome > BluOS > Cast > AirPlay > DLNA).
+        """
+        all_devices = self.list_devices()
+        by_host: dict[str, DiscoveredDevice] = {}
+        for dev in all_devices:
+            existing = by_host.get(dev.host)
+            if not existing:
+                by_host[dev.host] = dev
+            else:
+                new_prio = self._TYPE_PRIORITY.get(dev.type.value, 0)
+                old_prio = self._TYPE_PRIORITY.get(existing.type.value, 0)
+                if new_prio > old_prio:
+                    by_host[dev.host] = dev
+        return list(by_host.values())
 
     async def rescan(self) -> list[DiscoveredDevice]:
         """Force an immediate rescan of all discovery sources."""

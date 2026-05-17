@@ -31,7 +31,7 @@ class PairResponse(BaseModel):
 async def list_devices():
     if not deps.discovery_manager:
         return []
-    return deps.discovery_manager.list_devices()
+    return deps.discovery_manager.list_devices_deduped()
 
 
 @router.get("/audio", response_model=list[LocalAudioDevice])
