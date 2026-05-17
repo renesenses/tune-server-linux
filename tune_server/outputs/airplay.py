@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
+from pathlib import Path
 
 import structlog
 
@@ -28,6 +30,7 @@ class AirPlayOutput(OutputTarget):
         self._volume: float = 0.5
         self._stream_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
+        self._temp_wav: Path | None = None
 
     @property
     def name(self) -> str:
@@ -50,6 +53,38 @@ class AirPlayOutput(OutputTarget):
             return False
         return True
 
+    async def _transcode_to_wav(self, file_path: str) -> Path:
+        """Transcode a file to WAV via FFmpeg for pyatv compatibility."""
+        from tune_server.config import settings
+        from tune_server.utils.network import subprocess_hide_window
+        self._cleanup_temp_wav()
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        import os
+        os.close(fd)
+        tmp_path = Path(tmp)
+        cmd = [
+            settings.ffmpeg_path, "-hide_banner", "-loglevel", "error",
+            "-i", file_path,
+            "-f", "wav", "-acodec", "pcm_s16le",
+            "-ar", "44100", "-ac", "2",
+            "-y", str(tmp_path),
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            **subprocess_hide_window(),
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        if proc.returncode != 0:
+            tmp_path.unlink(missing_ok=True)
+            raise RuntimeError(f"FFmpeg transcode failed: {stderr.decode()[:200]}")
+        self._temp_wav = tmp_path
+        return tmp_path
+
+    def _cleanup_temp_wav(self) -> None:
+        if self._temp_wav and self._temp_wav.exists():
+            self._temp_wav.unlink(missing_ok=True)
+            self._temp_wav = None
+
     async def start(self, stream_info: AudioStreamInfo, track: Track | None = None) -> None:
         if not track or not track.file_path:
             logger.error("airplay_no_file", device=self._device_name)
@@ -60,7 +95,6 @@ class AirPlayOutput(OutputTarget):
         try:
             stream = self._atv.stream
 
-            # Build metadata if available
             metadata = None
             try:
                 from pyatv.interface import MediaMetadata
@@ -73,30 +107,46 @@ class AirPlayOutput(OutputTarget):
             except Exception as e:
                 logger.debug("airplay_metadata_build_failed", error=str(e))
 
-            # stream_file handles encoding + RAOP streaming internally
+            file_to_stream = track.file_path
             logger.info("airplay_streaming", device=self._device_name, track=track.title,
                         file=track.file_path[:80])
-            self._stream_task = asyncio.create_task(
-                stream.stream_file(track.file_path, metadata=metadata)
-            )
 
-            # Wait briefly to catch immediate failures (auth errors, connection refused).
-            # If the task is still running after the timeout, streaming is in progress.
-            done, _ = await asyncio.wait({self._stream_task}, timeout=5.0)
-            if done:
-                task = done.pop()
-                exc = task.exception()
-                if exc:
+            # Try direct streaming first; if pyatv can't open the format,
+            # fall back to FFmpeg transcode to WAV.
+            try:
+                self._stream_task = asyncio.create_task(
+                    stream.stream_file(file_to_stream, metadata=metadata)
+                )
+                done, _ = await asyncio.wait({self._stream_task}, timeout=5.0)
+                if done:
+                    task = done.pop()
+                    exc = task.exception()
+                    if exc:
+                        self._stream_task = None
+                        raise exc
+            except Exception as first_err:
+                if self._stream_task:
+                    self._stream_task.cancel()
                     self._stream_task = None
-                    self._available = False
-                    raise RuntimeError(
-                        f"AirPlay streaming failed on '{self._device_name}': {exc}"
-                    ) from exc
+                logger.info("airplay_transcode_fallback", device=self._device_name,
+                            reason=str(first_err)[:120])
+                wav_path = await self._transcode_to_wav(track.file_path)
+                self._stream_task = asyncio.create_task(
+                    stream.stream_file(str(wav_path), metadata=metadata)
+                )
+                done, _ = await asyncio.wait({self._stream_task}, timeout=5.0)
+                if done:
+                    task = done.pop()
+                    exc = task.exception()
+                    if exc:
+                        self._stream_task = None
+                        self._available = False
+                        raise RuntimeError(
+                            f"AirPlay streaming failed on '{self._device_name}': {exc}"
+                        ) from exc
 
             self._available = True
 
-            # Push volume after stream starts — some AirPlay receivers
-            # default to 0 or ignore volume set before playback begins.
             try:
                 audio = self._atv.audio
                 await asyncio.wait_for(
@@ -221,6 +271,8 @@ class AirPlayOutput(OutputTarget):
                 logger.debug("airplay_stream_task_cancel", error=str(e))
             self._stream_task = None
 
+        self._cleanup_temp_wav()
+
         rc = self._atv.remote_control
         await self._remote_call("stop", lambda: rc.stop())
 
@@ -243,6 +295,7 @@ class AirPlayOutput(OutputTarget):
 
     async def close(self) -> None:
         await self.stop()
+        self._cleanup_temp_wav()
         try:
             self._atv.close()
         except Exception as e:

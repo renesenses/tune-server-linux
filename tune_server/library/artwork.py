@@ -196,18 +196,29 @@ def cache_cover_url(url: str) -> Optional[str]:
         return str(output_path)
 
     try:
-        result = subprocess.run(
-            ["curl", "-4sfL", "--max-time", "10",
-             "-A", "Mozilla/5.0 (Tune Server)",
-             "-o", str(output_path), url],
-            capture_output=True, timeout=15, **subprocess_hide_window(),
-        )
-        if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
-            output_path.unlink(missing_ok=True)
-            logger.debug("cache_cover_url_download_failed", url=base_url)
-            return None
+        downloaded = False
+        try:
+            result = subprocess.run(
+                ["curl", "-4sfL", "--max-time", "10",
+                 "-A", "Mozilla/5.0 (Tune Server)",
+                 "-o", str(output_path), url],
+                capture_output=True, timeout=15, **subprocess_hide_window(),
+            )
+            downloaded = result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0
+        except FileNotFoundError:
+            pass
 
-        # Verify it's a valid image and resize if needed
+        if not downloaded:
+            output_path.unlink(missing_ok=True)
+            import urllib.request
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Tune Server)"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = resp.read()
+            if not data:
+                logger.debug("cache_cover_url_download_failed", url=base_url)
+                return None
+            output_path.write_bytes(data)
+
         img = Image.open(output_path)
         img = img.convert("RGB")
         max_size = settings.artwork_max_size
