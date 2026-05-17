@@ -304,14 +304,15 @@ echo [%DATE% %TIME%] install_dir: {install_dir} >> "%LOGFILE%"
 REM Create sentinel so the watchdog steps aside on any exit code.
 echo update > "_update_pending"
 
-REM Kill the CMD watchdog window by title. start-tune-server.bat sets
-REM 'title Tune Server' on line 2, so taskkill /FI matches it.
-REM Without this, the watchdog may relaunch tune-server.exe between
-REM our SIGTERM and the NSIS installer starting.
-echo [%DATE% %TIME%] Killing watchdog CMD window... >> "%LOGFILE%"
-taskkill /FI "WINDOWTITLE eq Tune Server" /F >> "%LOGFILE%" 2>&1
-REM Also try the localized title pattern (some Windows builds append a dash)
-taskkill /FI "WINDOWTITLE eq Tune Server*" /F >> "%LOGFILE%" 2>&1
+REM Kill the CMD watchdog window. Use PID-based kill via WMIC to avoid
+REM locale-dependent window title matching (broke on French Windows).
+echo [%DATE% %TIME%] Killing watchdog CMD windows... >> "%LOGFILE%"
+for /f "tokens=2 delims=," %%p in ('tasklist /FI "IMAGENAME eq cmd.exe" /FO CSV /NH 2^>nul ^| findstr /I "cmd.exe"') do (
+    wmic process where "ProcessId=%%~p" get CommandLine 2>nul | findstr /I "start-tune-server" >nul && (
+        echo [%DATE% %TIME%] Killing watchdog PID %%~p >> "%LOGFILE%"
+        taskkill /PID %%~p /F >> "%LOGFILE%" 2>&1
+    )
+)
 
 REM Wait for tune-server.exe to actually release its file handles.
 echo [%DATE% %TIME%] Polling for tune-server.exe exit (max 30 s)... >> "%LOGFILE%"
