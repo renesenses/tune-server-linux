@@ -14,6 +14,7 @@ from tune_server.models import DiscoveredDevice, OutputType
 logger = structlog.get_logger()
 
 MEDIA_RENDERER_URN = "urn:schemas-upnp-org:device:MediaRenderer:1"
+SSDP_ALL = "ssdp:all"
 
 # OpenHome / Linn search targets — these devices often don't respond to
 # the standard MediaRenderer URN but *do* support DLNA AVTransport for
@@ -30,6 +31,11 @@ _OPENHOME_PREFIXES = (
     "urn:linn-co-uk:",
 )
 
+# How many consecutive scan cycles a device can miss before being marked lost.
+# Some devices (Denon DMP-A10, certain Marantz streamers) respond slowly or
+# intermittently to M-SEARCH; a grace period prevents flapping.
+_MISS_GRACE_CYCLES = 2
+
 
 class SsdpDiscovery:
     """SSDP discovery for DLNA/UPnP Media Renderers."""
@@ -40,6 +46,7 @@ class SsdpDiscovery:
         self._dmr_devices: dict[str, object] = {}  # dev_id -> DmrDevice
         self._requester = None
         self._factory = None
+        self._factory_non_strict = None
         self._task: asyncio.Task | None = None
         self._running = False
         self._lock = asyncio.Lock()
@@ -48,6 +55,8 @@ class SsdpDiscovery:
         # Avoids log spam from devices that exist on the network but never
         # respond to UPnP description fetch (e.g. powered-down audiophile gear).
         self._create_failures: dict[str, int] = {}
+        # Consecutive scan misses per device — only mark lost after _MISS_GRACE_CYCLES
+        self._miss_count: dict[str, int] = {}
 
     def _log_create_failure(self, usn: str, location: str, name: str, exc: Exception) -> None:
         count = self._create_failures.get(usn, 0) + 1
@@ -183,8 +192,15 @@ class SsdpDiscovery:
 
     @staticmethod
     def _is_relevant_urn(st: str) -> bool:
-        """Check if an SSDP search target is a MediaRenderer or OpenHome URN."""
+        """Check if an SSDP search target is a MediaRenderer, OpenHome, or root device URN.
+
+        Accepting upnp:rootdevice catches slow-responding renderers (Denon DMP-A10,
+        some Marantz streamers) that only advertise their root device, not the
+        embedded MediaRenderer directly.
+        """
         if MEDIA_RENDERER_URN in st:
+            return True
+        if st == "upnp:rootdevice":
             return True
         return any(st.startswith(p) for p in _OPENHOME_PREFIXES)
 
@@ -234,6 +250,10 @@ class SsdpDiscovery:
 
             self._requester = AiohttpRequester()
             self._factory = UpnpFactory(self._requester)
+            # Non-strict factory tolerates vendor-specific XML namespaces
+            # (e.g. Engineered SA / LHC renderers use a custom scpd namespace
+            # instead of the standard urn:schemas-upnp-org:service-1-0).
+            self._factory_non_strict = UpnpFactory(self._requester, non_strict=True)
 
             while self._running:
                 try:
@@ -246,8 +266,14 @@ class SsdpDiscovery:
 
                         is_media_renderer = MEDIA_RENDERER_URN in st
                         is_openhome = any(st.startswith(p) for p in _OPENHOME_PREFIXES)
+                        # Accept root-device and uuid responses from ssdp:all —
+                        # these may contain an embedded MediaRenderer (Denon, Marantz).
+                        is_root_or_uuid = (
+                            st == "upnp:rootdevice"
+                            or st.startswith("uuid:")
+                        )
 
-                        if not is_media_renderer and not is_openhome:
+                        if not is_media_renderer and not is_openhome and not is_root_or_uuid:
                             return
 
                         if usn in discovered:
@@ -267,7 +293,24 @@ class SsdpDiscovery:
                                     usn=usn, st=st, location=location,
                                 )
 
-                            device = await self._factory.async_create_device(location)
+                            # Try strict parsing first; fall back to non-strict
+                            # for devices with vendor-specific XML namespaces
+                            try:
+                                device = await self._factory.async_create_device(location)
+                            except Exception:
+                                device = await self._factory_non_strict.async_create_device(location)
+                                logger.info(
+                                    "ssdp_non_strict_device_created",
+                                    location=location, name=device.friendly_name,
+                                )
+
+                            # For root-device / uuid responses (ssdp:all fallback),
+                            # verify this device actually has a MediaRenderer before
+                            # wrapping it as a DmrDevice.
+                            if is_root_or_uuid and not is_media_renderer:
+                                if not DmrDevice.is_profile_device(device):
+                                    return  # not a renderer — skip silently
+
                             dmr = DmrDevice(device, event_handler=None)
 
                             name = device.friendly_name or "Unknown DLNA"
@@ -442,18 +485,40 @@ class SsdpDiscovery:
                         except Exception:
                             logger.debug("ssdp_openhome_search_error", target=oh_target)
 
-                    # Mark lost devices
+                    # Broad ssdp:all fallback — catches devices (Denon DMP-A10,
+                    # some Marantz streamers) that ignore the specific MediaRenderer
+                    # URN but respond to the generic search target.  The callback
+                    # filters and validates via DmrDevice.is_profile_device().
+                    try:
+                        await _run_search(SSDP_ALL)
+                    except OSError:
+                        try:
+                            source_ip = self._get_local_ip()
+                            if source_ip:
+                                await _run_search(SSDP_ALL, source_ip)
+                        except Exception:
+                            pass
+                    except Exception:
+                        logger.debug("ssdp_all_search_error")
+
+                    # Mark lost devices (with grace period for slow responders)
                     async with self._lock:
                         for dev_id in list(self._devices.keys()):
-                            if dev_id not in discovered:
+                            if dev_id in discovered:
+                                self._miss_count.pop(dev_id, None)
+                            else:
                                 device = self._devices[dev_id]
                                 if device.available:
-                                    device.available = False
-                                    await self._event_bus.emit(Event(
-                                        type=EventType.DEVICE_LOST,
-                                        data={"id": dev_id, "name": device.name},
-                                        source="ssdp",
-                                    ))
+                                    misses = self._miss_count.get(dev_id, 0) + 1
+                                    self._miss_count[dev_id] = misses
+                                    if misses >= _MISS_GRACE_CYCLES:
+                                        device.available = False
+                                        self._miss_count.pop(dev_id, None)
+                                        await self._event_bus.emit(Event(
+                                            type=EventType.DEVICE_LOST,
+                                            data={"id": dev_id, "name": device.name},
+                                            source="ssdp",
+                                        ))
 
                 except Exception:
                     logger.exception("ssdp_scan_error")
@@ -479,6 +544,7 @@ class SsdpDiscovery:
         if not self._requester:
             self._requester = AiohttpRequester()
             self._factory = UpnpFactory(self._requester)
+            self._factory_non_strict = UpnpFactory(self._requester, non_strict=True)
 
         discovered = set()
 
@@ -489,8 +555,12 @@ class SsdpDiscovery:
 
             is_media_renderer = MEDIA_RENDERER_URN in st
             is_openhome = any(st.startswith(p) for p in _OPENHOME_PREFIXES)
+            is_root_or_uuid = (
+                st == "upnp:rootdevice"
+                or st.startswith("uuid:")
+            )
 
-            if not is_media_renderer and not is_openhome:
+            if not is_media_renderer and not is_openhome and not is_root_or_uuid:
                 return
             if usn in discovered:
                 return
@@ -505,7 +575,22 @@ class SsdpDiscovery:
                 if is_openhome and not is_media_renderer:
                     logger.info("openhome_ssdp_response", usn=usn, st=st, location=location)
 
-                device = await self._factory.async_create_device(location)
+                # Try strict parsing first; fall back to non-strict
+                # for devices with vendor-specific XML namespaces
+                try:
+                    device = await self._factory.async_create_device(location)
+                except Exception:
+                    device = await self._factory_non_strict.async_create_device(location)
+                    logger.info(
+                        "ssdp_non_strict_device_created",
+                        location=location, name=device.friendly_name,
+                    )
+
+                # For root-device / uuid responses, verify MediaRenderer capability
+                if is_root_or_uuid and not is_media_renderer:
+                    if not DmrDevice.is_profile_device(device):
+                        return
+
                 dmr = DmrDevice(device, event_handler=None)
 
                 name = device.friendly_name or "Unknown DLNA"
@@ -637,6 +722,19 @@ class SsdpDiscovery:
                     pass
             except Exception:
                 logger.debug("ssdp_openhome_rescan_error", target=oh_target)
+
+        # Broad ssdp:all fallback for slow-responding renderers
+        try:
+            await _run_search(SSDP_ALL)
+        except OSError:
+            try:
+                source_ip = self._get_local_ip()
+                if source_ip:
+                    await _run_search(SSDP_ALL, source_ip)
+            except Exception:
+                pass
+        except Exception:
+            logger.debug("ssdp_all_rescan_error")
 
         return list(self._devices.values())
 

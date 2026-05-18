@@ -7,6 +7,28 @@ import sys
 from pathlib import Path
 
 
+def _raise_nofile_limit() -> None:
+    """Raise the open-file descriptor limit on macOS/Linux.
+
+    The default macOS soft limit is 256, which is too low for Tune
+    (SSDP + mDNS + HTTP streamer + WebSocket + file watcher can easily
+    exceed it). This is a Python-level safety net in case the shell
+    wrapper didn't raise ulimit (e.g. invoked via ``python -m tune_server``).
+    """
+    if sys.platform == "win32":
+        return
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        desired = 4096
+        if soft < desired:
+            new_soft = min(desired, hard)
+            resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+    except Exception:
+        # Non-fatal — the shell wrapper should have already raised it.
+        pass
+
+
 def _ensure_ssl_certs() -> None:
     """Point SSL stack at the bundled certifi CA store.
 
@@ -88,6 +110,7 @@ def _fix_noconsole_streams() -> None:
 
 
 def main() -> None:
+    _raise_nofile_limit()
     _fix_noconsole_streams()
     _ensure_ssl_certs()
     _ensure_data_dir()

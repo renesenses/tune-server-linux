@@ -756,12 +756,19 @@ async def check_update():
         "update_available": False,
     }
     homebrew_install = deps.update_checker.is_homebrew_install
+    macos_dmg = deps.update_checker.is_macos_dmg_install
     payload["installable"] = not source_install
     payload["homebrew"] = homebrew_install
+    payload["macos_dmg"] = macos_dmg
     if source_install:
         payload["install_hint"] = "Source install detected. Run `git pull && pip install -e .` then restart."
     elif homebrew_install:
         payload["install_hint"] = "Homebrew install detected. Update will run `brew upgrade tune-server`."
+    elif macos_dmg:
+        payload["install_hint"] = (
+            "macOS app detected. The update will be downloaded to ~/Downloads. "
+            "Open the DMG and drag Tune Server to Applications to complete the update."
+        )
     return payload
 
 
@@ -824,6 +831,74 @@ async def install_update():
         "version": deps.update_checker.latest_version,
         "windows_swap_pending": is_windows,
         "poll_url": "/api/v1/system/update/status",
+    }
+
+
+@router.post("/update/apply")
+async def apply_update():
+    """Download the latest update DMG to ~/Downloads and open it (macOS only).
+
+    For macOS DMG installs: downloads the new version DMG, moves it to
+    ~/Downloads, and opens it in Finder. The user must drag the app to
+    /Applications manually (macOS codesign requires this — silent
+    replacement would break the signature).
+
+    On other platforms, use POST /update/install instead.
+    """
+    import platform
+
+    if not deps.update_checker:
+        raise HTTPException(status_code=503, detail="Update checker not available")
+
+    if platform.system().lower() != "darwin":
+        raise HTTPException(
+            status_code=400,
+            detail="This endpoint is macOS-only. Use POST /update/install for other platforms.",
+        )
+
+    if deps.update_checker.is_source_install:
+        raise HTTPException(
+            status_code=409,
+            detail="Source install detected. Run `git pull && pip install -e .` then restart.",
+        )
+
+    if not deps.update_checker.update_available:
+        raise HTTPException(status_code=400, detail="No update available")
+
+    # If the DMG was already downloaded by a previous call, return its path
+    # without re-downloading.
+    existing_dmg = deps.update_checker.dmg_download_path
+    if existing_dmg and existing_dmg.is_file():
+        return {
+            "status": "ready",
+            "phase": "dmg_ready",
+            "version": deps.update_checker.latest_version,
+            "dmg_path": str(existing_dmg),
+            "message": "DMG already downloaded. Open it and drag Tune Server to Applications.",
+        }
+
+    # Start the download in background (same as /update/install but
+    # semantically dedicated to macOS apply-and-notify flow).
+    from datetime import datetime as _dt
+    deps.update_checker._install_state = {
+        "phase": "downloading",
+        "version": deps.update_checker.latest_version,
+        "started_at": _dt.utcnow().isoformat(),
+    }
+
+    async def _download_dmg():
+        success = await deps.update_checker.download_and_install()
+        if not success:
+            deps.update_checker._install_state["phase"] = "failed"
+
+    asyncio.create_task(_download_dmg())
+
+    return {
+        "status": "started",
+        "phase": "downloading",
+        "version": deps.update_checker.latest_version,
+        "poll_url": "/api/v1/system/update/status",
+        "message": "Downloading DMG to ~/Downloads. Poll /update/status for progress.",
     }
 
 

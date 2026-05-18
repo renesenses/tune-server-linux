@@ -11,25 +11,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Node 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Clone web client
-        uses: actions/checkout@v4
-        with:
-          repository: renesenses/tune-web-client
-          path: tune-web-client
-          ssh-key: ${{ secrets.WEB_CLIENT_DEPLOY_KEY }}
-
-      - name: Build web client
+      - name: Rebuild web client from tune-web-client (always fresh)
+        env:
+          WEB_CLIENT_DEPLOY_KEY: ${{ secrets.WEB_CLIENT_DEPLOY_KEY }}
         run: |
-          cd tune-web-client
-          npm ci
-          npm run build
-          rm -rf ../web
-          cp -r dist ../web
+          VERSION="${{ steps.version.outputs.version }}"
+          rm -rf _web_src
+
+          # Set up SSH deploy key for private repo access
+          CLONED=false
+          if [ -n "${WEB_CLIENT_DEPLOY_KEY}" ]; then
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            echo "${WEB_CLIENT_DEPLOY_KEY}" > ~/.ssh/tune_web_key && chmod 600 ~/.ssh/tune_web_key
+            export GIT_SSH_COMMAND="ssh -i ~/.ssh/tune_web_key -o StrictHostKeyChecking=no"
+            if git clone --depth 1 git@github.com:renesenses/tune-web-client.git _web_src 2>/dev/null; then
+              CLONED=true
+            fi
+            rm -f ~/.ssh/tune_web_key
+          fi
+
+          if [ "$CLONED" != "true" ]; then
+            if ! git clone --depth 1 https://github.com/renesenses/tune-web-client.git _web_src 2>/dev/null; then
+              echo "::warning::Could not clone tune-web-client — using whatever is in web/"
+              exit 0
+            fi
+          fi
+
+          # Pin the matching tag if it exists; fall back to main otherwise.
+          if (cd _web_src && git fetch --depth 1 origin "v${VERSION}" 2>/dev/null); then
+            (cd _web_src && git checkout FETCH_HEAD)
+          else
+            echo "::warning::tune-web-client v${VERSION} tag missing — using main"
+          fi
+          (cd _web_src && npm ci && npm run build)
+          rm -rf web
+          mkdir web
+          cp -R _web_src/dist/. web/
+          rm -rf _web_src
+          echo "Web bundle:"
+          ls -la web/assets | head -8
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Docker meta
         id: meta

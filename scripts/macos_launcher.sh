@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+# Raise open-file limit — default macOS 256 is too low for
+# SSDP + mDNS + HTTP streamer + WebSocket + file watcher.
+ulimit -n 4096 2>/dev/null
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUNDLE_DIR="$(dirname "$SCRIPT_DIR")"
 RUNTIME="${BUNDLE_DIR}/Resources/runtime/tune-server"

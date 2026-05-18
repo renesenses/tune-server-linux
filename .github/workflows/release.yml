@@ -170,6 +170,21 @@ jobs:
           dist/tune-server/ffmpeg -version | head -1
           file dist/tune-server/ffmpeg
 
+      - name: Bundle FFmpeg for Linux (static build)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          echo "Downloading static ffmpeg (amd64)..."
+          curl -sL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" -o /tmp/ffmpeg-linux.tar.xz
+          mkdir -p /tmp/ffmpeg-linux
+          tar xf /tmp/ffmpeg-linux.tar.xz -C /tmp/ffmpeg-linux --strip-components=1
+          cp /tmp/ffmpeg-linux/ffmpeg dist/tune-server/ffmpeg
+          cp /tmp/ffmpeg-linux/ffprobe dist/tune-server/ffprobe
+          chmod +x dist/tune-server/ffmpeg dist/tune-server/ffprobe
+          echo "Bundled static ffmpeg + ffprobe (linux amd64)"
+          dist/tune-server/ffmpeg -version | head -1
+          file dist/tune-server/ffmpeg
+
       - name: Bundle librespot binary (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh

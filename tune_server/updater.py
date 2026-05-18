@@ -202,6 +202,20 @@ class UpdateChecker:
         except Exception:
             return False
 
+    @property
+    def is_macos_dmg_install(self) -> bool:
+        """True when running from a macOS DMG-based install (PyInstaller bundle on darwin)."""
+        return getattr(sys, "frozen", False) and platform.system().lower() == "darwin"
+
+    @property
+    def dmg_download_path(self) -> Path | None:
+        """Path where the DMG was (or will be) downloaded, if a macOS update is ready."""
+        state = getattr(self, "_install_state", None)
+        if state and state.get("phase") == "dmg_ready":
+            p = state.get("dmg_path")
+            return Path(p) if p else None
+        return None
+
     def start(self) -> None:
         """Start periodic update checking."""
         self._check_task = asyncio.ensure_future(self._check_loop())
