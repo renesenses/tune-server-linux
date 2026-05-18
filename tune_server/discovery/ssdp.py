@@ -8,6 +8,7 @@ from xml.etree import ElementTree
 import aiohttp
 import structlog
 
+from tune_server.config import settings
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.models import DiscoveredDevice, OutputType
 
@@ -456,10 +457,11 @@ class SsdpDiscovery:
                             kwargs["source"] = source_ip
                         await async_search(_on_response, **kwargs)
 
+                    # Always bind to LAN IP when advertise_ip is set (VPN environments)
+                    _forced_source = self._get_local_ip() if settings.advertise_ip else None
                     try:
-                        await _run_search(MEDIA_RENDERER_URN)
+                        await _run_search(MEDIA_RENDERER_URN, _forced_source)
                     except OSError as os_err:
-                        # WinError 10065 (host unreachable) or similar — retry with source IP
                         logger.warning("ssdp_multicast_error", error=str(os_err))
                         try:
                             source_ip = self._get_local_ip()
@@ -473,7 +475,7 @@ class SsdpDiscovery:
                     # to the standard MediaRenderer URN
                     for oh_target in OPENHOME_SEARCH_TARGETS:
                         try:
-                            await _run_search(oh_target)
+                            await _run_search(oh_target, _forced_source)
                         except OSError:
                             # Multicast may fail on some networks; try with explicit source
                             try:
@@ -490,7 +492,7 @@ class SsdpDiscovery:
                     # URN but respond to the generic search target.  The callback
                     # filters and validates via DmrDevice.is_profile_device().
                     try:
-                        await _run_search(SSDP_ALL)
+                        await _run_search(SSDP_ALL, _forced_source)
                     except OSError:
                         try:
                             source_ip = self._get_local_ip()
@@ -741,6 +743,9 @@ class SsdpDiscovery:
     @staticmethod
     def _get_local_ip() -> str | None:
         """Get the local IP address for binding SSDP multicast."""
+        from tune_server.config import settings as _s
+        if _s.advertise_ip:
+            return _s.advertise_ip
         import socket
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
