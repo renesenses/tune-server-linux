@@ -166,11 +166,16 @@ class DiscoveryManager:
         """Deduplicated device list for UI display.
 
         When the same IP is discovered via multiple protocols, keep only
-        the most specific one (OpenHome > BluOS > Cast > AirPlay > DLNA).
+        the most specific one (OpenHome > BluOS > DLNA > Cast > AirPlay).
+        Filters out renderers hosted on the server itself (PulseAudio/
+        PipeWire DLNA renderers that mirror local sound cards).
         """
         all_devices = self.list_devices()
         by_host: dict[str, DiscoveredDevice] = {}
         for dev in all_devices:
+            caps = dev.capabilities or {}
+            if caps.get("manufacturer", "").lower() == "mozaik labs":
+                continue
             existing = by_host.get(dev.host)
             if not existing:
                 by_host[dev.host] = dev
