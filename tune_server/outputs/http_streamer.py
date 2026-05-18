@@ -17,36 +17,28 @@ from tune_server.models import AudioFormat, AudioStreamInfo
 logger = structlog.get_logger()
 
 
-def _build_wav_header(stream_info: AudioStreamInfo) -> bytes:
-    """Build a WAV header for streaming (unknown final size).
-
-    Uses 0xFFFFFFFF as file/data sizes so DLNA renderers can parse the
-    header and play the PCM data that follows.
-    """
-    channels = stream_info.channels or 2
-    sample_rate = stream_info.sample_rate or 44100
-    bit_depth = stream_info.bit_depth or 16
-    byte_rate = sample_rate * channels * (bit_depth // 8)
-    block_align = channels * (bit_depth // 8)
-    data_size = 0x7FFFFFFF  # large placeholder
-    file_size = data_size + 36  # 44 - 8
-
-    return struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF",
-        file_size,
-        b"WAVE",
-        b"fmt ",
-        16,            # fmt chunk size
-        1,             # PCM format
-        channels,
-        sample_rate,
-        byte_rate,
-        block_align,
-        bit_depth,
-        b"data",
-        data_size,
-    )
+try:
+    from tune_native import build_wav_header as _rust_wav_header
+    def _build_wav_header(stream_info: AudioStreamInfo) -> bytes:
+        channels = stream_info.channels or 2
+        sample_rate = stream_info.sample_rate or 44100
+        bit_depth = stream_info.bit_depth or 16
+        return _rust_wav_header(channels, sample_rate, bit_depth)
+except ImportError:
+    def _build_wav_header(stream_info: AudioStreamInfo) -> bytes:
+        channels = stream_info.channels or 2
+        sample_rate = stream_info.sample_rate or 44100
+        bit_depth = stream_info.bit_depth or 16
+        byte_rate = sample_rate * channels * (bit_depth // 8)
+        block_align = channels * (bit_depth // 8)
+        data_size = 0x7FFFFFFF
+        file_size = data_size + 36
+        return struct.pack(
+            "<4sI4s4sIHHIIHH4sI",
+            b"RIFF", file_size, b"WAVE", b"fmt ", 16, 1,
+            channels, sample_rate, byte_rate, block_align, bit_depth,
+            b"data", data_size,
+        )
 
 
 class StreamSession:
