@@ -461,14 +461,51 @@ exit /b 0
             logger.warning("update_check_error", error=repr(exc), error_type=type(exc).__name__)
             return None
 
+    async def _update_source_install(self) -> bool:
+        """Update a git-cloned source install via git pull + pip install."""
+        import subprocess
+        cwd = Path.cwd()
+        logger.info("source_update_starting", cwd=str(cwd), version=self._latest_version)
+        try:
+            git = await asyncio.to_thread(
+                subprocess.run, ["git", "pull", "--ff-only"],
+                cwd=str(cwd), capture_output=True, text=True, timeout=60,
+            )
+            if git.returncode != 0:
+                logger.error("source_update_git_pull_failed", stderr=git.stderr[:200])
+                return False
+            logger.info("source_update_git_pulled", stdout=git.stdout.strip()[:200])
+
+            pip = await asyncio.to_thread(
+                subprocess.run,
+                [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
+                cwd=str(cwd), capture_output=True, text=True, timeout=120,
+            )
+            if pip.returncode != 0:
+                logger.warning("source_update_pip_failed", stderr=pip.stderr[:200])
+
+            logger.info("source_update_restarting")
+            if self._event_bus:
+                from tune_server.event_bus import Event, EventType
+                await self._event_bus.emit(Event(
+                    type=EventType.SYSTEM_NOTIFICATION,
+                    data={"message": "Mise à jour installée, redémarrage..."},
+                    source="updater",
+                ))
+            await asyncio.sleep(1)
+            os.execv(sys.executable, [sys.executable, "-m", "tune_server"])
+        except Exception as exc:
+            logger.exception("source_update_failed", error=str(exc))
+            return False
+        return True
+
     async def download_and_install(self) -> bool:
         """Download the update and install it. Returns True on success."""
         if not self._download_url or not self._asset_name:
             return False
 
         if self.is_source_install:
-            logger.warning("update_refused_source_install", version=self._latest_version)
-            return False
+            return await self._update_source_install()
 
         logger.info("update_downloading", version=self._latest_version, asset=self._asset_name)
 
