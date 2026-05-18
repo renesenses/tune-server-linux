@@ -20,6 +20,13 @@ except ImportError:
 
 logger = structlog.get_logger()
 
+try:
+    import tune_native as _rust
+    _RUST_AVAILABLE = True
+    logger.info("metadata_engine_rust_available", version=_rust.version())
+except ImportError:
+    _RUST_AVAILABLE = False
+
 SUPPORTED_EXTENSIONS = {
     ".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".aiff",
     ".aif", ".wv", ".wma", ".dsf", ".dff", ".dst", ".alac",
@@ -261,7 +268,57 @@ def _extract_musicbrainz_ids(audio, tags) -> dict[str, str | None]:
     return {k: (_get_first(tags, keys) or None) for k, keys in key_map.items()}
 
 
+def _read_metadata_rust(file_path: str) -> Optional[TrackMetadata]:
+    raw = _rust.read_metadata(file_path)
+    if raw is None:
+        return None
+    return TrackMetadata(
+        title=raw.get("title", Path(file_path).stem),
+        artist=raw.get("artist"),
+        album=raw.get("album"),
+        album_artist=raw.get("album_artist"),
+        track_number=raw.get("track_number", 0) or 0,
+        disc_number=raw.get("disc_number", 1) or 1,
+        year=_parse_year(raw.get("year")),
+        genre=raw.get("genre"),
+        duration_ms=raw.get("duration_ms", 0) or 0,
+        format=raw.get("format", "").lower(),
+        sample_rate=raw.get("sample_rate", 44100) or 44100,
+        bit_depth=raw.get("bit_depth", 16) or 16,
+        channels=raw.get("channels", 2) or 2,
+        has_cover=raw.get("has_cover", False),
+        musicbrainz_recording_id=raw.get("musicbrainz_recording_id"),
+        musicbrainz_release_id=raw.get("musicbrainz_release_id"),
+        musicbrainz_artist_id=raw.get("musicbrainz_artist_id"),
+    )
+
+
+def _parse_year(val) -> Optional[int]:
+    if val is None:
+        return None
+    try:
+        return int(str(val)[:4])
+    except (ValueError, TypeError):
+        return None
+
+
+def _use_rust_engine() -> bool:
+    if not _RUST_AVAILABLE:
+        return False
+    import os
+    engine = os.environ.get("TUNE_METADATA_ENGINE", "rust")
+    return engine != "python"
+
+
 def read_metadata(file_path: str) -> Optional[TrackMetadata]:
+    if _use_rust_engine():
+        try:
+            result = _read_metadata_rust(file_path)
+            if result is not None:
+                return result
+        except Exception:
+            logger.debug("rust_metadata_fallback", path=file_path)
+
     path = Path(file_path)
 
     if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
