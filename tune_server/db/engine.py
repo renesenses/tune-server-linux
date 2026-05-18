@@ -194,6 +194,8 @@ class SQLiteDatabase:
             "ALTER TABLE artists ADD COLUMN image_source TEXT",
             "ALTER TABLE zones ADD COLUMN was_playing INTEGER DEFAULT 0",
             "ALTER TABLE zones ADD COLUMN last_position_ms INTEGER DEFAULT 0",
+            # File size for change detection (tag editors may not update mtime)
+            "ALTER TABLE tracks ADD COLUMN file_size INTEGER",
             # Multi-user profile columns
             "ALTER TABLE user_profiles ADD COLUMN avatar_url TEXT",
             "ALTER TABLE user_profiles ADD COLUMN pin_hash TEXT",
@@ -634,6 +636,56 @@ class SQLiteDatabase:
             )
         """)
         await self.commit()
+
+        # FTS5: ensure remove_diacritics 2 tokenizer for accent-insensitive search.
+        # Old databases may have FTS tables without this option.
+        fts_tables = {"tracks_fts": "title", "albums_fts": "title", "artists_fts": "name"}
+        for fts_name, column in fts_tables.items():
+            try:
+                row = await self.fetchone(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (fts_name,),
+                )
+                if row is None:
+                    continue  # Will be created by schema_sqlite.sql
+                create_sql = row["sql"] or ""
+                if "remove_diacritics" in create_sql:
+                    continue  # Already has diacritics support
+                base_table = fts_name.replace("_fts", "")
+                logger.info("fts_migrate_diacritics", table=fts_name)
+                for stmt in [
+                    f"DROP TRIGGER IF EXISTS {base_table}_ai",
+                    f"DROP TRIGGER IF EXISTS {base_table}_ad",
+                    f"DROP TRIGGER IF EXISTS {base_table}_au",
+                    f"DROP TABLE IF EXISTS {fts_name}",
+                ]:
+                    await self.connection.execute(stmt)
+                await self.connection.execute(
+                    f"CREATE VIRTUAL TABLE IF NOT EXISTS {fts_name} USING fts5("
+                    f"{column}, content='{base_table}', content_rowid='id', "
+                    f"tokenize='unicode61 remove_diacritics 2')"
+                )
+                # Recreate triggers
+                await self.connection.execute(
+                    f"CREATE TRIGGER IF NOT EXISTS {base_table}_ai AFTER INSERT ON {base_table} BEGIN "
+                    f"INSERT INTO {fts_name}(rowid, {column}) VALUES (new.id, new.{column}); END"
+                )
+                await self.connection.execute(
+                    f"CREATE TRIGGER IF NOT EXISTS {base_table}_ad AFTER DELETE ON {base_table} BEGIN "
+                    f"INSERT INTO {fts_name}({fts_name}, rowid, {column}) VALUES ('delete', old.id, old.{column}); END"
+                )
+                await self.connection.execute(
+                    f"CREATE TRIGGER IF NOT EXISTS {base_table}_au AFTER UPDATE ON {base_table} BEGIN "
+                    f"INSERT INTO {fts_name}({fts_name}, rowid, {column}) VALUES ('delete', old.id, old.{column}); "
+                    f"INSERT INTO {fts_name}(rowid, {column}) VALUES (new.id, new.{column}); END"
+                )
+                # Rebuild FTS index from content table
+                await self.connection.execute(
+                    f"INSERT INTO {fts_name}({fts_name}) VALUES ('rebuild')"
+                )
+                await self.commit()
+            except Exception as exc:
+                logger.warning("fts_migrate_diacritics_error", table=fts_name, error=str(exc))
 
     # ------------------------------------------------------------------
     # Backup (SQLite-specific, file-based)

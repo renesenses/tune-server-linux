@@ -6,6 +6,7 @@ import structlog
 
 from tune_server.db.engine import Database
 from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track, TrackCredit
+from tune_server.utils import fold_accents
 
 logger = structlog.get_logger()
 
@@ -226,20 +227,28 @@ class ArtistRepo:
         return row["cnt"]
 
     async def search(self, query: str, limit: int = 50) -> list[Artist]:
+        folded = fold_accents(query)
+        like_pat = f"%{query}%"
+        like_folded = f"%{folded}%"
         if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
             rows = await self._db.fetchall(
-                """SELECT a.* FROM artists a
+                """SELECT DISTINCT a.* FROM artists a
                    WHERE a.fts_vector @@ plainto_tsquery('simple', ?)
-                   ORDER BY ts_rank(a.fts_vector, plainto_tsquery('simple', ?)) DESC
+                      OR a.name ILIKE ?
+                      OR unaccent(a.name) ILIKE ?
+                   ORDER BY CASE WHEN a.fts_vector @@ plainto_tsquery('simple', ?)
+                            THEN 0 ELSE 1 END
                    LIMIT ?""",
-                (query, query, limit),
+                (query, like_pat, like_folded, query, limit),
             )
         else:
             rows = await self._db.fetchall(
-                """SELECT a.* FROM artists a
-                   JOIN artists_fts fts ON a.id = fts.rowid
-                   WHERE artists_fts MATCH ? LIMIT ?""",
-                (query + "*", limit),
+                """SELECT DISTINCT a.* FROM artists a
+                   LEFT JOIN artists_fts fts ON a.id = fts.rowid AND artists_fts MATCH ?
+                   WHERE fts.rowid IS NOT NULL
+                      OR a.name LIKE ?
+                   LIMIT ?""",
+                (query + "*", like_folded, limit),
             )
         return [_row_to_artist(r) for r in rows]
 
@@ -590,7 +599,9 @@ class AlbumRepo:
         return [_row_to_album(r) for r in rows]
 
     async def search(self, query: str, limit: int = 50) -> list[Album]:
+        folded = fold_accents(query)
         like_pat = f"%{query}%"
+        like_folded = f"%{folded}%"
         if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
             rows = await self._db.fetchall(
                 """SELECT DISTINCT al.*, ar.name as artist_name FROM albums al
@@ -601,8 +612,12 @@ class AlbumRepo:
                       OR al.genre ILIKE ?
                       OR CAST(al.year AS TEXT) = ?
                       OR al.label ILIKE ?
+                      OR unaccent(al.title) ILIKE ?
+                      OR unaccent(ar.name) ILIKE ?
+                      OR unaccent(COALESCE(al.artist_name, '')) ILIKE ?
                    LIMIT ?""",
-                (query, like_pat, like_pat, like_pat, query.strip(), like_pat, limit),
+                (query, like_pat, like_pat, like_pat, query.strip(), like_pat,
+                 like_folded, like_folded, like_folded, limit),
             )
         else:
             rows = await self._db.fetchall(
@@ -616,7 +631,7 @@ class AlbumRepo:
                       OR CAST(al.year AS TEXT) = ?
                       OR al.label LIKE ?
                    LIMIT ?""",
-                (query + "*", like_pat, like_pat, like_pat, query.strip(), like_pat, limit),
+                (query + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, limit),
             )
         return [_row_to_album(r) for r in rows]
 
@@ -694,6 +709,41 @@ class TrackRepo:
         rows = await self._db.fetchall(
             f"{self._SELECT} ORDER BY RANDOM() LIMIT ?",
             (limit,),
+        )
+        return [_row_to_track(r) for r in rows]
+
+    async def search_random(
+        self,
+        query: str,
+        limit: int = 5000,
+    ) -> list[Track]:
+        """Return up to *limit* tracks matching *query* in random order."""
+        like_pat = f"%{query}%"
+        rows = await self._db.fetchall(
+            f"""SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name,
+                       al.cover_path as cover_path
+                FROM tracks t
+                LEFT JOIN albums al ON t.album_id = al.id
+                LEFT JOIN artists ar ON t.artist_id = ar.id
+                LEFT JOIN track_credits tc ON tc.track_id = t.id
+                LEFT JOIN tracks_fts fts ON t.id = fts.rowid AND tracks_fts MATCH ?
+                WHERE fts.rowid IS NOT NULL
+                   OR ar.name LIKE ?
+                   OR t.genre LIKE ?
+                   OR t.composer LIKE ?
+                   OR CAST(al.year AS TEXT) = ?
+                   OR tc.artist_name LIKE ?
+                   OR tc.instrument LIKE ?
+                ORDER BY RANDOM() LIMIT ?""",
+            (query + "*", like_pat, like_pat, like_pat, query.strip(), like_pat, like_pat, limit),
+        )
+        return [_row_to_track(r) for r in rows]
+
+    async def list_random_by_genre(self, genre: str, limit: int = 5000) -> list[Track]:
+        """Return up to *limit* tracks matching *genre* in random order."""
+        rows = await self._db.fetchall(
+            f"{self._SELECT} WHERE t.genre LIKE ? ORDER BY RANDOM() LIMIT ?",
+            (f"%{genre}%", limit),
         )
         return [_row_to_track(r) for r in rows]
 
@@ -861,6 +911,25 @@ class TrackRepo:
         )
         await self._db.commit()
 
+    async def get_file_size(self, file_path: str) -> int | None:
+        row = await self._db.fetchone(
+            "SELECT file_size FROM tracks WHERE file_path = ?", (file_path,)
+        )
+        return row["file_size"] if row else None
+
+    async def update_file_size(self, file_path: str, file_size: int) -> None:
+        await self._db.execute(
+            "UPDATE tracks SET file_size = ? WHERE file_path = ?", (file_size, file_path)
+        )
+        await self._db.commit()
+
+    async def update_mtime_and_size(self, file_path: str, mtime: float, file_size: int) -> None:
+        await self._db.execute(
+            "UPDATE tracks SET file_mtime = ?, file_size = ? WHERE file_path = ?",
+            (mtime, file_size, file_path),
+        )
+        await self._db.commit()
+
     async def update_audio_hash(self, file_path: str, audio_hash: str) -> None:
         await self._db.execute(
             "UPDATE tracks SET audio_hash = ? WHERE file_path = ?", (audio_hash, file_path)
@@ -874,7 +943,9 @@ class TrackRepo:
         return {r["file_path"] for r in rows}
 
     async def search(self, query: str, limit: int = 50) -> list[Track]:
+        folded = fold_accents(query)
         like_pat = f"%{query}%"
+        like_folded = f"%{folded}%"
         if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
             rows = await self._db.fetchall(
                 """SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name,
@@ -890,8 +961,13 @@ class TrackRepo:
                        OR CAST(al.year AS TEXT) = ?
                        OR tc.artist_name ILIKE ?
                        OR tc.instrument ILIKE ?
+                       OR unaccent(t.title) ILIKE ?
+                       OR unaccent(ar.name) ILIKE ?
+                       OR unaccent(COALESCE(t.composer, '')) ILIKE ?
+                       OR unaccent(tc.artist_name) ILIKE ?
                     LIMIT ?""",
-                (query, like_pat, like_pat, like_pat, query.strip(), like_pat, like_pat, limit),
+                (query, like_pat, like_pat, like_pat, query.strip(), like_pat, like_pat,
+                 like_folded, like_folded, like_folded, like_folded, limit),
             )
         else:
             rows = await self._db.fetchall(
@@ -910,7 +986,7 @@ class TrackRepo:
                        OR tc.artist_name LIKE ?
                        OR tc.instrument LIKE ?
                     LIMIT ?""",
-                (query + "*", like_pat, like_pat, like_pat, query.strip(), like_pat, like_pat, limit),
+                (query + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
             )
         return [_row_to_track(r) for r in rows]
 

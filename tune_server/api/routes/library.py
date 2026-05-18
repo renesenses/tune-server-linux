@@ -190,6 +190,22 @@ async def get_track_all_tags(track_id: int):
 
 
 
+@router.post("/tracks/{track_id}/rescan")
+async def rescan_track(track_id: int):
+    """Force re-read metadata from the audio file for a single track.
+
+    Useful after editing tags in an external tool (Mp3tag, Picard, etc.)
+    without triggering a full library scan.
+    """
+    if not deps.scanner:
+        raise HTTPException(status_code=503, detail="Scanner not available")
+    result = await deps.scanner.rescan_track(track_id)
+    if "error" in result:
+        status = 404 if result["error"] in ("track_not_found", "file_not_found") else 500
+        raise HTTPException(status_code=status, detail=result["error"])
+    return result
+
+
 @router.post("/tracks/{track_id}/quick-fav")
 async def quick_favorite_toggle(track_id: int, profile_id: int = 1):
     """Toggle favorite status for a track. Returns new state."""

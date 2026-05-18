@@ -63,18 +63,50 @@ async def update_zone(zone_id: int, request: ZoneUpdateRequest):
 
 @router.patch("/{zone_id}", response_model=Zone)
 async def patch_zone(zone_id: int, request: ZoneUpdateRequest):
-    """Partial update of a zone (only provided fields are changed)."""
+    """Partial update of a zone (only provided fields are changed).
+
+    Supports changing name, sync_delay_ms, and output device.
+    When output_type or output_device_id is provided, the zone's output
+    is hot-swapped: playback stops, the old output is disconnected, and
+    the new output is connected. Queue, settings, and volume are preserved.
+    """
     zone = deps.zone_manager.get_zone(zone_id)
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
-    try:
-        zone = await deps.zone_manager.update_zone(
-            zone_id,
-            name=request.name,
-            sync_delay_ms=request.sync_delay_ms,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Zone not found")
+
+    # Handle output change if requested
+    if request.output_type is not None or request.output_device_id is not None:
+        new_output_type = request.output_type or zone.output_type
+        new_device_id = request.output_device_id
+        try:
+            # Stop playback before swapping output
+            try:
+                await zone.player.stop()
+            except Exception:
+                pass
+            await deps.zone_manager.set_output(
+                zone_id, new_output_type, new_device_id,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Zone not found")
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+
+    # Handle name / sync_delay_ms updates
+    if request.name is not None or request.sync_delay_ms is not None:
+        try:
+            zone = await deps.zone_manager.update_zone(
+                zone_id,
+                name=request.name,
+                sync_delay_ms=request.sync_delay_ms,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Zone not found")
+
+    # Re-fetch after all mutations
+    zone = deps.zone_manager.get_zone(zone_id)
     return zone.to_model()
 
 

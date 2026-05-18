@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     bit_depth INTEGER,
     channels INTEGER DEFAULT 2,
     file_mtime REAL,
+    file_size INTEGER,
     audio_hash TEXT,
     source TEXT NOT NULL DEFAULT 'local',
     source_id TEXT,

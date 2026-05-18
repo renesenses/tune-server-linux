@@ -44,8 +44,47 @@ class SQLiteFTS:
         "artists": "name",
     }
 
+    async def _ensure_diacritics_tokenizer(self, conn: AsyncConnection) -> None:
+        """Recreate FTS5 tables if they lack remove_diacritics 2.
+
+        Databases created before the tokenizer option was added have FTS5
+        tables that do exact character matching.  We detect this by checking
+        the CREATE SQL and rebuild when necessary.
+        """
+        for table, column in self._FTS_TABLES.items():
+            fts_name = f"{table}_fts"
+            try:
+                row = await conn.execute(
+                    sa.text(
+                        "SELECT sql FROM sqlite_master "
+                        "WHERE type='table' AND name=:fts_name"
+                    ),
+                    {"fts_name": fts_name},
+                )
+                result = row.fetchone()
+                if result is None:
+                    continue  # Table doesn't exist yet, will be created below
+                create_sql = result[0] or ""
+                if "remove_diacritics" in create_sql:
+                    continue  # Already has diacritics support
+
+                # Drop old FTS table + triggers, they will be recreated below
+                logger.info("fts_rebuild_diacritics", table=fts_name)
+                for stmt in [
+                    f"DROP TRIGGER IF EXISTS {table}_ai",
+                    f"DROP TRIGGER IF EXISTS {table}_ad",
+                    f"DROP TRIGGER IF EXISTS {table}_au",
+                    f"DROP TABLE IF EXISTS {fts_name}",
+                ]:
+                    await conn.execute(sa.text(stmt))
+            except Exception as exc:
+                logger.warning("fts_diacritics_check_error", table=fts_name, error=str(exc))
+
     async def setup(self, conn: AsyncConnection) -> None:
         """Create FTS5 virtual tables and sync triggers."""
+        # Ensure existing FTS tables have remove_diacritics 2 tokenizer
+        await self._ensure_diacritics_tokenizer(conn)
+
         for table, column in self._FTS_TABLES.items():
             fts_name = f"{table}_fts"
             stmts = [
@@ -70,6 +109,24 @@ class SQLiteFTS:
                 except Exception:
                     pass  # Already exists
 
+            # Rebuild FTS index to populate content (needed after table recreation)
+            try:
+                row = await conn.execute(
+                    sa.text(f"SELECT COUNT(*) FROM {fts_name}")
+                )
+                fts_count = row.fetchone()[0]
+                row2 = await conn.execute(
+                    sa.text(f"SELECT COUNT(*) FROM {table}")
+                )
+                source_count = row2.fetchone()[0]
+                if source_count > 0 and fts_count == 0:
+                    logger.info("fts_rebuild_content", table=fts_name, rows=source_count)
+                    await conn.execute(sa.text(
+                        f"INSERT INTO {fts_name}({fts_name}) VALUES ('rebuild')"
+                    ))
+            except Exception as exc:
+                logger.warning("fts_rebuild_error", table=fts_name, error=str(exc))
+
         logger.info("fts_initialized", engine="sqlite", tables=list(self._FTS_TABLES.keys()))
 
     def search_where(self, table_name: str, query: str) -> sa.TextClause:
@@ -92,6 +149,12 @@ class PostgresFTS:
 
     async def setup(self, conn: AsyncConnection) -> None:
         """Add tsvector columns, GIN indexes, and auto-update triggers."""
+        # Enable unaccent extension for accent-insensitive search
+        try:
+            await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS unaccent"))
+        except Exception:
+            logger.warning("pg_unaccent_extension_unavailable")
+
         for table, column in self._FTS_TABLES.items():
             stmts = [
                 # Add column (idempotent)
@@ -101,12 +164,12 @@ class PostgresFTS:
                 END $$""",
                 # GIN index
                 f"CREATE INDEX IF NOT EXISTS idx_{table}_fts ON {table} USING GIN(fts_vector)",
-                # Populate existing rows
-                f"UPDATE {table} SET fts_vector = to_tsvector('simple', COALESCE({column}, '')) WHERE fts_vector IS NULL",
-                # Trigger function
+                # Populate existing rows — use unaccent so the tsvector is accent-folded
+                f"UPDATE {table} SET fts_vector = to_tsvector('simple', unaccent(COALESCE({column}, ''))) WHERE fts_vector IS NULL",
+                # Trigger function — index the unaccented form
                 f"""CREATE OR REPLACE FUNCTION {table}_fts_trigger() RETURNS trigger AS $$
                 BEGIN
-                    NEW.fts_vector := to_tsvector('simple', COALESCE(NEW.{column}, ''));
+                    NEW.fts_vector := to_tsvector('simple', unaccent(COALESCE(NEW.{column}, '')));
                     RETURN NEW;
                 END;
                 $$ LANGUAGE plpgsql""",
@@ -121,13 +184,34 @@ class PostgresFTS:
                 except Exception:
                     pass
 
+        # One-time migration: re-index existing rows with unaccent.
+        # Uses a marker row in a helper table to avoid repeating on every startup.
+        try:
+            await conn.execute(sa.text(
+                "CREATE TABLE IF NOT EXISTS _fts_migrations (name TEXT PRIMARY KEY)"
+            ))
+            row = await conn.execute(sa.text(
+                "SELECT 1 FROM _fts_migrations WHERE name = 'unaccent_reindex'"
+            ))
+            if row.fetchone() is None:
+                for table, column in self._FTS_TABLES.items():
+                    await conn.execute(sa.text(
+                        f"UPDATE {table} SET fts_vector = to_tsvector('simple', unaccent(COALESCE({column}, '')))"
+                    ))
+                await conn.execute(sa.text(
+                    "INSERT INTO _fts_migrations (name) VALUES ('unaccent_reindex')"
+                ))
+                logger.info("pg_fts_unaccent_reindex_complete")
+        except Exception:
+            pass
+
         logger.info("fts_initialized", engine="postgres", tables=list(self._FTS_TABLES.keys()))
 
     def search_where(self, table_name: str, query: str) -> sa.TextClause:
-        return sa.text(f"{table_name}.fts_vector @@ plainto_tsquery('simple', :fts_query)")
+        return sa.text(f"{table_name}.fts_vector @@ plainto_tsquery('simple', unaccent(:fts_query))")
 
     def search_rank(self, table_name: str, query: str) -> sa.TextClause:
-        return sa.text(f"ts_rank({table_name}.fts_vector, plainto_tsquery('simple', :fts_query))")
+        return sa.text(f"ts_rank({table_name}.fts_vector, plainto_tsquery('simple', unaccent(:fts_query)))")
 
 
 class GenericFTS:

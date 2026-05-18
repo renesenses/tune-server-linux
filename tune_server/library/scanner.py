@@ -143,7 +143,7 @@ class LibraryScanner:
     def is_scanning(self) -> bool:
         return self._scanning
 
-    async def scan(self, music_dirs: list[str]) -> dict:
+    async def scan(self, music_dirs: list[str], force_rescan: bool = False) -> dict:
         if self._scanning:
             logger.warning("scan_already_in_progress")
             return {"status": "already_scanning"}
@@ -168,7 +168,7 @@ class LibraryScanner:
                     logger.warning("music_dir_not_found", path=music_dir)
                     continue
 
-                logger.info("scanning_directory", path=music_dir)
+                logger.info("scanning_directory", path=music_dir, force=force_rescan)
 
                 # List files in a thread to avoid blocking the event loop on NAS
                 file_list = await asyncio.to_thread(_list_audio_files, dir_path)
@@ -187,7 +187,10 @@ class LibraryScanner:
 
                     try:
                         if path_str in existing_paths:
-                            await self._handle_existing_file(path_str, file_path, stats)
+                            await self._handle_existing_file(
+                                path_str, file_path, stats,
+                                force=force_rescan,
+                            )
                         else:
                             added = await self._process_new_file(path_str)
                             if added:
@@ -244,12 +247,25 @@ class LibraryScanner:
 
         return stats
 
-    async def _handle_existing_file(self, path_str: str, file_path: Path, stats: dict) -> None:
-        """Handle a file that already exists in the database."""
+    async def _handle_existing_file(
+        self, path_str: str, file_path: Path, stats: dict,
+        force: bool = False,
+    ) -> None:
+        """Handle a file that already exists in the database.
+
+        Change detection uses mtime AND file size.  Some tag editors
+        (Mp3tag, Picard) may not update the mtime on every platform, but
+        writing tags almost always changes the file size.  Checking both
+        catches edits that either indicator alone would miss.
+
+        When *force* is True the file is always re-read regardless of
+        mtime/size (triggered by ``POST /scan?full=true``).
+        """
         # Backfill audio_hash if missing (quick DB check under lock)
         async with self._lock:
             row = await self._db.fetchone(
-                "SELECT audio_hash FROM tracks WHERE file_path = ?", (path_str,)
+                "SELECT audio_hash, file_size FROM tracks WHERE file_path = ?",
+                (path_str,),
             )
         if row and not row["audio_hash"]:
             # Heavy I/O outside the lock
@@ -258,18 +274,40 @@ class LibraryScanner:
                 async with self._lock:
                     await self._track_repo.update_audio_hash(path_str, h)
 
-        # Check if file was modified since last scan
-        try:
-            file_mtime = file_path.stat().st_mtime
-        except OSError as e:
-            logger.debug("scan_file_stat_error", path=str(file_path), error=str(e))
-            return
-        async with self._lock:
-            stored_mtime = await self._track_repo.get_mtime(path_str)
-        if stored_mtime and file_mtime <= stored_mtime:
-            return  # File unchanged
+        if not force:
+            # Check if file was modified since last scan
+            try:
+                st = file_path.stat()
+                file_mtime = st.st_mtime
+                file_size = st.st_size
+            except OSError as e:
+                logger.debug("scan_file_stat_error", path=str(file_path), error=str(e))
+                return
 
-        # File modified — re-process
+            async with self._lock:
+                stored_mtime = await self._track_repo.get_mtime(path_str)
+
+            # mtime unchanged — also verify file size hasn't changed
+            # (tag editors sometimes preserve mtime but change file size)
+            if stored_mtime and file_mtime <= stored_mtime:
+                stored_size = row["file_size"] if row else None
+                if stored_size is not None and file_size == stored_size:
+                    return  # File truly unchanged
+                # Size mismatch (or no stored size yet) — backfill or re-read
+                if stored_size is None:
+                    # First scan after migration: just store the size, no re-read
+                    async with self._lock:
+                        await self._track_repo.update_file_size(path_str, file_size)
+                    return
+                # Size changed but mtime didn't — tag editor edited the file
+                logger.info(
+                    "file_size_changed",
+                    path=path_str,
+                    old_size=stored_size,
+                    new_size=file_size,
+                )
+
+        # File modified (or force rescan) — re-process
         added = await self._rescan_file(path_str)
         if added:
             stats["updated"] += 1
@@ -445,9 +483,11 @@ class LibraryScanner:
             )
             track_id = await self._track_repo.create(track)
 
-            # Store file mtime and audio hash
-            mtime = Path(file_path).stat().st_mtime
-            await self._track_repo.update_mtime(file_path, mtime)
+            # Store file mtime, size, and audio hash
+            st = Path(file_path).stat()
+            await self._track_repo.update_mtime_and_size(
+                file_path, st.st_mtime, st.st_size,
+            )
             await self._track_repo.update_audio_hash(file_path, audio_hash)
 
             # Update album track count + quality stats
@@ -513,3 +553,31 @@ class LibraryScanner:
         if self._scanning:
             return False
         return await self._rescan_file(file_path)
+
+    async def rescan_track(self, track_id: int) -> dict:
+        """Force re-read metadata for a single track by ID.
+
+        Unlike scan_single this works by track ID (not path) and always
+        re-reads regardless of mtime/size.  Returns updated track info
+        or an error dict.
+        """
+        async with self._lock:
+            track = await self._track_repo.get(track_id)
+        if not track:
+            return {"error": "track_not_found", "track_id": track_id}
+        if not track.file_path:
+            return {"error": "no_file_path", "track_id": track_id}
+        file_path = track.file_path
+        if not Path(file_path).exists():
+            return {"error": "file_not_found", "track_id": track_id, "path": file_path}
+
+        ok = await self._rescan_file(file_path)
+        if ok:
+            async with self._lock:
+                refreshed = await self._track_repo.get_by_path(file_path)
+            return {
+                "status": "updated",
+                "track_id": refreshed.id if refreshed else track_id,
+                "path": file_path,
+            }
+        return {"error": "rescan_failed", "track_id": track_id, "path": file_path}

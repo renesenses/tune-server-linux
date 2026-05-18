@@ -17,6 +17,7 @@ from tune_server.db.tables import (
     user_profiles, user_favorites, party_votes, album_ratings,
 )
 from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track
+from tune_server.utils import fold_accents
 
 logger = structlog.get_logger()
 
@@ -279,18 +280,26 @@ class SAArtistRepo:
         return row[0] if row else 0
 
     async def search(self, query: str, limit: int = 50) -> list[Artist]:
-        """FTS search — uses the engine's FTS plugin, no branching."""
+        """FTS search with accent-folded LIKE fallback."""
         where_clause = self._db.fts.search_where("artists", query)
         rank_clause = self._db.fts.search_rank("artists", query)
 
-        # Build query with FTS plugin clauses
+        folded = fold_accents(query)
+        like_folded = f"%{folded}%"
+
+        # Build query with FTS plugin clauses + accent-folded LIKE fallback
         fts_query = query + "*" if self._db.engine_name == "sqlite" else query
+        like_col = "name"
+        if self._db.engine_name in ("postgres", "postgresql"):
+            accent_fallback = sa.text(f"unaccent(artists.{like_col}) ILIKE :like_folded")
+        else:
+            accent_fallback = sa.text(f"artists.{like_col} LIKE :like_folded")
         stmt = (
             sa.select(artists)
-            .where(where_clause)
+            .where(sa.or_(where_clause, accent_fallback))
             .order_by(rank_clause.desc())
             .limit(limit)
-            .params(fts_query=fts_query)
+            .params(fts_query=fts_query, like_folded=like_folded)
         )
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_artist(r) for r in rows]
@@ -652,12 +661,18 @@ class SAAlbumRepo:
 
     async def search(self, query: str, limit: int = 50) -> list[Album]:
         where_clause = self._db.fts.search_where("albums", query)
+        folded = fold_accents(query)
+        like_folded = f"%{folded}%"
         fts_query = query + "*" if self._db.engine_name == "sqlite" else query
+        if self._db.engine_name in ("postgres", "postgresql"):
+            accent_fallback = sa.text("unaccent(albums.title) ILIKE :like_folded")
+        else:
+            accent_fallback = sa.text("albums.title LIKE :like_folded")
         stmt = (
             self._album_select()
-            .where(where_clause)
+            .where(sa.or_(where_clause, accent_fallback))
             .limit(limit)
-            .params(fts_query=fts_query)
+            .params(fts_query=fts_query, like_folded=like_folded)
         )
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_album(r) for r in rows]
@@ -810,6 +825,31 @@ class SATrackRepo:
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_track(r) for r in rows]
 
+    async def search_random(self, query: str, limit: int = 5000) -> list[Track]:
+        """Return up to *limit* tracks matching *query* in random order."""
+        where_clause = self._db.fts.search_where("tracks", query)
+        fts_query = query + "*" if self._db.engine_name == "sqlite" else query
+        stmt = (
+            self._track_select()
+            .where(where_clause)
+            .order_by(sa.func.random())
+            .limit(limit)
+            .params(fts_query=fts_query)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [_row_to_track(r) for r in rows]
+
+    async def list_random_by_genre(self, genre: str, limit: int = 5000) -> list[Track]:
+        """Return up to *limit* tracks matching *genre* in random order."""
+        stmt = (
+            self._track_select()
+            .where(tracks.c.genre.ilike(f"%{genre}%"))
+            .order_by(sa.func.random())
+            .limit(limit)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [_row_to_track(r) for r in rows]
+
     async def list_by_album(self, album_id: int) -> list[Track]:
         stmt = (
             self._track_select()
@@ -898,12 +938,18 @@ class SATrackRepo:
 
     async def search(self, query: str, limit: int = 50) -> list[Track]:
         where_clause = self._db.fts.search_where("tracks", query)
+        folded = fold_accents(query)
+        like_folded = f"%{folded}%"
         fts_query = query + "*" if self._db.engine_name == "sqlite" else query
+        if self._db.engine_name in ("postgres", "postgresql"):
+            accent_fallback = sa.text("unaccent(tracks.title) ILIKE :like_folded")
+        else:
+            accent_fallback = sa.text("tracks.title LIKE :like_folded")
         stmt = (
             self._track_select()
-            .where(where_clause)
+            .where(sa.or_(where_clause, accent_fallback))
             .limit(limit)
-            .params(fts_query=fts_query)
+            .params(fts_query=fts_query, like_folded=like_folded)
         )
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_track(r) for r in rows]

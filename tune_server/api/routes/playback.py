@@ -6,7 +6,9 @@ import random
 
 import structlog
 
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
 
 from tune_server.api.deps import deps
 from tune_server.event_bus import Event, EventType
@@ -971,8 +973,18 @@ async def widget_data():
 
 
 @global_router.post("/playback/shuffle-all")
-async def shuffle_all_library(zone_id: int):
-    """Shuffle-play the entire local library (up to 5 000 tracks)."""
+async def shuffle_all_library(
+    zone_id: int,
+    search_query: Optional[str] = Query(None, description="Shuffle only tracks matching this search"),
+    album_id: Optional[int] = Query(None, description="Shuffle tracks from this album"),
+    artist_id: Optional[int] = Query(None, description="Shuffle tracks from this artist"),
+    genre: Optional[str] = Query(None, description="Shuffle tracks matching this genre"),
+):
+    """Shuffle-play tracks from the library (up to 5 000 tracks).
+
+    When a context filter is provided, only matching tracks are shuffled.
+    Without any filter, the entire library is shuffled (original behaviour).
+    """
     zone = deps.zone_manager.get_zone(zone_id)
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
@@ -980,9 +992,22 @@ async def shuffle_all_library(zone_id: int):
     if not deps.track_repo:
         raise HTTPException(status_code=503, detail="Library not available")
 
-    tracks = await deps.track_repo.list_random(limit=5000)
+    # Pick tracks according to the context filter
+    if search_query:
+        tracks = await deps.track_repo.search_random(search_query, limit=5000)
+    elif album_id is not None:
+        tracks = await deps.track_repo.list_by_album(album_id)
+        random.shuffle(tracks)
+    elif artist_id is not None:
+        tracks = await deps.track_repo.list_by_artist(artist_id)
+        random.shuffle(tracks)
+    elif genre:
+        tracks = await deps.track_repo.list_random_by_genre(genre, limit=5000)
+    else:
+        tracks = await deps.track_repo.list_random(limit=5000)
+
     if not tracks:
-        raise HTTPException(status_code=404, detail="Library is empty")
+        raise HTTPException(status_code=404, detail="No tracks found")
 
     # Shuffle in-place for good measure (DB RANDOM() is already random,
     # but this also works for repos that don't support ORDER BY RANDOM).

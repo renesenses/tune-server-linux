@@ -104,6 +104,7 @@ tracks = sa.Table(
     sa.Column("bit_depth", sa.Integer),
     sa.Column("channels", sa.Integer, server_default="2"),
     sa.Column("file_mtime", sa.Float(precision=53)),
+    sa.Column("file_size", sa.BigInteger),
     sa.Column("audio_hash", sa.Text),
     sa.Column("source", sa.Text, nullable=False, server_default="local"),
     sa.Column("source_id", sa.Text),

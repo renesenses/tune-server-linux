@@ -390,6 +390,8 @@ class ZoneCreateRequest(BaseModel):
 class ZoneUpdateRequest(BaseModel):
     name: str | None = None
     sync_delay_ms: int | None = Field(default=None, ge=-10000, le=10000)
+    output_type: OutputType | None = None
+    output_device_id: str | None = None
 
 
 class ZoneGroupRequest(BaseModel):

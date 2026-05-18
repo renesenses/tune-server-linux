@@ -289,12 +289,9 @@ async def trigger_scan(
     else:
         scan_dirs = settings.music_dirs
 
-    if full:
-        await deps.db.execute("UPDATE tracks SET file_mtime = 0 WHERE file_mtime IS NOT NULL")
-        await deps.db.commit()
-
-    # Run scan in background
-    task = asyncio.create_task(deps.scanner.scan(scan_dirs))
+    # Run scan in background — pass force_rescan so the scanner re-reads
+    # every file's metadata even when mtime/size haven't changed.
+    task = asyncio.create_task(deps.scanner.scan(scan_dirs, force_rescan=full))
     task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
     return {"status": "scan_started", "music_dirs": scan_dirs, "full": full}
 
