@@ -733,13 +733,16 @@ async def history_dashboard(
 
     async def q_top_radios():
         return await deps.db.fetchall(
-            f"""SELECT track_title as station_name,
+            f"""SELECT COALESCE(
+                         NULLIF(album_title, 'Live Radio'),
+                         track_title
+                       ) as station_name,
                        COUNT(*) as plays,
                        COALESCE(SUM(listened_ms), 0) as listening_ms
                 FROM playback_history {where_clause}
                   {'AND' if where_parts else 'WHERE'} source = 'radio'
                   AND track_title IS NOT NULL
-                GROUP BY track_title
+                GROUP BY station_name
                 ORDER BY listening_ms DESC
                 LIMIT ?""",
             tuple(params) + (top_n,),
