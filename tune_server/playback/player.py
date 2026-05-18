@@ -12,7 +12,7 @@ from tune_server.config import settings
 from tune_server.audio.formats import AudioCapabilities, LOCAL_CAPABILITIES
 from pathlib import Path
 
-from tune_server.audio.pipeline import AudioPipeline
+from tune_server.audio.pipeline import AudioPipeline, create_pipeline
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.models import AudioFormat, AudioStreamInfo, PlaybackState, SignalPath, SignalPathStep, Source, Track
 from tune_server.outputs.base import OutputTarget
@@ -606,7 +606,7 @@ class Player:
             pipeline_seek_ms = 0
 
         eq_filter = self._build_eq_filter()
-        self._pipeline = AudioPipeline(capabilities, icy_callback=icy_cb, channel_filter=self._channel_filter)
+        self._pipeline = create_pipeline(capabilities, icy_callback=icy_cb, channel_filter=self._channel_filter)
         try:
             stream_info = await asyncio.wait_for(
                 self._pipeline.start(

@@ -254,3 +254,160 @@ class AudioPipeline:
 
         self._output_buffer.close()
         self._output_buffer.reset()
+
+
+# ---------------------------------------------------------------------------
+# Rust-accelerated pipeline (Phase 2 migration)
+# ---------------------------------------------------------------------------
+
+try:
+    import tune_native as _rust
+
+    class RustAudioPipeline:
+        """Drop-in replacement using tune_native.RustPipeline for FFmpeg."""
+
+        def __init__(
+            self,
+            target_capabilities: AudioCapabilities,
+            icy_callback=None,
+            channel_filter: str | None = None,
+        ) -> None:
+            self._capabilities = target_capabilities
+            self._icy_callback = icy_callback
+            self._channel_filter = channel_filter
+            self._rust_pipeline = None
+            self._output_buffer = AsyncRingBuffer(max_chunks=512)
+            self._feed_task: asyncio.Task | None = None
+            self._passthrough = False
+            self._stream_info: AudioStreamInfo | None = None
+            self._decisions: list[str] = ["engine=rust"]
+
+        @property
+        def output_buffer(self) -> AsyncRingBuffer:
+            return self._output_buffer
+
+        @property
+        def stream_info(self) -> AudioStreamInfo | None:
+            return self._stream_info
+
+        @property
+        def is_passthrough(self) -> bool:
+            return self._passthrough
+
+        @property
+        def decisions(self) -> list[str]:
+            return self._decisions
+
+        @property
+        def source_hash(self) -> str | None:
+            return None
+
+        @property
+        def output_hash(self) -> str | None:
+            return None
+
+        async def start(
+            self,
+            file_path: str,
+            source_format: AudioFormat,
+            sample_rate: int,
+            bit_depth: int,
+            channels: int,
+            seek_ms: int = 0,
+            extra_filters: str | None = None,
+        ) -> AudioStreamInfo:
+            _is_url = file_path.startswith("http://") or file_path.startswith("https://")
+            self._passthrough = (
+                can_passthrough(source_format, sample_rate, bit_depth, self._capabilities)
+                and not _is_url
+                and seek_ms == 0
+                and not self._channel_filter
+                and not extra_filters
+            )
+
+            if self._passthrough:
+                file_size = Path(file_path).stat().st_size if Path(file_path).exists() else 0
+                self._stream_info = AudioStreamInfo(
+                    format=source_format,
+                    sample_rate=sample_rate,
+                    bit_depth=bit_depth,
+                    channels=channels,
+                    file_size=file_size,
+                )
+                self._decisions.append(f"PASSTHROUGH: {source_format}")
+                return self._stream_info
+
+            from tune_server.audio.formats import best_output_format
+            out_fmt = best_output_format(source_format, sample_rate, bit_depth, self._capabilities)
+            out_rate = min(sample_rate, self._capabilities.max_sample_rate)
+            out_depth = min(bit_depth, self._capabilities.max_bit_depth)
+
+            fmt_str = out_fmt.value if hasattr(out_fmt, 'value') else str(out_fmt)
+
+            self._rust_pipeline = _rust.RustPipeline(
+                file_path, fmt_str, out_rate, out_depth, channels,
+                seek_ms if seek_ms > 0 else None, 512,
+            )
+            await asyncio.to_thread(self._rust_pipeline.start)
+
+            self._stream_info = AudioStreamInfo(
+                format=out_fmt,
+                sample_rate=out_rate,
+                bit_depth=out_depth,
+                channels=channels,
+            )
+            self._decisions.append(f"RUST: {source_format}→{out_fmt} {out_rate}Hz/{out_depth}bit")
+
+            self._feed_task = asyncio.create_task(self._feed_loop())
+            return self._stream_info
+
+        async def _feed_loop(self) -> None:
+            try:
+                while True:
+                    chunk = await asyncio.to_thread(self._rust_pipeline.read_chunk, 5000)
+                    if chunk is None:
+                        break
+                    await self._output_buffer.put(bytes(chunk))
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("rust_pipeline_feed_error")
+            finally:
+                self._output_buffer.close()
+
+        async def stop(self) -> None:
+            if self._feed_task:
+                self._feed_task.cancel()
+                try:
+                    await self._feed_task
+                except asyncio.CancelledError:
+                    pass
+            if self._rust_pipeline:
+                await asyncio.to_thread(self._rust_pipeline.stop)
+                self._rust_pipeline = None
+            self._output_buffer.close()
+            self._output_buffer.reset()
+
+    _RUST_PIPELINE_AVAILABLE = True
+    logger.info("rust_audio_pipeline_available")
+except ImportError:
+    _RUST_PIPELINE_AVAILABLE = False
+
+
+def create_pipeline(
+    target_capabilities: AudioCapabilities,
+    icy_callback=None,
+    channel_filter: str | None = None,
+) -> AudioPipeline:
+    """Factory: returns RustAudioPipeline if available, else Python."""
+    import os
+    engine = os.environ.get("TUNE_PIPELINE_ENGINE", "auto")
+    use_rust = (
+        _RUST_PIPELINE_AVAILABLE
+        and engine != "python"
+        and icy_callback is None  # Rust doesn't support ICY yet
+        and channel_filter is None  # Rust doesn't support channel filter yet
+    )
+    if use_rust:
+        return RustAudioPipeline(target_capabilities, icy_callback, channel_filter)
+    return AudioPipeline(target_capabilities, icy_callback, channel_filter)
