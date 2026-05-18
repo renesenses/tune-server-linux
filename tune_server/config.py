@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     # Slow renderer support (Atoll ST300, etc.): some devices need extra time
     # between SetAVTransportURI and Play, plus retry logic if playback doesn't start.
     # Comma-separated substrings matched case-insensitively against device name/model/manufacturer.
-    dlna_slow_renderer_patterns: str = "atoll,st300,st200"
+    dlna_slow_renderer_patterns: str = "atoll,st300,st200,shangling,shanling,scd1"
     dlna_slow_startup_delay_ms: int = 1500          # ms, extra delay for slow renderers before Play
     dlna_slow_retry_timeout_ms: int = 3000          # ms, wait for position > 0 before retrying
     dlna_slow_max_retries: int = 2                  # max retry attempts for slow renderers
