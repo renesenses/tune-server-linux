@@ -165,26 +165,34 @@ class DiscoveryManager:
     def list_devices_deduped(self) -> list[DiscoveredDevice]:
         """Deduplicated device list for UI display.
 
-        When the same IP is discovered via multiple protocols, keep only
-        the most specific one (OpenHome > BluOS > DLNA > Cast > AirPlay).
-        Filters out renderers hosted on the server itself (PulseAudio/
-        PipeWire DLNA renderers that mirror local sound cards).
+        When the same IP is discovered via multiple protocols, the primary
+        device (highest priority) is returned with an ``alternatives`` list
+        in its capabilities so the UI can offer protocol selection.
+        Priority: OpenHome > BluOS > DLNA > Cast > AirPlay.
+        Filters out renderers hosted on the server itself.
         """
         all_devices = self.list_devices()
-        by_host: dict[str, DiscoveredDevice] = {}
+        by_host: dict[str, list[DiscoveredDevice]] = {}
         for dev in all_devices:
             caps = dev.capabilities or {}
             if caps.get("manufacturer", "").lower() == "mozaik labs":
                 continue
-            existing = by_host.get(dev.host)
-            if not existing:
-                by_host[dev.host] = dev
-            else:
-                new_prio = self._TYPE_PRIORITY.get(dev.type.value, 0)
-                old_prio = self._TYPE_PRIORITY.get(existing.type.value, 0)
-                if new_prio > old_prio:
-                    by_host[dev.host] = dev
-        return list(by_host.values())
+            by_host.setdefault(dev.host, []).append(dev)
+
+        result: list[DiscoveredDevice] = []
+        for host, devs in by_host.items():
+            devs.sort(
+                key=lambda d: self._TYPE_PRIORITY.get(d.type.value, 0),
+                reverse=True,
+            )
+            primary = devs[0]
+            if len(devs) > 1:
+                alts = [{"id": d.id, "type": d.type.value, "name": d.name} for d in devs[1:]]
+                caps = dict(primary.capabilities or {})
+                caps["alternatives"] = alts
+                primary = primary.model_copy(update={"capabilities": caps})
+            result.append(primary)
+        return result
 
     async def rescan(self) -> list[DiscoveredDevice]:
         """Force an immediate rescan of all discovery sources."""

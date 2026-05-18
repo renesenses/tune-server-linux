@@ -103,7 +103,24 @@ class AirPlayOutput(OutputTarget):
             logger.error("airplay_no_file", device=self._device_name)
             return
 
-        await self.stop()
+        has_prepared = (
+            self._next_track_file
+            and self._next_track_file == track.file_path
+        )
+        if not has_prepared:
+            await self.stop()
+        else:
+            if self._stream_task and not self._stream_task.done():
+                self._stream_task.cancel()
+                try:
+                    await self._stream_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._stream_task = None
+            if self._stream_id and self._streamer:
+                self._streamer.remove_session(self._stream_id)
+                self._stream_id = None
+            self._cleanup_temp_wav()
 
         try:
             stream = self._atv.stream
