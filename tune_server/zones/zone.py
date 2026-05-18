@@ -8,7 +8,7 @@ from tune_server.db.repository import PlayQueueRepo, ZoneRepo
 from tune_server.event_bus import EventBus
 from tune_server.models import AudioFormat, OutputType, PlaybackState, Source, Track, Zone
 from tune_server.outputs.base import OutputTarget
-from tune_server.playback.player import Player
+from tune_server.playback.player import Player, cover_url_for_client
 
 logger = structlog.get_logger()
 
@@ -134,6 +134,12 @@ class ZoneInstance:
         return self._player.position_ms
 
     def to_model(self) -> Zone:
+        # Transform current_track cover_path so the client always gets
+        # a usable URL (not a raw filesystem path or expiring CDN URL).
+        current = self._player.current_track
+        if current and current.cover_path:
+            current = current.model_copy()
+            current.cover_path = cover_url_for_client(current.cover_path)
         return Zone(
             id=self._zone_id,
             name=self._name,
@@ -143,7 +149,7 @@ class ZoneInstance:
             group_id=self._group_id,
             sync_delay_ms=self._sync_delay_ms,
             state=self._player.state,
-            current_track=self._player.current_track,
+            current_track=current,
             position_ms=self._player.position_ms,
             queue_length=self._player.queue.length,
             signal_path=self._player.signal_path,

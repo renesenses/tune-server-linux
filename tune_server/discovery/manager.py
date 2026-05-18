@@ -10,6 +10,7 @@ from tune_server.discovery.bluos import BluosDiscovery
 from tune_server.discovery.cast import CastDiscovery
 from tune_server.discovery.mdns import MdnsDiscovery
 from tune_server.discovery.openhome import OpenHomeDiscovery
+from tune_server.discovery.squeezebox import SqueezeboxDiscovery
 from tune_server.discovery.ssdp import SsdpDiscovery
 from tune_server.discovery.tune_discovery import TuneDiscovery
 from tune_server.event_bus import EventBus
@@ -33,6 +34,7 @@ class DiscoveryManager:
         self._cast = CastDiscovery(event_bus) if getattr(settings, 'cast_enabled', True) else None
         self._bluos = BluosDiscovery(event_bus) if getattr(settings, 'bluos_enabled', True) else None
         self._openhome = OpenHomeDiscovery(event_bus) if settings.ssdp_enabled else None
+        self._squeezebox = SqueezeboxDiscovery(event_bus) if getattr(settings, 'squeezebox_enabled', True) else None
         self._tune = TuneDiscovery(event_bus) if settings.peer_discovery_enabled else None
         self._network_shares: NetworkShareDiscovery | None = None
         self._media_servers: MediaServerDiscovery | None = None
@@ -66,6 +68,10 @@ class DiscoveryManager:
         return self._openhome
 
     @property
+    def squeezebox(self) -> SqueezeboxDiscovery | None:
+        return self._squeezebox
+
+    @property
     def tune(self) -> TuneDiscovery | None:
         return self._tune
 
@@ -82,9 +88,9 @@ class DiscoveryManager:
             logger.info("discovery_disabled")
             return
 
-        # Create a shared Zeroconf instance for mDNS + Cast + BluOS + Tune peer discovery
-        # to avoid port 5353 conflicts from multiple instances.
-        if self._mdns or self._cast or self._bluos or self._tune:
+        # Create a shared Zeroconf instance for mDNS + Cast + BluOS + Squeezebox + Tune
+        # peer discovery to avoid port 5353 conflicts from multiple instances.
+        if self._mdns or self._cast or self._bluos or self._squeezebox or self._tune:
             try:
                 from zeroconf import Zeroconf
                 self._shared_zc = Zeroconf()
@@ -101,6 +107,8 @@ class DiscoveryManager:
             await self._bluos.start(shared_zc=self._shared_zc)
         if self._openhome:
             await self._openhome.start()
+        if self._squeezebox:
+            await self._squeezebox.start(shared_zc=self._shared_zc)
         if self._tune:
             await self._tune.start(shared_zc=self._shared_zc)
         if self._network_shares:
@@ -121,6 +129,8 @@ class DiscoveryManager:
             await self._bluos.stop()
         if self._openhome:
             await self._openhome.stop()
+        if self._squeezebox:
+            await self._squeezebox.stop()
         if self._tune:
             await self._tune.stop()
         if self._shared_zc:
@@ -132,7 +142,7 @@ class DiscoveryManager:
             await self._media_servers.stop()
 
     _TYPE_PRIORITY = {
-        "openhome": 6, "bluos": 5, "chromecast": 4,
+        "openhome": 7, "bluos": 6, "squeezebox": 5, "chromecast": 4,
         "airplay": 3, "dlna": 2, "local": 1,
     }
 
@@ -148,6 +158,8 @@ class DiscoveryManager:
             devices.extend(self._bluos.devices.values())
         if self._openhome:
             devices.extend(self._openhome.devices.values())
+        if self._squeezebox:
+            devices.extend(self._squeezebox.devices.values())
         return devices
 
     def list_devices_deduped(self) -> list[DiscoveredDevice]:
@@ -183,6 +195,8 @@ class DiscoveryManager:
             tasks.append(self._bluos.rescan())
         if self._openhome:
             tasks.append(self._openhome.rescan())
+        if self._squeezebox:
+            tasks.append(self._squeezebox.rescan())
         if tasks:
             await asyncio.gather(*tasks)
         return self.list_devices()
@@ -202,6 +216,10 @@ class DiscoveryManager:
                 return dev
         if self._bluos:
             dev = self._bluos.devices.get(device_id)
+            if dev:
+                return dev
+        if self._squeezebox:
+            dev = self._squeezebox.devices.get(device_id)
             if dev:
                 return dev
         return None

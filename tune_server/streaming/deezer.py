@@ -564,13 +564,16 @@ class DeezerService(StreamingService):
     # ------------------------------------------------------------------
 
     def _map_track(self, t: dict) -> Track:
-        artist = t.get("artist", {})
-        album = t.get("album", {})
+        artist = t.get("artist") or {}
+        album = t.get("album") or {}
 
-        # Cover art: use album cover
+        # Cover art: use album cover, with fallback to track-level md5_image
         cover = None
         if isinstance(album, dict):
             cover = album.get("cover_big") or album.get("cover_medium") or album.get("cover")
+        # Deezer provides md5_image on each track — build URL as last resort
+        if not cover and t.get("md5_image"):
+            cover = f"https://e-cdns-images.dzcdn.net/images/cover/{t['md5_image']}/500x500.jpg"
 
         fmt = AudioFormat.FLAC if self._quality == "FLAC" else AudioFormat.MP3
         bit_depth = 16

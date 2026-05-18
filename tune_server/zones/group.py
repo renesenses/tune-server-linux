@@ -54,7 +54,7 @@ class ZoneGroup:
 
     async def play(self, tracks: list[Track], start_position: int = 0) -> None:
         """Play on all zones in the group, waiting for DLNA to actually start."""
-        network_zones = [z for z in self.all_zones if z.output_type in (OutputType.DLNA, OutputType.AIRPLAY, OutputType.CHROMECAST, OutputType.BLUOS)]
+        network_zones = [z for z in self.all_zones if z.output_type in (OutputType.DLNA, OutputType.AIRPLAY, OutputType.CHROMECAST, OutputType.BLUOS, OutputType.SQUEEZEBOX)]
         local_zones = [z for z in self.all_zones if z not in network_zones]
 
         if not network_zones:

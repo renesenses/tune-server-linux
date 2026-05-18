@@ -24,11 +24,19 @@ QueuePersistCallback = Callable[[list[Track], int], Coroutine[Any, Any, None]]
 
 
 def cover_url_for_client(cover_path: str | None) -> str | None:
-    """Transform cover_path to a URL the web client can load."""
+    """Transform cover_path to a URL the web client can load.
+
+    - Local filesystem paths → ``/api/v1/library/artwork/<filename>``
+    - HTTP(S) URLs (streaming CDN) → proxied through the artwork proxy
+      so the client never hits an expired CDN token directly.
+    """
     if not cover_path:
         return None
     if cover_path.startswith("http"):
-        return cover_path
+        # Route through the artwork proxy which caches locally and
+        # shields the client from expired Qobuz/Tidal/Deezer CDN tokens.
+        from urllib.parse import quote
+        return f"/api/v1/library/artwork/proxy?url={quote(cover_path, safe='')}"
     return f"/api/v1/library/artwork/{cover_path.split('/')[-1]}"
 
 
@@ -237,7 +245,14 @@ class Player:
                 )
 
     async def _cache_queue_covers(self, tracks: list[Track]) -> None:
-        """Pre-cache HTTP cover URLs for queued tracks in background."""
+        """Pre-cache HTTP cover URLs for queued tracks in background.
+
+        Once all covers are cached locally the track objects are mutated
+        in-place so subsequent queue reads return local paths instead of
+        expiring CDN URLs.  A QUEUE_CHANGED event is emitted at the end
+        so the web client refreshes cover art.
+        """
+        any_cached = False
         try:
             from tune_server.library.artwork import cache_cover_url
             for track in tracks:
@@ -245,8 +260,16 @@ class Player:
                     cached = await asyncio.to_thread(cache_cover_url, track.cover_path)
                     if cached:
                         track.cover_path = cached
+                        any_cached = True
         except Exception:
             logger.debug("cache_queue_covers_error", zone_id=self._zone_id)
+        # Notify clients so they pick up the freshly cached local paths
+        if any_cached:
+            await self._event_bus.emit(Event(
+                type=EventType.PLAYBACK_QUEUE_CHANGED,
+                data={"zone_id": self._zone_id},
+                source="cover_cache",
+            ))
 
     def _is_dlna_output(self) -> bool:
         """Check if current output is a DLNA renderer."""
@@ -446,6 +469,18 @@ class Player:
                     track.cover_path = cached
             except Exception:
                 logger.debug("cover_cache_failed", track=track.title)
+
+        # Fallback: if track still has no cover, try extracting from the
+        # audio file (local tracks) — this covers cases where the album
+        # in the DB has no cover_path yet.
+        if not track.cover_path and track.file_path and not track.file_path.startswith("http"):
+            try:
+                from tune_server.library.artwork import get_album_artwork
+                cover = await asyncio.to_thread(get_album_artwork, track.file_path)
+                if cover:
+                    track.cover_path = cover
+            except Exception:
+                logger.debug("cover_extract_fallback_failed", track=track.title)
 
         if not self._output:
             logger.error("play_no_output", zone_id=self._zone_id)

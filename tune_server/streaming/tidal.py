@@ -575,6 +575,12 @@ class TidalService(StreamingService):
                 cover_path = t.album.image(640)
             except Exception as e:
                 logger.debug("tidal_track_cover_failed", error=str(e))
+            # Fallback: build cover URL from album's image_id if .image() failed
+            if not cover_path:
+                img_id = getattr(t.album, "image", None)
+                if img_id and isinstance(img_id, str):
+                    # tidalapi stores the UUID; the CDN URL pattern is predictable
+                    cover_path = f"https://resources.tidal.com/images/{img_id.replace('-', '/')}/640x640.jpg"
 
         # Track.audio_quality ment (retourne toujours 'LOSSLESS' sur tidalapi
         # 0.8.x). La vraie qualité est dans media_metadata_tags qui liste les

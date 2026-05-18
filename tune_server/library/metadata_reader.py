@@ -10,6 +10,7 @@ from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 from mutagen.oggvorbis import OggVorbis
+from mutagen.monkeysaudio import MonkeysAudio
 from mutagen.wavpack import WavPack
 
 try:
@@ -150,7 +151,7 @@ def _extract_credits(audio, tags) -> list[dict]:
     credits: list[dict] = []
 
     try:
-        if isinstance(audio, (FLAC, OggVorbis)):
+        if isinstance(audio, (FLAC, OggVorbis, WavPack, MonkeysAudio)):
             # PERFORMER tag: "Name (instrument)"
             performers = _safe_tag_get(tags, "performer", "PERFORMER")
             if isinstance(performers, str):

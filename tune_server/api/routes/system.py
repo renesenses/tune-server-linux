@@ -917,16 +917,107 @@ async def update_status():
 
 @router.post("/restart")
 async def restart_server():
-    """Restart the server process. Returns immediately, server restarts after 2s."""
+    """Restart the server process. Returns immediately, server restarts after 2s.
+
+    On Linux (systemd): SIGTERM triggers exit; Restart=always relaunches.
+    On macOS: SIGTERM triggers exit; the launcher relaunches.
+    On Windows (PyInstaller frozen): writes a small helper bat that waits
+    for the current process to fully exit (port released, file handles
+    closed), then relaunches via start-tune-server.bat or tune-server.exe.
+    Without this, the bat watchdog sees exit code 0 as a clean shutdown
+    and does NOT restart.
+    """
     import os
+    import platform
     import signal
+    import sys
+
+    is_windows_frozen = (
+        platform.system().lower() == "windows"
+        and getattr(sys, "frozen", False)
+    )
 
     async def _delayed_restart():
         await asyncio.sleep(2)
+
+        if is_windows_frozen:
+            _spawn_windows_restart_helper()
+
         os.kill(os.getpid(), signal.SIGTERM)
 
     asyncio.create_task(_delayed_restart())
     return {"status": "restarting", "message": "Server will restart in 2 seconds"}
+
+
+def _spawn_windows_restart_helper() -> None:
+    """Spawn a detached helper bat that waits for the current process to
+    exit, then relaunches Tune Server.
+
+    The helper polls tasklist until tune-server.exe is gone (max 30 s,
+    force-kills if stuck), then launches start-tune-server.bat (or
+    tune-server.exe directly if the bat is missing). Mirrors the pattern
+    used by the update applier in updater.py.
+    """
+    import subprocess
+    import sys
+
+    if not getattr(sys, "frozen", False):
+        return
+
+    exe_dir = Path(sys.executable).resolve().parent
+    install_dir = str(exe_dir)
+
+    helper_script = f"""@echo off
+setlocal enabledelayedexpansion
+cd /d "{install_dir}"
+
+REM Wait for tune-server.exe to fully exit and release port 8888.
+set /a TRIES=0
+:wait_exit
+tasklist /FI "IMAGENAME eq tune-server.exe" /FO CSV /NH 2>nul | findstr /I "tune-server.exe" >nul
+if errorlevel 1 goto :proc_gone
+set /a TRIES+=1
+if !TRIES! GEQ 15 (
+    taskkill /IM tune-server.exe /F >nul 2>&1
+    ping -n 4 127.0.0.1 >nul
+    goto :proc_gone
+)
+ping -n 3 127.0.0.1 >nul
+goto :wait_exit
+:proc_gone
+
+REM Grace period for Windows to release port and file handles.
+REM 4 seconds (ping -n 5 = 4 intervals) is enough for TIME_WAIT to clear.
+ping -n 5 127.0.0.1 >nul
+
+if exist "start-tune-server.bat" (
+    start "" "{install_dir}\\start-tune-server.bat"
+) else (
+    start "" "{install_dir}\\tune-server.exe"
+)
+
+endlocal
+exit /b 0
+"""
+    helper = exe_dir / "_restart.bat"
+    try:
+        helper.write_text(helper_script, encoding="ascii")
+    except Exception:
+        logger.exception("restart_helper_write_failed")
+        return
+
+    try:
+        # DETACHED_PROCESS (0x08) | CREATE_NEW_PROCESS_GROUP (0x200)
+        CREATE_FLAGS = 0x00000008 | 0x00000200
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(helper)],
+            cwd=install_dir,
+            creationflags=CREATE_FLAGS,
+            close_fds=True,
+        )
+        logger.info("restart_helper_spawned", path=str(helper))
+    except Exception:
+        logger.exception("restart_helper_spawn_failed")
 
 
 @router.post("/rescan")

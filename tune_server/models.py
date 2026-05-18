@@ -52,6 +52,7 @@ class OutputType(str, Enum):
     CHROMECAST = "chromecast"
     BLUOS = "bluos"
     OPENHOME = "openhome"
+    SQUEEZEBOX = "squeezebox"
 
 
 # --- Domain models ---

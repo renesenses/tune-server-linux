@@ -8,7 +8,7 @@ import structlog
 from tune_server.db.engine import Database
 from tune_server.db.repository import PlayQueueRepo, ZoneRepo
 from tune_server.event_bus import Event, EventBus, EventType
-from tune_server.models import OutputType
+from tune_server.models import OutputType, PlaybackState
 from tune_server.outputs.base import OutputTarget
 from tune_server.outputs.local import LocalOutput
 from tune_server.zones.zone import ZoneInstance
@@ -87,6 +87,9 @@ class ZoneManager:
         # Listen for device discovery changes to mark zones online/offline
         self._event_bus.on(EventType.DEVICE_LOST, self._on_device_lost)
         self._event_bus.on(EventType.DEVICE_DISCOVERED, self._on_device_discovered)
+        # Clear resume-on-recovery flag when the user explicitly stops playback
+        # while the device is offline — prevents ghost auto-resume.
+        self._event_bus.on(EventType.PLAYBACK_STOPPED, self._on_playback_stopped)
 
         zone_rows = await self._zone_repo.list()
 
@@ -487,7 +490,6 @@ class ZoneManager:
         dev_id = event.data.get("id") if event.data else None
         if not dev_id:
             return
-        from tune_server.models import PlaybackState
         for zone in self._zones.values():
             if zone.output_device_id != dev_id or not zone.online:
                 continue
@@ -525,6 +527,11 @@ class ZoneManager:
                 continue
             zone.online = True
             should_resume = self._resume_on_recovery.pop(zone.zone_id, False)
+            # Never resume a zone that the user explicitly stopped
+            if should_resume and zone.player.state == PlaybackState.STOPPED:
+                logger.info("zone_resume_vetoed", zone_id=zone.zone_id, device=dev_id,
+                            reason="player_stopped")
+                should_resume = False
             logger.info("zone_online", zone_id=zone.zone_id, device=dev_id, will_resume=should_resume)
 
             if should_resume:
@@ -538,12 +545,26 @@ class ZoneManager:
                 source="zone_manager",
             ))
 
+    async def _on_playback_stopped(self, event: Event) -> None:
+        """User (or end-of-queue) stopped playback — cancel any pending
+        auto-resume so a stopped zone never restarts on its own."""
+        zone_id = event.data.get("zone_id") if event.data else None
+        if zone_id is not None and zone_id in self._resume_on_recovery:
+            logger.debug("resume_on_recovery_cleared", zone_id=zone_id,
+                         reason="playback_stopped_while_offline")
+            self._resume_on_recovery.pop(zone_id, None)
+
     async def _resume_zone_with_retry(self, zone: "ZoneInstance") -> None:
         """Wait briefly for a recovered device then resume playback (best-effort)."""
         for delay in (2, 5, 10):
             await asyncio.sleep(delay)
             if not zone.online:
                 return  # Device disappeared again
+            # If the user stopped while we were waiting, abort resume
+            if zone.player.state == PlaybackState.STOPPED:
+                logger.info("zone_auto_resume_skipped", zone_id=zone.zone_id,
+                            reason="user_stopped")
+                return
             try:
                 await zone.player.resume()
                 logger.info("zone_auto_resumed", zone_id=zone.zone_id)

@@ -456,8 +456,15 @@ async def set_repeat(zone_id: int, mode: RepeatMode = RepeatMode.OFF):
 @router.get("/queue", response_model=QueueStateResponse)
 async def get_queue(zone_id: int):
     zone = _get_zone(zone_id)
+    # Transform cover_path so the client always gets a usable URL
+    # (not a raw filesystem path or an expiring CDN URL).
+    tracks = []
+    for t in zone.player.queue.tracks:
+        patched = t.model_copy()
+        patched.cover_path = cover_url_for_client(t.cover_path)
+        tracks.append(patched)
     return QueueStateResponse(
-        tracks=zone.player.queue.tracks,
+        tracks=tracks,
         position=zone.player.queue.position,
         length=zone.player.queue.length,
     )

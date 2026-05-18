@@ -42,6 +42,13 @@ BLUOS_CAPABILITIES = AudioCapabilities(
     supports_gapless=False,
 )
 
+SQUEEZEBOX_CAPABILITIES = AudioCapabilities(
+    formats={AudioFormat.FLAC, AudioFormat.WAV, AudioFormat.MP3, AudioFormat.AAC, AudioFormat.OGG},
+    max_sample_rate=192000,
+    max_bit_depth=24,
+    supports_gapless=True,
+)
+
 LOCAL_CAPABILITIES = AudioCapabilities(
     formats={AudioFormat.WAV},  # sounddevice only accepts raw PCM; always decode
     max_sample_rate=384000,
@@ -63,8 +70,8 @@ def format_from_extension(ext: str) -> AudioFormat | None:
         "aiff": AudioFormat.AIFF,
         "aif": AudioFormat.AIFF,
         "alac": AudioFormat.ALAC,
-        "wv": AudioFormat.FLAC,
-        "ape": AudioFormat.FLAC,
+        "wv": AudioFormat.WAVPACK,
+        "ape": AudioFormat.APE,
         "wma": AudioFormat.WMA,
         "dsf": AudioFormat.DSD,
         "dff": AudioFormat.DSD,
@@ -144,6 +151,8 @@ def mime_type_for_format(fmt: AudioFormat) -> str:
         AudioFormat.OPUS: "audio/opus",
         AudioFormat.AIFF: "audio/aiff",
         AudioFormat.DSD: "application/x-dsd",
+        AudioFormat.WAVPACK: "audio/x-wavpack",
+        AudioFormat.APE: "audio/x-ape",
     }
     return mapping.get(fmt, "application/octet-stream")
 
@@ -157,6 +166,8 @@ DSD_MIME_TYPES = {
     "audio/x-dsf",
     "audio/dff",
     "audio/x-dff",
+    "audio/dst",
+    "audio/x-dst",
     "audio/l24",
 }
 
@@ -198,7 +209,7 @@ def detect_dsd_from_sink_protocols(sink_protocols: list[str]) -> bool:
         lower = entry.lower()
         if any(mime in lower for mime in DSD_MIME_TYPES):
             return True
-        if "dsf" in lower or "dff" in lower or "dsd" in lower:
+        if "dsf" in lower or "dff" in lower or "dsd" in lower or "dst" in lower:
             return True
     return False
 
@@ -211,6 +222,9 @@ def detect_dsd_from_device_info(name: str, model: str) -> bool:
 
 def dsd_mime_from_extension(file_path: str) -> str:
     """Return the appropriate MIME type for a DSD file based on extension."""
-    if file_path.lower().endswith(".dff"):
+    lower = file_path.lower()
+    if lower.endswith(".dff"):
         return "audio/x-dff"
+    if lower.endswith(".dst"):
+        return "audio/x-dst"
     return "audio/x-dsf"  # default for .dsf
