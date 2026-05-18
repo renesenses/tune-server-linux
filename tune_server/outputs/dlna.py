@@ -555,12 +555,13 @@ class DlnaOutput(OutputTarget):
         self._cancel_watchdog()
         await self.stop()
 
-    async def set_next_track(self, stream_info: AudioStreamInfo, track: Track) -> bool:
+    async def set_next_track(self, stream_info: AudioStreamInfo, track: Track,
+                             gapless_handler=None) -> bool:
         """Use SetNextAVTransportURI for gapless playback.
 
         Creates an HTTP streamer session for the next track so the renderer
         can fetch it seamlessly when the current track ends.  Works for
-        direct URLs, native DSD, and local file passthrough.
+        direct URLs, native DSD, local file passthrough, and transcoded streams.
         """
         try:
             # Direct URL for next track too if applicable
@@ -593,21 +594,26 @@ class DlnaOutput(OutputTarget):
                 logger.info("dlna_next_track_set_native_dsd", device=self.name, track=track.title)
                 return True
 
-            # Local file: only use SetNextAVTransportURI if the renderer can
-            # play the native format directly (passthrough). If transcoding is
-            # needed (e.g. AAC→WAV), skip gapless — the streamer would serve the
-            # raw file while the renderer expects the transcoded format.
-            is_local_file = track.file_path and not track.file_path.startswith("http")
-            if is_local_file and track.format:
-                native_fmt = AudioFormat(track.format)
-                if native_fmt != stream_info.format:
-                    logger.info(
-                        "dlna_next_track_skip_transcode", device=self.name,
-                        track=track.title, native=native_fmt.value,
-                        pipeline=stream_info.format.value,
-                    )
-                    return False
+            # Transcoded gapless: preloader provides WAV data via streaming session
+            if gapless_handler is not None:
+                mime = mime_type_for_format(stream_info.format)
+                stream_id = self._streamer.create_session(stream_info)
+                stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
+                metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info)
 
+                await self._device.async_set_next_transport_uri(
+                    stream_url, track.title or "Unknown", meta_data=metadata)
+
+                asyncio.create_task(
+                    self._feed_gapless_session(stream_id, gapless_handler))
+
+                logger.info("dlna_next_track_set_transcoded", device=self.name,
+                            track=track.title, stream_url=stream_url,
+                            format=stream_info.format.value)
+                return True
+
+            # Passthrough: serve local file directly
+            is_local_file = track.file_path and not track.file_path.startswith("http")
             mime = mime_type_for_format(stream_info.format)
             stream_id = self._streamer.create_session(stream_info, track.file_path)
             stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
@@ -622,6 +628,34 @@ class DlnaOutput(OutputTarget):
         except Exception:
             logger.exception("dlna_set_next_failed", device=self.name, track=track.title)
             return False
+
+    async def _feed_gapless_session(self, stream_id: str, gapless_handler) -> None:
+        """Feed transcoded audio from gapless preloader into a streaming session."""
+        session = self._streamer.get_session(stream_id)
+        if not session:
+            return
+        try:
+            # Push pre-buffered chunks first
+            for chunk in gapless_handler.pre_buffered_chunks:
+                await session.put(chunk)
+
+            # Continue reading from the preloader's pipeline
+            pipeline = gapless_handler._next_pipeline
+            if pipeline and pipeline.output_buffer:
+                while session.active:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            pipeline.output_buffer.get(), timeout=5.0)
+                        if chunk is None:
+                            break
+                        await session.put(chunk)
+                    except asyncio.TimeoutError:
+                        break
+
+            session.close()
+            logger.info("gapless_feed_completed", stream_id=stream_id)
+        except Exception:
+            logger.exception("gapless_feed_error", stream_id=stream_id)
 
     def get_current_session(self):
         """Return the current stream session (for sync coordination)."""

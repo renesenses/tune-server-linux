@@ -679,40 +679,59 @@ class Player:
             and not _is_dst
         )
 
-        # DLNA renderers: always use SetNextAVTransportURI for gapless.
-        # This covers direct URLs, native DSD, AND local files served via
-        # the HTTP streamer. The renderer handles the seamless transition
-        # itself — FFmpeg pre-decode is not needed (and doesn't work for
-        # renderers like DarTZeel that rely on SetNextAVTransportURI).
+        # DLNA renderers: use SetNextAVTransportURI for gapless.
         if hasattr(self._output, 'set_next_track'):
             try:
                 file_size = None
-                if next_track.file_path and not next_track.file_path.startswith("http"):
+                is_local = next_track.file_path and not next_track.file_path.startswith("http")
+                if is_local:
                     p = Path(next_track.file_path)
                     file_size = p.stat().st_size if p.exists() else None
-                next_info = AudioStreamInfo(
-                    format=source_format,
-                    sample_rate=next_track.sample_rate or 44100,
-                    bit_depth=next_track.bit_depth or 16,
-                    channels=next_track.channels or 2,
-                    file_size=file_size,
-                )
-                ok = await self._output.set_next_track(next_info, next_track)
-                if ok:
-                    self._renderer_has_next = True
-                    # Mark current track as gapless-ready for API consumers
-                    current = self._queue.current
-                    if current:
-                        current.gapless_next = True
-                    logger.info("gapless_next_set", track=next_track.title)
-                    return
+
+                # Check if transcoding is needed
+                pipeline_format = self._pipeline.stream_info.format if self._pipeline and self._pipeline.stream_info else None
+                needs_transcode = is_local and pipeline_format and source_format != pipeline_format
+
+                if needs_transcode:
+                    # Preload via gapless handler to get transcoded data
+                    if self._gapless:
+                        await self._gapless.preload(next_track)
+                        if self._gapless.has_next and self._gapless.next_stream_info:
+                            transcode_info = self._gapless.next_stream_info
+                            ok = await self._output.set_next_track(
+                                transcode_info, next_track, gapless_handler=self._gapless,
+                            )
+                            if ok:
+                                self._renderer_has_next = True
+                                current = self._queue.current
+                                if current:
+                                    current.gapless_next = True
+                                logger.info("gapless_next_set_transcoded", track=next_track.title,
+                                            native=source_format.value, output=transcode_info.format.value)
+                                return
+                else:
+                    next_info = AudioStreamInfo(
+                        format=source_format,
+                        sample_rate=next_track.sample_rate or 44100,
+                        bit_depth=next_track.bit_depth or 16,
+                        channels=next_track.channels or 2,
+                        file_size=file_size,
+                    )
+                    ok = await self._output.set_next_track(next_info, next_track)
+                    if ok:
+                        self._renderer_has_next = True
+                        current = self._queue.current
+                        if current:
+                            current.gapless_next = True
+                        logger.info("gapless_next_set", track=next_track.title)
+                        return
             except Exception:
                 logger.exception("gapless_next_error", track=next_track.title)
 
         # For pipeline-based playback (local output): pre-decode the next track
         if self._gapless:
-            await self._gapless.preload(next_track)
-            # Mark current track as gapless-ready once preload starts
+            if not self._gapless.has_next:
+                await self._gapless.preload(next_track)
             current = self._queue.current
             if current and self._gapless.has_next:
                 current.gapless_next = True
