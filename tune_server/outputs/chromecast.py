@@ -134,6 +134,10 @@ class ChromecastOutput(OutputTarget):
             metadata["artist"] = artist
         if album:
             metadata["albumName"] = album
+        if thumb:
+            metadata["images"] = [{"url": thumb}]
+        if track and track.duration_ms:
+            metadata["duration"] = track.duration_ms / 1000.0
 
         try:
             await self._cast_call(
