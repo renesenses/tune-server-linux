@@ -21,9 +21,11 @@ class AirPlayOutput(OutputTarget):
 
     pyatv's stream_file() handles all encoding/streaming internally,
     so we pass it the file path directly and let it do the work.
+    For HTTP streams (radios), we use the HTTP streamer as intermediary.
     """
 
-    def __init__(self, atv_device: object, device_name: str = "AirPlay") -> None:
+    def __init__(self, atv_device: object, device_name: str = "AirPlay",
+                 streamer=None, server_ip: str = "") -> None:
         self._atv = atv_device  # pyatv.interface.AppleTV
         self._device_name = device_name
         self._available = True
@@ -31,6 +33,9 @@ class AirPlayOutput(OutputTarget):
         self._stream_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
         self._temp_wav: Path | None = None
+        self._streamer = streamer
+        self._server_ip = server_ip
+        self._stream_id: str | None = None
 
     @property
     def name(self) -> str:
@@ -107,15 +112,19 @@ class AirPlayOutput(OutputTarget):
             except Exception as e:
                 logger.debug("airplay_metadata_build_failed", error=str(e))
 
-            file_to_stream = track.file_path
             logger.info("airplay_streaming", device=self._device_name, track=track.title,
                         file=track.file_path[:80])
 
-            # Try direct streaming first; if pyatv can't open the format,
-            # fall back to FFmpeg transcode to WAV.
-            try:
+            is_http = track.file_path.startswith("http://") or track.file_path.startswith("https://")
+
+            if is_http and self._streamer:
+                # HTTP streams (radios) can't be passed to pyatv directly.
+                # Use the HTTP streamer: pipeline decodes → streamer serves WAV → pyatv plays the local URL.
+                self._stream_id = self._streamer.create_session(stream_info, track.file_path)
+                local_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+                logger.info("airplay_via_streamer", device=self._device_name, url=local_url[:80])
                 self._stream_task = asyncio.create_task(
-                    stream.stream_file(file_to_stream, metadata=metadata)
+                    stream.stream_file(local_url, metadata=metadata)
                 )
                 done, _ = await asyncio.wait({self._stream_task}, timeout=5.0)
                 if done:
@@ -123,27 +132,42 @@ class AirPlayOutput(OutputTarget):
                     exc = task.exception()
                     if exc:
                         self._stream_task = None
-                        raise exc
-            except Exception as first_err:
-                if self._stream_task:
-                    self._stream_task.cancel()
-                    self._stream_task = None
-                logger.info("airplay_transcode_fallback", device=self._device_name,
-                            reason=str(first_err)[:120])
-                wav_path = await self._transcode_to_wav(track.file_path)
-                self._stream_task = asyncio.create_task(
-                    stream.stream_file(str(wav_path), metadata=metadata)
-                )
-                done, _ = await asyncio.wait({self._stream_task}, timeout=5.0)
-                if done:
-                    task = done.pop()
-                    exc = task.exception()
-                    if exc:
-                        self._stream_task = None
-                        self._available = False
                         raise RuntimeError(
-                            f"AirPlay streaming failed on '{self._device_name}': {exc}"
+                            f"AirPlay streamer failed on '{self._device_name}': {exc}"
                         ) from exc
+            else:
+                # Local files: try direct streaming, fall back to WAV transcode
+                try:
+                    self._stream_task = asyncio.create_task(
+                        stream.stream_file(track.file_path, metadata=metadata)
+                    )
+                    done, _ = await asyncio.wait({self._stream_task}, timeout=5.0)
+                    if done:
+                        task = done.pop()
+                        exc = task.exception()
+                        if exc:
+                            self._stream_task = None
+                            raise exc
+                except Exception as first_err:
+                    if self._stream_task:
+                        self._stream_task.cancel()
+                        self._stream_task = None
+                    logger.info("airplay_transcode_fallback", device=self._device_name,
+                                reason=str(first_err)[:120])
+                    wav_path = await self._transcode_to_wav(track.file_path)
+                    self._stream_task = asyncio.create_task(
+                        stream.stream_file(str(wav_path), metadata=metadata)
+                    )
+                    done, _ = await asyncio.wait({self._stream_task}, timeout=5.0)
+                    if done:
+                        task = done.pop()
+                        exc = task.exception()
+                        if exc:
+                            self._stream_task = None
+                            self._available = False
+                            raise RuntimeError(
+                                f"AirPlay streaming failed on '{self._device_name}': {exc}"
+                            ) from exc
 
             self._available = True
 
@@ -175,8 +199,10 @@ class AirPlayOutput(OutputTarget):
             )
 
     async def write(self, data: bytes) -> None:
-        # Not used — pyatv streams the file itself
-        pass
+        if self._stream_id and self._streamer:
+            session = self._streamer.get_session(self._stream_id)
+            if session:
+                await session.put(data)
 
     async def flush(self) -> None:
         pass
@@ -272,6 +298,9 @@ class AirPlayOutput(OutputTarget):
             self._stream_task = None
 
         self._cleanup_temp_wav()
+        if self._stream_id and self._streamer:
+            self._streamer.remove_session(self._stream_id)
+            self._stream_id = None
 
         rc = self._atv.remote_control
         await self._remote_call("stop", lambda: rc.stop())

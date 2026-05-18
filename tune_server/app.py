@@ -739,7 +739,8 @@ class TuneServer:
                     logger.info("airplay_connected_without_auth", device_id=device_id)
                 device = self._discovery_manager.get_device(device_id)
                 name = device.name if device else "AirPlay"
-                return AirPlayOutput(atv, device_name=name)
+                return AirPlayOutput(atv, device_name=name,
+                                     streamer=self._http_streamer, server_ip=self._server_ip)
             except ImportError:
                 raise RuntimeError("AirPlay: pyatv library is not installed")
             except RuntimeError:
