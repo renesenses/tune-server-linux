@@ -4,10 +4,16 @@ import asyncio
 
 import structlog
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from tune_server.api.deps import deps
 from tune_server.models import DiscoveredDevice, LocalAudioDevice, OutputType
+from tune_server.outputs.dlna_buffer_stats import (
+    DEFAULT_BUFFER_S,
+    MAX_BUFFER_S,
+    MIN_BUFFER_S,
+    dlna_buffer_registry,
+)
 
 logger = structlog.get_logger()
 
@@ -87,6 +93,12 @@ async def clear_devices():
         deps.discovery_manager.mdns._devices.clear()
         deps.discovery_manager.mdns._atv_configs.clear()
     return {"cleared": count}
+
+
+@router.get("/buffer-stats/all")
+async def get_all_buffer_stats():
+    """Show buffer stability metrics for all tracked DLNA devices."""
+    return dlna_buffer_registry.all_stats()
 
 
 @router.get("/{device_id}", response_model=DiscoveredDevice)
@@ -228,3 +240,76 @@ async def submit_pairing_pin(device_id: str, req: PairPinRequest):
                 pass
             del _pairing_sessions[device_id]
         raise HTTPException(status_code=500, detail=f"Pairing error: {e}")
+
+
+# --- Adaptive DLNA buffer sizing ---
+
+
+class BufferPatchRequest(BaseModel):
+    buffer_s: float = Field(
+        ..., ge=MIN_BUFFER_S, le=MAX_BUFFER_S,
+        description=f"Buffer size in seconds ({MIN_BUFFER_S}-{MAX_BUFFER_S})",
+    )
+    auto: bool = Field(
+        default=False,
+        description="If true, clear manual override and re-enable auto-adjustment",
+    )
+
+
+@router.get("/{device_id}/buffer-stats")
+async def get_device_buffer_stats(device_id: str):
+    """Show per-device DLNA buffer stability metrics.
+
+    Returns buffer size, event counts, and auto-adjustment state.
+    """
+    stats = dlna_buffer_registry.get(device_id)
+    if not stats:
+        # Device exists but has no buffer stats yet — return defaults
+        if deps.discovery_manager:
+            device = deps.discovery_manager.get_device(device_id)
+            if device:
+                return {
+                    "device_id": device_id,
+                    "device_name": device.name,
+                    "buffer_s": DEFAULT_BUFFER_S,
+                    "manual_override": False,
+                    "total_disconnections": 0,
+                    "total_underruns": 0,
+                    "total_interruptions": 0,
+                    "total_adjustments": 0,
+                    "recent_events_in_window": 0,
+                    "window_minutes": 10,
+                }
+        raise HTTPException(status_code=404, detail="Device not found or no buffer stats available")
+    return stats.to_dict()
+
+
+@router.patch("/{device_id}/buffer")
+async def set_device_buffer(device_id: str, req: BufferPatchRequest):
+    """Manually set the buffer size for a DLNA device.
+
+    Set auto=true to clear the manual override and re-enable auto-adjustment.
+    """
+    stats = dlna_buffer_registry.get_or_create(device_id)
+    # Try to populate device name if available
+    if not stats.device_name and deps.discovery_manager:
+        device = deps.discovery_manager.get_device(device_id)
+        if device:
+            stats.device_name = device.name
+
+    if req.auto:
+        stats.clear_manual_override()
+        return {
+            "device_id": device_id,
+            "buffer_s": stats.buffer_s,
+            "manual_override": False,
+            "message": "Auto-adjustment re-enabled",
+        }
+
+    stats.set_manual_buffer(req.buffer_s)
+    return {
+        "device_id": device_id,
+        "buffer_s": stats.buffer_s,
+        "manual_override": True,
+        "message": f"Buffer set to {stats.buffer_s}s (manual override)",
+    }

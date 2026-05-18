@@ -17,6 +17,10 @@ from tune_server.audio.formats import (
 )
 from tune_server.models import AudioFormat, AudioStreamInfo, Source, Track
 from tune_server.outputs.base import OutputTarget
+from tune_server.outputs.dlna_buffer_stats import (
+    EventKind,
+    dlna_buffer_registry,
+)
 from tune_server.outputs.http_streamer import HttpAudioStreamer
 
 # Formats that DLNA renderers can typically fetch and decode directly from a URL
@@ -112,6 +116,7 @@ class DlnaOutput(OutputTarget):
         device_name: str = "",
         device_model: str = "",
         device_ip: str | None = None,
+        device_id: str = "",
     ) -> None:
         self._device = device
         self._streamer = streamer
@@ -122,6 +127,7 @@ class DlnaOutput(OutputTarget):
         self._available = True
         self._volume: float = 0.5
         self._device_ip = device_ip
+        self._device_id = device_id
         # Micromega M-One: proprietary volume via HTTP on port 7000
         self._is_micromega = "micromega" in device_name.lower()
         if self._is_micromega:
@@ -133,6 +139,9 @@ class DlnaOutput(OutputTarget):
         )
         self._capabilities = self._build_capabilities()
         self._watchdog_task: asyncio.Task | None = None
+        # Register device in buffer stats registry
+        if self._device_id:
+            dlna_buffer_registry.get_or_create(self._device_id, device_name or self.name)
         if self._supports_native_dsd:
             logger.info("dlna_dsd_support_detected", device=self.name)
 
@@ -150,6 +159,34 @@ class DlnaOutput(OutputTarget):
     @property
     def name(self) -> str:
         return getattr(self._device, "name", "DLNA Renderer")
+
+    @property
+    def device_id(self) -> str:
+        return self._device_id
+
+    @property
+    def buffer_s(self) -> float:
+        """Current adaptive buffer size for this renderer."""
+        if self._device_id:
+            return dlna_buffer_registry.get_buffer_s(self._device_id)
+        from tune_server.outputs.dlna_buffer_stats import DEFAULT_BUFFER_S
+        return DEFAULT_BUFFER_S
+
+    def _track_event(self, kind: EventKind) -> None:
+        """Record a stability event for this device in the registry."""
+        if self._device_id:
+            dlna_buffer_registry.record_event(
+                self._device_id, kind, device_name=self.name,
+            )
+
+    def _adaptive_max_chunks(self) -> int:
+        """Compute HTTP stream queue size from adaptive buffer_s.
+
+        At 192kHz/24-bit stereo (worst case ~1.15 MB/s), 32KB chunks:
+        1s ~= 36 chunks. Scale linearly from buffer_s.
+        Default 256 chunks for 2s buffer, up to 1280 for 10s.
+        """
+        return max(128, int(128 * self.buffer_s))
 
     @property
     def supports_native_dsd(self) -> bool:
@@ -295,7 +332,7 @@ class DlnaOutput(OutputTarget):
                 and not track.file_path.startswith("http")
             ):
                 mime = dsd_mime_from_extension(track.file_path)
-                self._stream_id = self._streamer.create_session(stream_info, track.file_path)
+                self._stream_id = self._streamer.create_session(stream_info, track.file_path, max_chunks=self._adaptive_max_chunks())
                 stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
                 # Replace generic .dsd extension with actual file extension (.dsf/.dff)
                 # for better renderer compatibility
@@ -322,7 +359,7 @@ class DlnaOutput(OutputTarget):
 
             # Standard flow: stream via local HTTP server
             file_path = track.file_path if track else None
-            self._stream_id = self._streamer.create_session(stream_info, file_path)
+            self._stream_id = self._streamer.create_session(stream_info, file_path, max_chunks=self._adaptive_max_chunks())
             stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
 
             # If the streamer will serve the file directly (passthrough with file on disk),
@@ -347,6 +384,7 @@ class DlnaOutput(OutputTarget):
         except Exception:
             logger.exception("dlna_start_error", device=self.name)
             self._available = False
+            self._track_event(EventKind.INTERRUPTION)
 
     async def write(self, data: bytes) -> None:
         if self._direct_url:
@@ -412,6 +450,7 @@ class DlnaOutput(OutputTarget):
                 pass
 
             # Renderer didn't connect within 30s — retry SetAVTransportURI
+            self._track_event(EventKind.UNDERRUN)
             logger.warning(
                 "dlna_watchdog_retry",
                 device=self.name,
@@ -432,6 +471,7 @@ class DlnaOutput(OutputTarget):
                 logger.info("dlna_watchdog_retry_ok", device=self.name,
                             msg="renderer connected after retry")
             except asyncio.TimeoutError:
+                self._track_event(EventKind.DISCONNECTION)
                 logger.error("dlna_watchdog_gave_up", device=self.name,
                              msg="renderer still not fetching after retry")
 
@@ -449,9 +489,11 @@ class DlnaOutput(OutputTarget):
             return True
         except asyncio.TimeoutError:
             logger.warning("dlna_timeout", method=method, device=self.name)
+            self._track_event(EventKind.DISCONNECTION)
             return False
         except Exception:
             logger.warning("dlna_call_error", method=method, device=self.name)
+            self._track_event(EventKind.INTERRUPTION)
             return False
 
     async def pause(self) -> None:
@@ -461,6 +503,7 @@ class DlnaOutput(OutputTarget):
         ok = await self._dmr_call("async_play")
         if not ok:
             logger.warning("dlna_resume_failed_retry", device=self.name)
+            self._track_event(EventKind.INTERRUPTION)
             # Some renderers need SetAVTransportURI again after pause
             if self._last_uri:
                 await self._dmr_call("async_set_transport_uri", self._last_uri)
@@ -585,7 +628,7 @@ class DlnaOutput(OutputTarget):
                 and not track.file_path.startswith("http")
             ):
                 mime = dsd_mime_from_extension(track.file_path)
-                stream_id = self._streamer.create_session(stream_info, track.file_path)
+                stream_id = self._streamer.create_session(stream_info, track.file_path, max_chunks=self._adaptive_max_chunks())
                 stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
                 dsd_ext = "dff" if track.file_path.lower().endswith(".dff") else "dsf"
                 stream_url = stream_url.rsplit(".", 1)[0] + f".{dsd_ext}"
@@ -597,7 +640,7 @@ class DlnaOutput(OutputTarget):
             # Transcoded gapless: preloader provides WAV data via streaming session
             if gapless_handler is not None:
                 mime = mime_type_for_format(stream_info.format)
-                stream_id = self._streamer.create_session(stream_info)
+                stream_id = self._streamer.create_session(stream_info, max_chunks=self._adaptive_max_chunks())
                 stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
                 metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info)
 
@@ -615,7 +658,7 @@ class DlnaOutput(OutputTarget):
             # Passthrough: serve local file directly
             is_local_file = track.file_path and not track.file_path.startswith("http")
             mime = mime_type_for_format(stream_info.format)
-            stream_id = self._streamer.create_session(stream_info, track.file_path)
+            stream_id = self._streamer.create_session(stream_info, track.file_path, max_chunks=self._adaptive_max_chunks())
             stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
             metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info)
 

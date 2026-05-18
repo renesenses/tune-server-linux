@@ -82,7 +82,14 @@ class ZoneGroup:
                     buffer_s = cached_latency
                     logger.info("dlna_using_cached_latency", device=device_name, latency_s=round(buffer_s, 2))
                 else:
-                    buffer_s = settings.sync_dlna_default_buffer_s
+                    # Use adaptive buffer from registry if available, otherwise global default
+                    device_id = getattr(dlna_output, 'device_id', '') or getattr(dlna_output, '_device_id', '')
+                    if device_id:
+                        from tune_server.outputs.dlna_buffer_stats import dlna_buffer_registry
+                        buffer_s = dlna_buffer_registry.get_buffer_s(device_id)
+                        logger.info("dlna_using_adaptive_buffer", device=device_name, buffer_s=round(buffer_s, 2))
+                    else:
+                        buffer_s = settings.sync_dlna_default_buffer_s
                     # Fire-and-forget: measure actual latency for next time
                     if hasattr(dlna_output, 'measure_latency'):
                         asyncio.create_task(

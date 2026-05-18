@@ -7,7 +7,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from tune_server.api.deps import deps
@@ -21,10 +21,57 @@ _ws_manager: WebSocketManager | None = None
 
 def create_api_app() -> FastAPI:
     from tune_server import __version__
+
+    openapi_tags = [
+        {"name": "system", "description": "Server health, configuration, restart, updates, and diagnostics."},
+        {"name": "library", "description": "Browse and manage the local music library (artists, albums, tracks, genres)."},
+        {"name": "playback", "description": "Transport controls (play, pause, seek, next, previous) and queue management per zone."},
+        {"name": "zones", "description": "Create, configure, and manage playback zones (DLNA, AirPlay, local)."},
+        {"name": "streaming", "description": "Authenticate and browse streaming services (Tidal, Qobuz, Deezer, Spotify, YouTube Music, Amazon Music)."},
+        {"name": "playlists", "description": "Create, edit, and manage playlists (local and streaming service playlists)."},
+        {"name": "devices", "description": "Discover and manage audio output devices on the network."},
+        {"name": "network", "description": "Network shares (SMB/NFS), mount management, and media server browsing."},
+        {"name": "admin", "description": "Administrative operations: cache control, database maintenance, and server management."},
+        {"name": "plugins", "description": "List, enable, disable, and configure server plugins."},
+        {"name": "plugin-store", "description": "Browse and install plugins from the plugin store."},
+        {"name": "tags", "description": "User-defined tags for organizing library items."},
+        {"name": "alarm", "description": "Schedule alarm playback on zones."},
+        {"name": "profiles", "description": "User profiles, favorites, and listening preferences."},
+        {"name": "dashboard", "description": "Listening statistics and activity dashboard."},
+        {"name": "search", "description": "Federated search across local library and streaming services."},
+        {"name": "metadata", "description": "Track and album metadata editing, suggestions, and batch operations."},
+        {"name": "artist-metadata", "description": "Artist biographies, images, and enrichment from MusicBrainz/Last.fm."},
+        {"name": "radios", "description": "Internet radio station search and playback."},
+        {"name": "radio-favorites", "description": "Manage favorite radio stations."},
+        {"name": "playlist-manager", "description": "Cross-service playlist operations: transfer, sync, and merge playlists."},
+        {"name": "playlist-sync", "description": "Automated playlist synchronisation between services."},
+        {"name": "zone-manager", "description": "Zone group management: create and dissolve multi-room groups, stereo pairing."},
+        {"name": "smart-collections", "description": "Dynamic smart collections based on rules (genre, year, rating, etc.)."},
+        {"name": "services", "description": "Streaming service connection status and configuration."},
+        {"name": "peers", "description": "Discover and relay to other Tune Server instances on the network."},
+        {"name": "export", "description": "Export library data (albums, tracks, artists) as CSV."},
+        {"name": "import", "description": "Import library data from external sources."},
+        {"name": "podcasts", "description": "Podcast search and playback."},
+        {"name": "dj", "description": "AI-assisted DJ mode for automatic playlist generation."},
+        {"name": "party", "description": "Party mode: collaborative queue with guest access."},
+        {"name": "spotify-connect", "description": "Spotify Connect integration."},
+    ]
+
     app = FastAPI(
-        title="Tune Server",
-        description="Network-accessible music server with multi-room playback",
+        title="Tune Server API",
+        description=(
+            "REST API for **Tune**, an open-source multi-room music server.\n\n"
+            "Tune manages a local audio library, connects to streaming services "
+            "(Tidal, Qobuz, YouTube Music, Spotify, Deezer, Amazon Music), "
+            "and streams to DLNA/UPnP renderers, AirPlay devices, or local soundcards.\n\n"
+            "**Base path:** `/api/v1`  \n"
+            "**WebSocket:** `ws://<host>:8888/ws` for real-time events  \n"
+            "**Web client:** served at `/` when a web bundle is present"
+        ),
         version=__version__,
+        openapi_tags=openapi_tags,
+        docs_url="/docs",
+        redoc_url="/redoc",
     )
 
     # CORS — use configured origins
@@ -61,8 +108,8 @@ def create_api_app() -> FastAPI:
         @app.middleware("http")
         async def check_api_key(request, call_next):
             path = request.url.path
-            # Always open: root, docs, health check
-            if path in ("/", "/docs", "/openapi.json", "/api/v1/system/health"):
+            # Always open: root, docs, redoc, health check, API landing
+            if path in ("/", "/api", "/docs", "/redoc", "/openapi.json", "/api/v1/system/health"):
                 return await call_next(request)
             # Static web UI assets (CSS/JS/images)
             if not path.startswith("/api/") and path != "/ws":
@@ -117,10 +164,78 @@ def create_api_app() -> FastAPI:
         if _ws_manager:
             await _ws_manager.handle_websocket(websocket)
 
+    # API landing page — always available
+    @app.get("/api", include_in_schema=False)
+    async def api_landing():
+        from tune_server import __version__
+        return HTMLResponse(f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tune Server API</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: #0f1117; color: #e0e0e0; min-height: 100vh;
+         display: flex; align-items: center; justify-content: center; }}
+  .card {{ background: #1a1d27; border-radius: 16px; padding: 48px;
+           max-width: 520px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }}
+  h1 {{ font-size: 28px; margin-bottom: 8px; color: #fff; }}
+  .version {{ color: #888; font-size: 14px; margin-bottom: 32px; }}
+  .links {{ display: flex; flex-direction: column; gap: 12px; }}
+  a {{ display: flex; align-items: center; gap: 12px; padding: 16px 20px;
+       background: #252833; border-radius: 10px; color: #e0e0e0;
+       text-decoration: none; transition: background 0.15s; }}
+  a:hover {{ background: #2d3142; }}
+  .icon {{ font-size: 22px; width: 32px; text-align: center; }}
+  .label {{ font-weight: 600; font-size: 15px; }}
+  .hint {{ font-size: 12px; color: #888; margin-top: 2px; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Tune Server API</h1>
+  <div class="version">v{__version__}</div>
+  <div class="links">
+    <a href="/docs">
+      <span class="icon">&#9889;</span>
+      <div>
+        <div class="label">Swagger UI</div>
+        <div class="hint">Interactive API explorer &mdash; try endpoints directly</div>
+      </div>
+    </a>
+    <a href="/redoc">
+      <span class="icon">&#128214;</span>
+      <div>
+        <div class="label">ReDoc</div>
+        <div class="hint">Clean, readable API reference documentation</div>
+      </div>
+    </a>
+    <a href="/openapi.json">
+      <span class="icon">&#123;&#125;</span>
+      <div>
+        <div class="label">OpenAPI Schema</div>
+        <div class="hint">Raw JSON schema for code generation and tooling</div>
+      </div>
+    </a>
+    <a href="/">
+      <span class="icon">&#127925;</span>
+      <div>
+        <div class="label">Web Client</div>
+        <div class="hint">Open the Tune web interface</div>
+      </div>
+    </a>
+  </div>
+</div>
+</body>
+</html>""")
+
     # Root info route (when no web bundle is served)
     web_dir = Path(settings.web_dir) if settings.web_dir else None
     if not (web_dir and web_dir.is_dir()):
-        @app.get("/")
+        @app.get("/", include_in_schema=False)
         async def root():
             from tune_server import __version__
             return {
@@ -128,6 +243,7 @@ def create_api_app() -> FastAPI:
                 "version": __version__,
                 "api": "/api/v1",
                 "docs": "/docs",
+                "redoc": "/redoc",
             }
 
     return app
@@ -169,8 +285,8 @@ def wrap_for_serving(app: FastAPI) -> ASGIApp:
             path = scope["path"]
             method = scope.get("method", "GET")
 
-            # Non-GET or API/docs/ws: always pass through
-            if method != "GET" or path.startswith(("/api/", "/docs", "/openapi.json", "/ws")):
+            # Non-GET or API/docs/redoc/ws: always pass through
+            if method != "GET" or path.startswith(("/api", "/docs", "/redoc", "/openapi.json", "/ws")):
                 await self.app(scope, receive, send)
                 return
 

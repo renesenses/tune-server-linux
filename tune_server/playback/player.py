@@ -814,6 +814,10 @@ class Player:
                         await asyncio.wait_for(self._output.write(chunk), timeout=10)
                     except (asyncio.TimeoutError, IOError, ConnectionError, OSError):
                         logger.warning("output_write_failed", zone_id=self._zone_id)
+                        # Track underrun for adaptive DLNA buffer sizing
+                        if self._is_dlna_output() and hasattr(self._output, '_track_event'):
+                            from tune_server.outputs.dlna_buffer_stats import EventKind
+                            self._output._track_event(EventKind.UNDERRUN)
                         # Check if renderer is still playing (e.g. DLNA buffered data)
                         renderer_pos = await self._output.get_position_ms() if self._output else -1
                         if renderer_pos > 0:
@@ -828,6 +832,10 @@ class Player:
                             logger.info("output_write_recovered", zone_id=self._zone_id)
                         except Exception:
                             logger.error("output_write_failed_final", zone_id=self._zone_id)
+                            # Track disconnection for adaptive DLNA buffer sizing
+                            if self._is_dlna_output() and hasattr(self._output, '_track_event'):
+                                from tune_server.outputs.dlna_buffer_stats import EventKind
+                                self._output._track_event(EventKind.DISCONNECTION)
                             await self._emit_playback_error("output_disconnected", "Output device disconnected")
                             self._state = PlaybackState.STOPPED
                             break

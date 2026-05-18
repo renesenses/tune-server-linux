@@ -567,6 +567,9 @@ class TuneServer:
         from tune_server.notifications import setup_notifications
         setup_notifications(self._event_bus, self._server_ip, settings.api_port)
 
+        # DLNA adaptive buffer: periodic stability check (decrease buffers for stable devices)
+        self._dlna_buffer_check_task = asyncio.create_task(self._dlna_buffer_stability_loop())
+
         # Initial scan
         if settings.scan_on_startup:
             self._scan_task = asyncio.create_task(self._scanner.scan(settings.music_dirs))
@@ -583,6 +586,16 @@ class TuneServer:
         )
 
         asyncio.create_task(self._report_install_or_update())
+
+    async def _dlna_buffer_stability_loop(self) -> None:
+        """Periodically check if stable DLNA devices can have their buffer reduced."""
+        from tune_server.outputs.dlna_buffer_stats import dlna_buffer_registry
+        try:
+            while True:
+                await asyncio.sleep(300)  # every 5 minutes
+                dlna_buffer_registry.check_all_stability()
+        except asyncio.CancelledError:
+            pass
 
     async def _report_install_or_update(self) -> None:
         """Report install or update to mozaiklabs.fr analytics (fire-and-forget).
@@ -713,6 +726,7 @@ class TuneServer:
                 device_name=caps.get("device_name", ""),
                 device_model=caps.get("model", ""),
                 device_ip=device_ip,
+                device_id=device_id,
             )
 
         async def create_airplay_output(device_id: str | None):
@@ -1308,6 +1322,13 @@ class TuneServer:
             self._scan_task.cancel()
             try:
                 await self._scan_task
+            except asyncio.CancelledError:
+                pass
+
+        if hasattr(self, "_dlna_buffer_check_task") and self._dlna_buffer_check_task and not self._dlna_buffer_check_task.done():
+            self._dlna_buffer_check_task.cancel()
+            try:
+                await self._dlna_buffer_check_task
             except asyncio.CancelledError:
                 pass
 

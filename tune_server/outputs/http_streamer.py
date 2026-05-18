@@ -52,11 +52,11 @@ def _build_wav_header(stream_info: AudioStreamInfo) -> bytes:
 class StreamSession:
     """A single audio stream session."""
 
-    def __init__(self, stream_id: str, stream_info: AudioStreamInfo, bit_perfect: bool = False) -> None:
+    def __init__(self, stream_id: str, stream_info: AudioStreamInfo, bit_perfect: bool = False, max_chunks: int = 256) -> None:
         self.stream_id = stream_id
         self.stream_info = stream_info
         self.bit_perfect = bit_perfect
-        self._chunks: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=256)
+        self._chunks: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=max_chunks)
         self.active = True
         self.file_served = False  # True when _serve_file handles the request directly
         self.client_connected = asyncio.Event()  # set when renderer makes first HTTP request
@@ -136,9 +136,9 @@ class HttpAudioStreamer:
     def port(self) -> int:
         return self._port
 
-    def create_session(self, stream_info: AudioStreamInfo, file_path: str | None = None, bit_perfect: bool = False) -> str:
+    def create_session(self, stream_info: AudioStreamInfo, file_path: str | None = None, bit_perfect: bool = False, max_chunks: int = 256) -> str:
         stream_id = str(uuid.uuid4())
-        self._sessions[stream_id] = StreamSession(stream_id, stream_info, bit_perfect=bit_perfect)
+        self._sessions[stream_id] = StreamSession(stream_id, stream_info, bit_perfect=bit_perfect, max_chunks=max_chunks)
         if file_path:
             self._file_paths[stream_id] = file_path
         logger.info("stream_session_created", stream_id=stream_id)
