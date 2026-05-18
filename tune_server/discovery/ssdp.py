@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import time as _time
 from typing import Optional
 from urllib.parse import urlparse
 from xml.etree import ElementTree
@@ -35,7 +37,15 @@ _OPENHOME_PREFIXES = (
 # How many consecutive scan cycles a device can miss before being marked lost.
 # Some devices (Denon DMP-A10, certain Marantz streamers) respond slowly or
 # intermittently to M-SEARCH; a grace period prevents flapping.
-_MISS_GRACE_CYCLES = 2
+# Increased to 3 because some renderers (Wiim, Marantz SR series) only
+# respond to M-SEARCH every ~60s, which can span multiple 30s poll cycles.
+_MISS_GRACE_CYCLES = 3
+
+# Interval (in seconds) between periodic full re-discovery scans.
+# Separate from the main 30s poll loop: every _PERIODIC_RESCAN_INTERVAL
+# seconds we send a fresh M-SEARCH burst to catch devices that come
+# online late or respond intermittently.
+_PERIODIC_RESCAN_INTERVAL = 300  # 5 minutes
 
 
 class SsdpDiscovery:
@@ -58,6 +68,13 @@ class SsdpDiscovery:
         self._create_failures: dict[str, int] = {}
         # Consecutive scan misses per device — only mark lost after _MISS_GRACE_CYCLES
         self._miss_count: dict[str, int] = {}
+        # Track whether the initial startup scan found any devices
+        self._initial_scan_done = False
+        # Monotonic timestamp of last full periodic rescan
+        self._last_periodic_rescan: float = 0.0
+        # Cache of previously seen device locations for unicast probing.
+        # Maps device_id -> description URL (LOCATION from SSDP response).
+        self._known_locations: dict[str, str] = {}
 
     def _log_create_failure(self, usn: str, location: str, name: str, exc: Exception) -> None:
         count = self._create_failures.get(usn, 0) + 1
@@ -371,6 +388,8 @@ class SsdpDiscovery:
                             )
 
                             self._create_failures.pop(usn, None)
+                            # Remember this device's description URL for unicast probing
+                            self._known_locations[dev_id] = location
                             async with self._lock:
                                 was_lost = dev_id in self._devices and not self._devices[dev_id].available
                                 is_new = dev_id not in self._devices
@@ -463,6 +482,18 @@ class SsdpDiscovery:
                     except OSError as os_err:
                         logger.debug("ssdp_multicast_error", error=str(os_err))
 
+                    # Windows multicast fix: also try binding to 0.0.0.0 since
+                    # Windows multicast routing can be unpredictable with multiple
+                    # NICs or VPN adapters. Only do this when we have a specific
+                    # source IP (i.e. not already 0.0.0.0).
+                    if sys.platform == "win32" and _forced_source and _forced_source != "0.0.0.0":
+                        try:
+                            await _run_search(MEDIA_RENDERER_URN, "0.0.0.0")
+                        except OSError:
+                            logger.debug("ssdp_windows_anyaddr_fallback_failed")
+                        except Exception:
+                            pass
+
                     # Search for OpenHome / Linn devices that may not respond
                     # to the standard MediaRenderer URN
                     for oh_target in OPENHOME_SEARCH_TARGETS:
@@ -498,6 +529,9 @@ class SsdpDiscovery:
                     # Mark lost devices (with grace period for slow responders).
                     # Skip if no devices were discovered at all (search failure).
                     if discovered:
+                        # Phase 1: under the lock, update miss counts and collect
+                        # candidates that exceeded the grace period for unicast probing.
+                        probe_candidates: list[str] = []
                         async with self._lock:
                             for dev_id in list(self._devices.keys()):
                                 if dev_id in discovered:
@@ -508,16 +542,47 @@ class SsdpDiscovery:
                                         misses = self._miss_count.get(dev_id, 0) + 1
                                         self._miss_count[dev_id] = misses
                                         if misses >= _MISS_GRACE_CYCLES:
-                                            device.available = False
-                                            self._miss_count.pop(dev_id, None)
-                                            await self._event_bus.emit(Event(
-                                                type=EventType.DEVICE_LOST,
-                                                data={"id": dev_id, "name": device.name},
-                                                source="ssdp",
-                                            ))
+                                            probe_candidates.append(dev_id)
+
+                        # Phase 2: unicast-probe candidates outside the lock
+                        # (each probe makes a 3s HTTP request).
+                        for dev_id in probe_candidates:
+                            if await self._unicast_probe(dev_id):
+                                self._miss_count.pop(dev_id, None)
+                            else:
+                                lost_name: str | None = None
+                                async with self._lock:
+                                    device = self._devices.get(dev_id)
+                                    if device and device.available:
+                                        device.available = False
+                                        lost_name = device.name
+                                        self._miss_count.pop(dev_id, None)
+                                if lost_name is not None:
+                                    await self._event_bus.emit(Event(
+                                        type=EventType.DEVICE_LOST,
+                                        data={"id": dev_id, "name": lost_name},
+                                        source="ssdp",
+                                    ))
 
                 except Exception:
                     logger.exception("ssdp_scan_error")
+
+                # Startup retry: if the first scan found nothing, schedule
+                # a quick retry after 30s. Windows firewall or slow network
+                # stacks may not respond to the very first multicast burst.
+                if not self._initial_scan_done:
+                    self._initial_scan_done = True
+                    if not discovered:
+                        logger.info("ssdp_startup_no_devices_scheduling_retry")
+                        await asyncio.sleep(30)
+                        continue  # immediately re-scan without waiting another 30s
+
+                # Periodic full re-discovery every 5 minutes to catch devices
+                # that come online late or respond intermittently.
+                now = _time.monotonic()
+                if now - self._last_periodic_rescan >= _PERIODIC_RESCAN_INTERVAL:
+                    self._last_periodic_rescan = now
+                    logger.info("ssdp_periodic_rescan", interval=_PERIODIC_RESCAN_INTERVAL)
 
                 await asyncio.sleep(30)
 
@@ -635,6 +700,8 @@ class SsdpDiscovery:
                 )
 
                 self._create_failures.pop(usn, None)
+                # Remember this device's description URL for unicast probing
+                self._known_locations[dev_id] = location
                 async with self._lock:
                     was_lost = dev_id in self._devices and not self._devices[dev_id].available
                     is_new = dev_id not in self._devices
@@ -750,3 +817,37 @@ class SsdpDiscovery:
         except Exception as e:
             logger.debug("ssdp_local_ip_detection_failed", error=str(e))
             return None
+
+    async def _unicast_probe(self, dev_id: str) -> bool:
+        """Attempt a direct HTTP GET to a device's last known description URL.
+
+        When a device was seen before but stopped responding to multicast
+        M-SEARCH, it may still be reachable via unicast.  This avoids false
+        "device lost" events for renderers that are slow to respond to
+        multicast (Denon, Marantz, Wiim) or on networks where multicast
+        is unreliable (Windows with multiple NICs / VPN).
+
+        Returns True if the device is still alive (HTTP 200 on its
+        description URL), False otherwise.
+        """
+        location = self._known_locations.get(dev_id)
+        if not location:
+            return False
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    location,
+                    timeout=aiohttp.ClientTimeout(total=3),
+                ) as resp:
+                    if resp.status == 200:
+                        logger.debug(
+                            "ssdp_unicast_probe_alive",
+                            dev_id=dev_id, location=location,
+                        )
+                        return True
+        except Exception as exc:
+            logger.debug(
+                "ssdp_unicast_probe_failed",
+                dev_id=dev_id, location=location, error=str(exc),
+            )
+        return False
