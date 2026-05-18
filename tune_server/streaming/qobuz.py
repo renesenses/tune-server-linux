@@ -210,7 +210,19 @@ class QobuzService(StreamingService):
         try:
             data = await self._api_get("album/get", {"album_id": album_id})
             items = data.get("tracks", {}).get("items", [])
-            return [self._map_track(t) for t in items]
+            # The Qobuz API sometimes omits the album image in each track
+            # object when tracks are returned inside an album response.
+            # Extract the album-level image and inject it into tracks that
+            # lack their own so _map_track can find it.
+            album_image = data.get("image", {})
+            tracks = []
+            for t in items:
+                track_album = t.get("album") or {}
+                if isinstance(track_album, dict) and not track_album.get("image"):
+                    track_album = {**track_album, "image": album_image}
+                    t = {**t, "album": track_album}
+                tracks.append(self._map_track(t))
+            return tracks
         except Exception as e:
             logger.debug("qobuz_get_album_tracks_failed", album_id=album_id, error=str(e))
             return []
