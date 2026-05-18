@@ -22,6 +22,10 @@ class AirPlayOutput(OutputTarget):
     pyatv's stream_file() handles all encoding/streaming internally,
     so we pass it the file path directly and let it do the work.
     For HTTP streams (radios), we use the HTTP streamer as intermediary.
+
+    Gapless: the next track's WAV is pre-transcoded and its streamer
+    session pre-created so ``start()`` can skip the expensive FFmpeg
+    transcode step when transitioning between tracks.
     """
 
     def __init__(self, atv_device: object, device_name: str = "AirPlay",
@@ -36,6 +40,10 @@ class AirPlayOutput(OutputTarget):
         self._streamer = streamer
         self._server_ip = server_ip
         self._stream_id: str | None = None
+        # Pre-prepared next track for faster transitions
+        self._next_wav_path: Path | None = None
+        self._next_stream_id: str | None = None
+        self._next_track_file: str | None = None  # file_path of the pre-prepared track
 
     @property
     def name(self) -> str:
@@ -117,10 +125,23 @@ class AirPlayOutput(OutputTarget):
 
             is_http = track.file_path.startswith("http://") or track.file_path.startswith("https://")
 
+            # Check if this track was pre-prepared by set_next_track()
+            has_prepared = (
+                self._next_track_file
+                and self._next_track_file == track.file_path
+            )
+
             if is_http and self._streamer:
                 # HTTP streams (radios) can't be passed to pyatv directly.
                 # Use the HTTP streamer: pipeline decodes → streamer serves WAV → pyatv plays the local URL.
-                self._stream_id = self._streamer.create_session(stream_info, track.file_path)
+                if has_prepared and self._next_stream_id:
+                    # Re-use pre-created streamer session
+                    self._stream_id = self._next_stream_id
+                    self._next_stream_id = None
+                    self._next_track_file = None
+                    logger.info("airplay_using_prepared_session", device=self._device_name)
+                else:
+                    self._stream_id = self._streamer.create_session(stream_info, track.file_path)
                 local_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
                 logger.info("airplay_via_streamer", device=self._device_name, url=local_url[:80])
                 self._stream_task = asyncio.create_task(
@@ -135,7 +156,34 @@ class AirPlayOutput(OutputTarget):
                         raise RuntimeError(
                             f"AirPlay streamer failed on '{self._device_name}': {exc}"
                         ) from exc
+            elif has_prepared and self._next_wav_path and self._next_wav_path.exists():
+                # Use the pre-transcoded WAV from set_next_track() — skip FFmpeg
+                wav_path = self._next_wav_path
+                self._temp_wav = wav_path  # transfer ownership for cleanup
+                self._next_wav_path = None
+                if self._next_stream_id:
+                    self._stream_id = self._next_stream_id
+                    self._next_stream_id = None
+                self._next_track_file = None
+                logger.info("airplay_using_prepared_wav", device=self._device_name,
+                            track=track.title)
+                self._stream_task = asyncio.create_task(
+                    stream.stream_file(str(wav_path), metadata=metadata)
+                )
+                done, _ = await asyncio.wait({self._stream_task}, timeout=5.0)
+                if done:
+                    task = done.pop()
+                    exc = task.exception()
+                    if exc:
+                        self._stream_task = None
+                        self._available = False
+                        raise RuntimeError(
+                            f"AirPlay streaming failed on '{self._device_name}': {exc}"
+                        ) from exc
             else:
+                # Discard stale pre-prepared assets if file doesn't match
+                if self._next_track_file:
+                    self._cleanup_next_track()
                 # Local files: try direct streaming, fall back to WAV transcode
                 try:
                     self._stream_task = asyncio.create_task(
@@ -322,9 +370,84 @@ class AirPlayOutput(OutputTarget):
             logger.debug("airplay_position_error", device=self._device_name)
         return -1
 
+    def _cleanup_next_track(self) -> None:
+        """Discard pre-prepared next-track assets."""
+        if self._next_wav_path and self._next_wav_path.exists():
+            self._next_wav_path.unlink(missing_ok=True)
+        self._next_wav_path = None
+        if self._next_stream_id and self._streamer:
+            self._streamer.remove_session(self._next_stream_id)
+        self._next_stream_id = None
+        self._next_track_file = None
+
+    async def set_next_track(self, stream_info: AudioStreamInfo, track: Track,
+                             **kwargs) -> bool:
+        """Pre-transcode the next track so ``start()`` can skip FFmpeg.
+
+        Returns False because AirPlay cannot auto-advance; the player
+        will still call ``start()`` for the next track, but start() will
+        detect the pre-prepared WAV and use it directly.
+        """
+        if not track or not track.file_path:
+            return False
+
+        self._cleanup_next_track()
+
+        is_http = track.file_path.startswith("http://") or track.file_path.startswith("https://")
+
+        if is_http and self._streamer:
+            # For HTTP streams, pre-create the streamer session
+            self._next_stream_id = self._streamer.create_session(stream_info, track.file_path)
+            self._next_track_file = track.file_path
+            logger.info("airplay_next_prepared_http", device=self._device_name,
+                        track=track.title)
+            return False
+
+        # For local files: pre-transcode to WAV in the background
+        try:
+            wav_path = await self._transcode_to_wav_next(track.file_path)
+            self._next_wav_path = wav_path
+            self._next_track_file = track.file_path
+            # Pre-create streamer session for the WAV so it is ready
+            if self._streamer:
+                self._next_stream_id = self._streamer.create_session(stream_info, str(wav_path))
+            logger.info("airplay_next_prepared_wav", device=self._device_name,
+                        track=track.title)
+        except Exception:
+            logger.debug("airplay_next_prepare_failed", device=self._device_name,
+                         track=track.title)
+            self._cleanup_next_track()
+        return False
+
+    async def _transcode_to_wav_next(self, file_path: str) -> Path:
+        """Transcode a file to WAV for the NEXT track (separate temp file)."""
+        from tune_server.config import settings
+        from tune_server.utils.network import subprocess_hide_window
+        fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="tune_next_")
+        import os
+        os.close(fd)
+        tmp_path = Path(tmp)
+        cmd = [
+            settings.ffmpeg_path, "-hide_banner", "-loglevel", "error",
+            "-i", file_path,
+            "-f", "wav", "-acodec", "pcm_s16le",
+            "-ar", "44100", "-ac", "2",
+            "-y", str(tmp_path),
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            **subprocess_hide_window(),
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        if proc.returncode != 0:
+            tmp_path.unlink(missing_ok=True)
+            raise RuntimeError(f"FFmpeg next-track transcode failed: {stderr.decode()[:200]}")
+        return tmp_path
+
     async def close(self) -> None:
         await self.stop()
         self._cleanup_temp_wav()
+        self._cleanup_next_track()
         try:
             self._atv.close()
         except Exception as e:

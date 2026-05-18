@@ -25,7 +25,7 @@ AIRPLAY_CAPABILITIES = AudioCapabilities(
     formats={AudioFormat.ALAC, AudioFormat.AAC},
     max_sample_rate=44100,
     max_bit_depth=16,
-    supports_gapless=False,
+    supports_gapless=True,  # pre-transcode next track WAV to minimize gap
 )
 
 CHROMECAST_CAPABILITIES = AudioCapabilities(

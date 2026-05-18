@@ -35,14 +35,47 @@ class PairResponse(BaseModel):
 
 @router.get("", response_model=list[DiscoveredDevice])
 async def list_devices():
-    if not deps.discovery_manager:
+    """List all discovered network devices plus local audio outputs.
+
+    Local audio devices (USB DACs, soundcards) are included with
+    type='local' so they appear alongside DLNA/AirPlay devices in the
+    UI device list.  On Windows, the sounddevice list is refreshed on
+    every call to pick up hot-plugged USB DACs.
+    """
+    network: list[DiscoveredDevice] = []
+    if deps.discovery_manager:
+        network = deps.discovery_manager.list_devices_deduped()
+
+    # Include local audio devices so they show up in the UI device picker
+    local_devs = _query_local_audio_devices()
+    for ld in local_devs:
+        network.append(DiscoveredDevice(
+            id=f"local:{ld.name}",
+            name=ld.name,
+            type=OutputType.LOCAL,
+            host="127.0.0.1",
+            port=0,
+            available=True,
+            capabilities={
+                "channels": ld.channels,
+                "sample_rate": ld.sample_rate,
+                "is_default": ld.is_default,
+            },
+        ))
+
+    return network
+
+
+def _query_local_audio_devices() -> list[LocalAudioDevice]:
+    """Query sounddevice for local audio outputs, filtering virtual devices.
+
+    Called on every request so hot-plugged USB DACs appear immediately
+    (important on Windows where DACs are frequently connected/disconnected).
+    """
+    try:
+        import sounddevice as sd
+    except Exception:
         return []
-    return deps.discovery_manager.list_devices_deduped()
-
-
-@router.get("/audio", response_model=list[LocalAudioDevice])
-async def list_audio_devices():
-    import sounddevice as sd
 
     # ALSA aliases and virtual devices to hide
     _ALSA_ALIASES = {
@@ -51,25 +84,43 @@ async def list_audio_devices():
         "plug", "pulse", "pipewire",
     }
 
-    result = []
-    for i, d in enumerate(sd.query_devices()):
-        if d["max_output_channels"] > 0:
-            name = d["name"]
-            # Skip ALSA aliases (Linux) — keep only real hardware devices
-            if name.lower() in _ALSA_ALIASES:
-                continue
-            # Skip channels > 32 (virtual mixers like sysdefault)
-            if d["max_output_channels"] > 32:
-                continue
-            result.append(
-                LocalAudioDevice(
-                    id=str(i),
-                    name=name,
-                    channels=d["max_output_channels"],
-                    sample_rate=int(d["default_samplerate"]),
+    try:
+        default_output = sd.default.device[1]  # default output device index
+    except Exception:
+        default_output = -1
+
+    result: list[LocalAudioDevice] = []
+    try:
+        for i, d in enumerate(sd.query_devices()):
+            if d["max_output_channels"] > 0:
+                name = d["name"]
+                # Skip ALSA aliases (Linux) — keep only real hardware devices
+                if name.lower() in _ALSA_ALIASES:
+                    continue
+                # Skip channels > 32 (virtual mixers like sysdefault)
+                if d["max_output_channels"] > 32:
+                    continue
+                result.append(
+                    LocalAudioDevice(
+                        id=str(i),
+                        name=name,
+                        channels=d["max_output_channels"],
+                        sample_rate=int(d["default_samplerate"]),
+                        is_default=(i == default_output),
+                    )
                 )
-            )
+    except Exception:
+        logger.exception("query_local_audio_devices_error")
     return result
+
+
+@router.get("/audio", response_model=list[LocalAudioDevice])
+async def list_audio_devices():
+    """List local audio output devices (USB DACs, soundcards).
+
+    Refreshed on every call to detect hot-plugged devices.
+    """
+    return _query_local_audio_devices()
 
 
 @router.post("/scan", response_model=list[DiscoveredDevice])
@@ -103,6 +154,26 @@ async def get_all_buffer_stats():
 
 @router.get("/{device_id}", response_model=DiscoveredDevice)
 async def get_device(device_id: str):
+    # Handle local audio devices (id starts with "local:")
+    if device_id.startswith("local:"):
+        dev_name = device_id[6:]
+        for ld in _query_local_audio_devices():
+            if ld.name == dev_name:
+                return DiscoveredDevice(
+                    id=device_id,
+                    name=ld.name,
+                    type=OutputType.LOCAL,
+                    host="127.0.0.1",
+                    port=0,
+                    available=True,
+                    capabilities={
+                        "channels": ld.channels,
+                        "sample_rate": ld.sample_rate,
+                        "is_default": ld.is_default,
+                    },
+                )
+        raise HTTPException(status_code=404, detail="Local audio device not found")
+
     if not deps.discovery_manager:
         raise HTTPException(status_code=503, detail="Discovery not available")
     device = deps.discovery_manager.get_device(device_id)

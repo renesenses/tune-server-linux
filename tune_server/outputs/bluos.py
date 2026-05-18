@@ -93,11 +93,31 @@ class BluosOutput(OutputTarget):
             resp.raise_for_status()
             return await resp.text()
 
+    def _resolve_cover_url(self, track: Track | None) -> str | None:
+        """Build a cover art URL reachable from the BluOS player."""
+        if not track or not track.cover_path:
+            return None
+        cover = track.cover_path
+        if cover.startswith("http"):
+            # Proxy through the Tune API so the player always gets a
+            # reachable HTTP URL (CDN tokens may expire or require HTTPS).
+            from urllib.parse import quote
+            return f"http://{self._server_ip}:8888/api/v1/library/artwork/proxy?url={quote(cover, safe='')}"
+        if cover.startswith("/"):
+            return f"http://{self._server_ip}:8888{cover}"
+        filename = cover.split("/")[-1]
+        return f"http://{self._server_ip}:8888/api/v1/library/artwork/{filename}"
+
     async def start(self, stream_info: AudioStreamInfo, track: Optional[Track] = None) -> None:
         if self._stream_id:
             self._streamer.remove_session(self._stream_id)
             self._stream_id = None
         self._direct_url = False
+
+        title = track.title if track else "Audio"
+        artist = track.artist_name if track else ""
+        album = track.album_title if track else ""
+        cover_url = self._resolve_cover_url(track)
 
         # Determine URL
         if track and self.supports_direct_url(track):
@@ -110,31 +130,21 @@ class BluosOutput(OutputTarget):
             file_path = track.file_path if track else None
             self._stream_id = self._streamer.create_session(stream_info, file_path)
             url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+            # Attach track metadata so the HTTP streamer can serve ICY
+            # headers — this is how BluOS discovers title/artist/cover.
+            self._streamer.set_session_metadata(
+                self._stream_id,
+                title=title,
+                artist=artist,
+                album=album,
+                cover_url=cover_url,
+            )
 
-        title = track.title if track else "Audio"
-        artist = track.artist_name if track else ""
-        album = track.album_title if track else ""
-
-        play_params: dict[str, str] = {"url": url}
-        if title:
-            play_params["title"] = title
-        if artist:
-            play_params["artist"] = artist
-        if album:
-            play_params["album"] = album
-        if track and track.cover_path:
-            cover = track.cover_path
-            if cover.startswith("http"):
-                pass
-            elif cover.startswith("/"):
-                cover = f"http://{self._server_ip}:8888{cover}"
-            else:
-                filename = cover.split("/")[-1]
-                cover = f"http://{self._server_ip}:8888/api/v1/library/artwork/{filename}"
-            play_params["image"] = cover
-
+        # BluOS /Play only accepts 'url' (and 'seek') — title/artist/album
+        # are NOT API parameters (they are read-only /Status attributes).
+        # Metadata is delivered via ICY headers in the HTTP stream instead.
         try:
-            await self._api_get("Play", **play_params)
+            await self._api_get("Play", url=url)
             logger.info("bluos_playing", device=self._name, title=title, artist=artist, url=url[:80])
         except Exception:
             logger.exception("bluos_start_error", device=self._name)

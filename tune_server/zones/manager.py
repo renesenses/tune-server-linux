@@ -374,7 +374,12 @@ class ZoneManager:
 
         # Default: local output (built-in fallback, still keyed via enum)
         if key == OutputType.LOCAL.value:
-            return LocalOutput(device_name=device_id)
+            # Strip "local:" prefix if present (used by the device list API
+            # to namespace local audio device IDs)
+            dev_name = device_id
+            if dev_name and dev_name.startswith("local:"):
+                dev_name = dev_name[6:]
+            return LocalOutput(device_name=dev_name)
 
         logger.warning("no_output_factory", type=key)
         return None

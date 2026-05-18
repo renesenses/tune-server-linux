@@ -727,6 +727,7 @@ class TuneServer:
                 device_model=caps.get("model", ""),
                 device_ip=device_ip,
                 device_id=device_id,
+                device_manufacturer=caps.get("manufacturer", ""),
             )
 
         async def create_airplay_output(device_id: str | None):

@@ -117,6 +117,7 @@ class DlnaOutput(OutputTarget):
         device_model: str = "",
         device_ip: str | None = None,
         device_id: str = "",
+        device_manufacturer: str = "",
     ) -> None:
         self._device = device
         self._streamer = streamer
@@ -128,10 +129,22 @@ class DlnaOutput(OutputTarget):
         self._volume: float = 0.5
         self._device_ip = device_ip
         self._device_id = device_id
+        self._device_model = device_model
+        self._device_manufacturer = device_manufacturer
         # Micromega M-One: proprietary volume via HTTP on port 7000
         self._is_micromega = "micromega" in device_name.lower()
         if self._is_micromega:
             logger.info("micromega_device_detected", device=device_name, ip=device_ip)
+        # Slow renderer detection: match name/model/manufacturer against patterns
+        self._is_slow_renderer = self._detect_slow_renderer(
+            device_name, device_model, device_manufacturer,
+        )
+        if self._is_slow_renderer:
+            logger.info(
+                "dlna_slow_renderer_detected",
+                device=device_name, model=device_model,
+                manufacturer=device_manufacturer, ip=device_ip,
+            )
         # DSD detection: protocol info first, then device name/model heuristic
         self._supports_native_dsd = (
             detect_dsd_from_sink_protocols(sink_protocols or [])
@@ -155,6 +168,26 @@ class DlnaOutput(OutputTarget):
             max_bit_depth=24,
             supports_gapless=True,
         )
+
+    @staticmethod
+    def _detect_slow_renderer(
+        device_name: str, device_model: str, device_manufacturer: str,
+    ) -> bool:
+        """Check if device matches any slow renderer pattern from config.
+
+        Slow renderers (e.g. Atoll ST300) need extra time between
+        SetAVTransportURI and Play, plus retry logic if playback
+        doesn't start on the first attempt.
+        """
+        from tune_server.config import settings as _s
+        patterns_str = _s.dlna_slow_renderer_patterns
+        if not patterns_str:
+            return False
+        patterns = [p.strip().lower() for p in patterns_str.split(",") if p.strip()]
+        if not patterns:
+            return False
+        haystack = f"{device_name} {device_model} {device_manufacturer}".lower()
+        return any(pat in haystack for pat in patterns)
 
     @property
     def name(self) -> str:
@@ -402,21 +435,126 @@ class DlnaOutput(OutputTarget):
     async def _set_and_play(self, dmr, stream_url: str, title: str, metadata: str) -> None:
         from tune_server.config import settings as _s
         t0 = time.monotonic()
-        await asyncio.wait_for(
-            dmr.async_set_transport_uri(stream_url, title, meta_data=metadata), timeout=10
+        max_retries = (
+            _s.dlna_slow_max_retries if self._is_slow_renderer else 0
         )
-        t_uri = time.monotonic()
-        if _s.dlna_play_delay_ms > 0:
-            await asyncio.sleep(_s.dlna_play_delay_ms / 1000.0)
-        await asyncio.wait_for(dmr.async_play(), timeout=10)
-        t_play = time.monotonic()
-        logger.info(
-            "dlna_set_and_play_timing",
+        for attempt in range(1 + max_retries):
+            if attempt > 0:
+                # Retry: Stop first, then re-send SetAVTransportURI + Play
+                logger.warning(
+                    "dlna_slow_renderer_retry",
+                    device=self.name, attempt=attempt,
+                    model=self._device_model,
+                )
+                try:
+                    await asyncio.wait_for(dmr.async_stop(), timeout=5)
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    logger.debug("dlna_retry_stop_failed", device=self.name)
+
+            # SetAVTransportURI
+            await asyncio.wait_for(
+                dmr.async_set_transport_uri(stream_url, title, meta_data=metadata),
+                timeout=10,
+            )
+            t_uri = time.monotonic()
+
+            # Wait for the HTTP streamer session to be ready (renderer fetches the stream)
+            # before sending Play — slow renderers request the data before being ready to decode
+            if self._is_slow_renderer and self._stream_id:
+                session = self._streamer.get_session(self._stream_id)
+                if session:
+                    try:
+                        await asyncio.wait_for(
+                            session.client_connected.wait(), timeout=5.0,
+                        )
+                        logger.debug(
+                            "dlna_slow_renderer_session_ready",
+                            device=self.name,
+                            wait_ms=round((time.monotonic() - t_uri) * 1000),
+                        )
+                    except asyncio.TimeoutError:
+                        # Renderer hasn't fetched the stream yet — proceed anyway,
+                        # the Play command may trigger the fetch
+                        logger.debug(
+                            "dlna_slow_renderer_session_timeout",
+                            device=self.name,
+                        )
+
+            # Delay between SetAVTransportURI and Play
+            play_delay_ms = (
+                _s.dlna_slow_startup_delay_ms
+                if self._is_slow_renderer
+                else _s.dlna_play_delay_ms
+            )
+            if play_delay_ms > 0:
+                await asyncio.sleep(play_delay_ms / 1000.0)
+
+            # Play
+            await asyncio.wait_for(dmr.async_play(), timeout=10)
+            t_play = time.monotonic()
+
+            logger.info(
+                "dlna_set_and_play_timing",
+                device=self.name,
+                set_uri_ms=round((t_uri - t0) * 1000),
+                play_cmd_ms=round((t_play - t_uri) * 1000),
+                total_ms=round((t_play - t0) * 1000),
+                attempt=attempt + 1,
+                slow_renderer=self._is_slow_renderer,
+            )
+
+            # For slow renderers: verify playback actually started by polling
+            # the renderer's position. If no progress after the timeout, retry.
+            if self._is_slow_renderer and attempt < max_retries:
+                if await self._verify_playback_started(
+                    _s.dlna_slow_retry_timeout_ms / 1000.0
+                ):
+                    return  # Playback confirmed
+                # Position never advanced — retry
+                self._track_event(EventKind.UNDERRUN)
+                continue
+
+            # Non-slow renderer or final attempt — done
+            return
+
+    async def _verify_playback_started(self, timeout_s: float) -> bool:
+        """Poll the renderer's position to confirm playback actually started.
+
+        Returns True if media_position > 0 within timeout_s, False otherwise.
+        """
+        deadline = time.monotonic() + timeout_s
+        dmr = self._device
+        while time.monotonic() < deadline:
+            try:
+                await asyncio.wait_for(
+                    dmr.async_update(do_ping=False), timeout=2,
+                )
+                transport_state = getattr(dmr, "transport_state", None)
+                pos = dmr.media_position
+                if transport_state == "PLAYING" and pos is not None and pos > 0:
+                    logger.info(
+                        "dlna_playback_verified",
+                        device=self.name,
+                        position_s=round(pos, 1),
+                    )
+                    return True
+                if transport_state in ("STOPPED", "NO_MEDIA_PRESENT"):
+                    logger.debug(
+                        "dlna_playback_verify_stopped",
+                        device=self.name,
+                        state=transport_state,
+                    )
+                    return False
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+        logger.warning(
+            "dlna_playback_not_started",
             device=self.name,
-            set_uri_ms=round((t_uri - t0) * 1000),
-            play_cmd_ms=round((t_play - t_uri) * 1000),
-            total_ms=round((t_play - t0) * 1000),
+            timeout_s=round(timeout_s, 1),
         )
+        return False
 
     def _start_watchdog(self, stream_url: str, title: str, metadata: str) -> None:
         """Start a watchdog that retries SetAVTransportURI if the renderer

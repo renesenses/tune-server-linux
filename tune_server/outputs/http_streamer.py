@@ -64,6 +64,11 @@ class StreamSession:
         self.last_activity = time.monotonic()
         # Active HTTP responses serving this session — forcibly closed on stop
         self._active_responses: list[web.StreamResponse] = []
+        # Track metadata — used for ICY headers (BluOS, etc.)
+        self.track_title: str | None = None
+        self.track_artist: str | None = None
+        self.track_album: str | None = None
+        self.track_cover_url: str | None = None
 
     def register_response(self, response: web.StreamResponse) -> None:
         """Track an active HTTP response so it can be aborted on stop."""
@@ -147,6 +152,22 @@ class HttpAudioStreamer:
     def get_session(self, stream_id: str) -> Optional[StreamSession]:
         return self._sessions.get(stream_id)
 
+    def set_session_metadata(
+        self,
+        stream_id: str,
+        title: str | None = None,
+        artist: str | None = None,
+        album: str | None = None,
+        cover_url: str | None = None,
+    ) -> None:
+        """Attach track metadata to a session for ICY headers (BluOS etc.)."""
+        session = self._sessions.get(stream_id)
+        if session:
+            session.track_title = title
+            session.track_artist = artist
+            session.track_album = album
+            session.track_cover_url = cover_url
+
     def create_proxy_session(self, upstream_url: str, stream_info: AudioStreamInfo, bit_perfect: bool = False) -> str:
         """Create a session that proxies an upstream HTTPS URL over HTTP."""
         stream_id = str(uuid.uuid4())
@@ -215,6 +236,36 @@ class HttpAudioStreamer:
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info("http_streamer_started", host=self._host, port=self._port)
 
+    @staticmethod
+    def _build_icy_metadata(session: StreamSession) -> bytes:
+        """Build an ICY metadata block from session track metadata.
+
+        ICY protocol: metadata is a length byte (size = byte_val * 16)
+        followed by the ASCII payload padded with NULs to a 16-byte boundary.
+        """
+        parts: list[str] = []
+        stream_title_parts: list[str] = []
+        if session.track_artist:
+            stream_title_parts.append(session.track_artist)
+        if session.track_title:
+            stream_title_parts.append(session.track_title)
+        if stream_title_parts:
+            parts.append(f"StreamTitle='{' - '.join(stream_title_parts)}';")
+        if session.track_cover_url:
+            parts.append(f"StreamUrl='{session.track_cover_url}';")
+        if not parts:
+            return b"\x00"
+        payload = "".join(parts).encode("utf-8", errors="replace")
+        # pad to 16-byte boundary
+        pad_len = (16 - len(payload) % 16) % 16
+        payload += b"\x00" * pad_len
+        length_byte = len(payload) // 16
+        if length_byte > 255:
+            # truncate if absurdly long
+            payload = payload[:255 * 16]
+            length_byte = 255
+        return bytes([length_byte]) + payload
+
     async def _handle_head(self, request: web.Request) -> web.Response:
         stream_id = request.match_info["stream_id"].split(".")[0]
         session = self._sessions.get(stream_id)
@@ -230,6 +281,17 @@ class HttpAudioStreamer:
             "transferMode.dlna.org": "Streaming",
             "contentFeatures.dlna.org": "",
         }
+        # Advertise ICY metadata capability so BluOS/network players
+        # know to request it on the subsequent GET.
+        if session.track_title or session.track_artist:
+            icy_parts: list[str] = []
+            if session.track_artist:
+                icy_parts.append(session.track_artist)
+            if session.track_title:
+                icy_parts.append(session.track_title)
+            headers["icy-name"] = " - ".join(icy_parts)
+            if session.track_album:
+                headers["icy-description"] = session.track_album
 
         # For local files, return Content-Length immediately from file_size
         file_path = self._file_paths.get(stream_id)
@@ -294,11 +356,36 @@ class HttpAudioStreamer:
                 return web.Response(status=499)
 
         # Streaming mode
+        #
+        # ICY metadata: when the session carries track metadata AND the
+        # client requests ICY (Icy-MetaData: 1), we interleave metadata
+        # blocks every ``icy_metaint`` bytes.  This is the standard way
+        # network players (BluOS, Squeeze, …) discover title/artist.
+        has_icy_meta = session.track_title or session.track_artist
+        client_wants_icy = request.headers.get("Icy-MetaData") == "1"
+        icy_metaint = 16384  # bytes between metadata blocks
+
         stream_headers = {
             "Content-Type": mime,
             "transferMode.dlna.org": "Streaming",
             "Cache-Control": "no-cache",
         }
+        # Always advertise ICY name/description when metadata is present
+        # so that players aware of ICY can display something even without
+        # inline metadata insertion.
+        if has_icy_meta:
+            icy_name_parts: list[str] = []
+            if session.track_artist:
+                icy_name_parts.append(session.track_artist)
+            if session.track_title:
+                icy_name_parts.append(session.track_title)
+            stream_headers["icy-name"] = " - ".join(icy_name_parts)
+            if session.track_album:
+                stream_headers["icy-description"] = session.track_album
+
+        if has_icy_meta and client_wants_icy:
+            stream_headers["icy-metaint"] = str(icy_metaint)
+
         stream_headers.update(self._tune_timing_headers(session))
         response = web.StreamResponse(headers=stream_headers)
         await response.prepare(request)
@@ -310,11 +397,30 @@ class HttpAudioStreamer:
                 wav_header = _build_wav_header(session.stream_info)
                 await response.write(wav_header)
 
-            while session.active:
-                chunk = await session.get()
-                if chunk is None:
-                    break
-                await response.write(chunk)
+            if has_icy_meta and client_wants_icy:
+                # ICY interleaved mode: insert metadata every icy_metaint bytes
+                icy_block = self._build_icy_metadata(session)
+                bytes_since_meta = 0
+                while session.active:
+                    chunk = await session.get()
+                    if chunk is None:
+                        break
+                    offset = 0
+                    while offset < len(chunk):
+                        remaining = icy_metaint - bytes_since_meta
+                        end = min(offset + remaining, len(chunk))
+                        await response.write(chunk[offset:end])
+                        bytes_since_meta += end - offset
+                        offset = end
+                        if bytes_since_meta >= icy_metaint:
+                            await response.write(icy_block)
+                            bytes_since_meta = 0
+            else:
+                while session.active:
+                    chunk = await session.get()
+                    if chunk is None:
+                        break
+                    await response.write(chunk)
         except (ConnectionResetError, ConnectionAbortedError, Exception) as e:
             if "closing transport" in str(e).lower():
                 logger.debug("stream_client_disconnected", stream_id=stream_id)
@@ -335,6 +441,17 @@ class HttpAudioStreamer:
     ) -> web.StreamResponse:
         """Serve a file with Range request support for DLNA."""
         timing = self._tune_timing_headers(session) if session else {}
+        # Include ICY name headers so network players (BluOS etc.) can
+        # display metadata even when serving a complete file.
+        if session and (session.track_title or session.track_artist):
+            icy_parts: list[str] = []
+            if session.track_artist:
+                icy_parts.append(session.track_artist)
+            if session.track_title:
+                icy_parts.append(session.track_title)
+            timing["icy-name"] = " - ".join(icy_parts)
+            if session.track_album:
+                timing["icy-description"] = session.track_album
         range_header = request.headers.get("Range")
 
         if range_header:

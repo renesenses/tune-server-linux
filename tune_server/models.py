@@ -255,6 +255,7 @@ class LocalAudioDevice(BaseModel):
     name: str
     channels: int
     sample_rate: int
+    is_default: bool = False
 
 
 class AudioStreamInfo(BaseModel):

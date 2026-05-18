@@ -20,7 +20,7 @@ class GaplessHandler:
     are decoded and cached so the switch is instantaneous.
     """
 
-    PRE_BUFFER_THRESHOLD_MS = 10_000  # start pre-buffering 10s before end
+    PRE_BUFFER_THRESHOLD_MS = 15_000  # start pre-buffering 15s before end
 
     def __init__(self, capabilities: AudioCapabilities) -> None:
         self._capabilities = capabilities

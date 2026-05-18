@@ -45,6 +45,7 @@ class ChromecastOutput(OutputTarget):
         self._name = device_name
         self._available = True
         self._stream_id: str | None = None
+        self._next_stream_id: str | None = None  # pre-created session for next track
         self._direct_url: bool = False
         self._last_content_id: str | None = None
 
@@ -86,6 +87,13 @@ class ChromecastOutput(OutputTarget):
 
         mc = self._cast.media_controller
 
+        # Check if this track was pre-prepared via set_next_track()
+        _use_prepared = (
+            self._next_stream_id
+            and track and track.file_path
+            and not track.file_path.startswith(("http://", "https://"))
+        )
+
         # Determine URL and content type
         if track and self.supports_direct_url(track):
             url = track.file_path
@@ -93,6 +101,12 @@ class ChromecastOutput(OutputTarget):
         elif track and track.file_path and track.file_path.startswith(("http://", "https://")):
             url = track.file_path
             self._direct_url = True
+        elif _use_prepared:
+            # Promote pre-created session from set_next_track()
+            self._stream_id = self._next_stream_id
+            self._next_stream_id = None
+            url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+            logger.info("chromecast_using_prepared_session", device=self._name)
         else:
             file_path = track.file_path if track else None
             self._stream_id = self._streamer.create_session(stream_info, file_path)
@@ -164,6 +178,9 @@ class ChromecastOutput(OutputTarget):
         if self._stream_id:
             self._streamer.remove_session(self._stream_id)
             self._stream_id = None
+        if self._next_stream_id:
+            self._streamer.remove_session(self._next_stream_id)
+            self._next_stream_id = None
         self._direct_url = False
 
     async def set_volume(self, volume: float) -> None:
@@ -194,10 +211,74 @@ class ChromecastOutput(OutputTarget):
             pass
         return -1
 
-    async def set_next_track(self, stream_info: AudioStreamInfo, track: Track) -> bool:
-        # Chromecast enqueue is unreliable (can replace current media on some
-        # devices/firmware). Rely on auto-advance via _direct_url_monitor instead.
-        return False
+    async def set_next_track(self, stream_info: AudioStreamInfo, track: Track,
+                             **kwargs) -> bool:
+        """Queue the next track on the Chromecast for gapless transition.
+
+        Pre-creates the HTTP streamer session so the audio data is ready
+        before the current track ends, then enqueues via play_media with
+        enqueue=True (QUEUE_NEXT).
+        """
+        if not track or not track.file_path:
+            return False
+
+        # Clean up any previously prepared next-track session
+        if self._next_stream_id:
+            self._streamer.remove_session(self._next_stream_id)
+            self._next_stream_id = None
+
+        mc = self._cast.media_controller
+
+        # Determine URL and content type
+        if self.supports_direct_url(track):
+            url = track.file_path
+        elif track.file_path.startswith(("http://", "https://")):
+            url = track.file_path
+        else:
+            # Local file: pre-create streamer session
+            self._next_stream_id = self._streamer.create_session(stream_info, track.file_path)
+            url = self._streamer.get_stream_url(self._next_stream_id, self._server_ip)
+
+        content_type = "audio/flac"
+        if track.format:
+            fmt = track.format.value if hasattr(track.format, "value") else str(track.format)
+            content_type = _MIME_MAP.get(fmt, "audio/flac")
+
+        title = track.title or "Audio"
+        artist = track.artist_name or None
+        album = track.album_title or None
+
+        thumb = None
+        if track.cover_path:
+            if track.cover_path.startswith("http"):
+                thumb = f"http://{self._server_ip}:8888/api/v1/library/artwork/proxy?url={track.cover_path}"
+            else:
+                filename = track.cover_path.split("/")[-1]
+                thumb = f"http://{self._server_ip}:8888/api/v1/library/artwork/{filename}"
+
+        metadata = {"metadataType": 3, "title": title}
+        if artist:
+            metadata["artist"] = artist
+        if album:
+            metadata["albumName"] = album
+
+        try:
+            await self._cast_call(
+                mc.play_media, url, content_type,
+                title=title, thumb=thumb, metadata=metadata,
+                enqueue=True,
+            )
+            logger.info("chromecast_next_queued", device=self._name, track=title,
+                        url=url[:80])
+            return True
+        except Exception:
+            logger.debug("chromecast_queue_next_failed", device=self._name,
+                         track=title)
+            # Clean up the pre-created session on failure
+            if self._next_stream_id:
+                self._streamer.remove_session(self._next_stream_id)
+                self._next_stream_id = None
+            return False
 
     def has_uri_changed(self) -> bool:
         try:
@@ -215,9 +296,19 @@ class ChromecastOutput(OutputTarget):
                 self._last_content_id = status.content_id
         except Exception:
             pass
+        # Promote next-track session: the Chromecast has auto-advanced
+        # to the queued track, so its streamer session is now the active one.
+        if self._next_stream_id:
+            if self._stream_id:
+                self._streamer.remove_session(self._stream_id)
+            self._stream_id = self._next_stream_id
+            self._next_stream_id = None
 
     async def close(self) -> None:
         await self.stop()
+        if self._next_stream_id:
+            self._streamer.remove_session(self._next_stream_id)
+            self._next_stream_id = None
         try:
             if hasattr(self._cast, 'socket_client') and self._cast.socket_client:
                 await self._cast_call(self._cast.socket_client.disconnect)
