@@ -240,6 +240,55 @@ jobs:
           $env:PATH = "$nsisPath;$env:PATH"
           makensis /DVERSION=$env:TUNE_VERSION installer.nsi
 
+      # -----------------------------------------------------------------------
+      # Windows code signing (disabled until a certificate is purchased).
+      # To enable: add WIN_SIGN_CERT_BASE64 (base64-encoded .pfx) and
+      # WIN_SIGN_CERT_PWD as GitHub repo secrets. See the signing options
+      # analysis in scripts/installer.nsi header comments.
+      # -----------------------------------------------------------------------
+      - name: Sign Windows installer (if certificate present)
+        if: matrix.platform == 'windows' && env.WIN_SIGN_CERT_BASE64 != ''
+        shell: pwsh
+        env:
+          WIN_SIGN_CERT_BASE64: ${{ secrets.WIN_SIGN_CERT_BASE64 }}
+          WIN_SIGN_CERT_PWD: ${{ secrets.WIN_SIGN_CERT_PWD }}
+          WIN_SIGN_TIMESTAMP_URL: "http://timestamp.sectigo.com"
+          TUNE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Find signtool.exe from the Windows SDK
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "x64" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) {
+            Write-Host "::error::signtool.exe not found in Windows SDK"
+            exit 1
+          }
+          Write-Host "Using signtool: $signtool"
+
+          # Decode the .pfx certificate from base64
+          $certBytes = [System.Convert]::FromBase64String($env:WIN_SIGN_CERT_BASE64)
+          $certPath = "$env:RUNNER_TEMP\codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+
+          # Sign both the setup.exe and the main tune-server.exe inside dist/
+          $filesToSign = @(
+            "tune-server-$env:TUNE_VERSION-windows-setup.exe",
+            "dist/tune-server/tune-server.exe"
+          )
+          foreach ($f in $filesToSign) {
+            if (Test-Path $f) {
+              & $signtool sign /f $certPath /p $env:WIN_SIGN_CERT_PWD `
+                /tr $env:WIN_SIGN_TIMESTAMP_URL /td sha256 /fd sha256 `
+                /d "Tune Server" /du "https://mozaiklabs.fr" $f
+              & $signtool verify /pa $f
+              Write-Host "Signed: $f"
+            }
+          }
+
+          # Cleanup
+          Remove-Item $certPath -Force
+
       - name: Package (Linux)
         if: matrix.platform == 'linux'
         run: |

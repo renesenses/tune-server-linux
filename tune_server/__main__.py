@@ -109,6 +109,81 @@ def _fix_noconsole_streams() -> None:
         sys.stderr = open(os.devnull, "w")
 
 
+def _check_port_available(port: int) -> bool:
+    """Quick check whether the API port is free before starting uvicorn.
+
+    Returns True if the port is available, False otherwise. On failure,
+    prints a clear, actionable error message so first-time users (especially
+    on Windows) know exactly what to do instead of seeing a raw traceback.
+    """
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", port))
+        s.close()
+        return True
+    except OSError:
+        print(f"\n{'='*60}")
+        print(f"  ERROR: Port {port} is already in use.")
+        print(f"{'='*60}")
+        print()
+        print(f"  Another program (or a previous Tune Server instance)")
+        print(f"  is already listening on port {port}.")
+        print()
+        if sys.platform == "win32":
+            print(f"  To fix:")
+            print(f"    1. Open Task Manager (Ctrl+Shift+Esc)")
+            print(f"    2. Look for 'tune-server' and end the task")
+            print(f"    3. Or run:  netstat -ano | findstr :{port}")
+            print(f"       to find which process is using the port.")
+        else:
+            print(f"  To fix:")
+            print(f"    1. Run:  lsof -i :{port}")
+            print(f"       to find which process is using the port.")
+            print(f"    2. Stop that process, then try again.")
+        print()
+        print(f"  You can also change the port with TUNE_API_PORT=9999")
+        print(f"  in your .env file.")
+        print(f"{'='*60}\n")
+        return False
+
+
+def _maybe_open_browser(port: int) -> None:
+    """Open the web UI in the default browser after a short delay.
+
+    Only runs for non-frozen installs (source/pip) where no platform-specific
+    launcher handles browser opening. Windows (.bat), macOS (.app/.command),
+    and Linux systemd services all handle this externally.
+    """
+    if getattr(sys, "frozen", False):
+        return  # Platform launchers handle this
+
+    # Check TUNE_NO_BROWSER env var to allow disabling (headless servers)
+    if os.environ.get("TUNE_NO_BROWSER", "").lower() in ("1", "true", "yes"):
+        return
+
+    import threading
+    import webbrowser
+
+    def _open():
+        import time
+        import urllib.request
+        url = f"http://localhost:{port}"
+        # Poll until the server is ready (max 15 seconds)
+        for _ in range(30):
+            time.sleep(0.5)
+            try:
+                urllib.request.urlopen(f"{url}/api/v1/system/health", timeout=1)
+                webbrowser.open(url)
+                return
+            except Exception:
+                continue
+
+    t = threading.Thread(target=_open, daemon=True)
+    t.start()
+
+
 def main() -> None:
     _raise_nofile_limit()
     _fix_noconsole_streams()
@@ -122,7 +197,18 @@ def main() -> None:
         migrate_main()
         return
 
+    # Pre-flight: check that the API port is free BEFORE importing the full
+    # server stack and starting uvicorn. This gives a clear error message
+    # instead of a cryptic OSError traceback — critical for first-run
+    # experience on Windows where port conflicts are common.
+    from tune_server.config import settings
+    if not _check_port_available(settings.api_port):
+        sys.exit(1)
+
     from tune_server.app import run_server
+
+    # Auto-open browser for source/pip installs (launchers handle their own)
+    _maybe_open_browser(settings.api_port)
 
     async def _run() -> None:
         shutdown_event = asyncio.Event()

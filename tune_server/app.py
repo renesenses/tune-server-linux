@@ -585,6 +585,26 @@ class TuneServer:
             stream_url=f"http://{self._server_ip}:{settings.stream_port}",
         )
 
+        # Print a clear startup banner visible in the console / .bat window.
+        # Non-technical testers need to see the URL prominently.
+        print()
+        print("=" * 60)
+        print(f"  Tune Server v{__version__} is running")
+        print(f"  Web UI:  http://localhost:{settings.api_port}")
+        print(f"  Network: http://{self._server_ip}:{settings.api_port}")
+        if not settings.music_dirs or not any(
+            __import__('pathlib').Path(d).is_dir() for d in settings.music_dirs
+        ):
+            print()
+            print("  NOTE: No music directory found.")
+            print("  Add one via the web UI (Settings) or set TUNE_MUSIC_DIRS")
+            print("  in your .env file.")
+        if not check_ffmpeg():
+            print()
+            print("  WARNING: FFmpeg not found -- transcoding disabled.")
+        print("=" * 60)
+        print()
+
         asyncio.create_task(self._report_install_or_update())
 
     async def _dlna_buffer_stability_loop(self) -> None:
@@ -1421,6 +1441,21 @@ async def run_server(shutdown_event: asyncio.Event | None = None) -> None:
 
     try:
         await uvi_server.serve()
+    except OSError as exc:
+        # Catch port-in-use errors that slip past the pre-flight check
+        # (e.g. race condition, or port grabbed between check and bind).
+        import errno
+        if exc.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", 10048), 10048, 98):
+            logger.error(
+                "port_in_use",
+                port=settings.api_port,
+                hint=f"Port {settings.api_port} is already in use. "
+                     f"Stop the other process or set TUNE_API_PORT to a different port.",
+            )
+        else:
+            logger.exception("server_bind_error")
+        await server.stop()
+        raise
     finally:
         if signal_task:
             signal_task.cancel()

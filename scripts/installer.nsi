@@ -3,11 +3,39 @@
 
 Unicode true
 !include "MUI2.nsh"
+!include "FileFunc.nsh"
+
+; ---------------------------------------------------------------------------
+; Version metadata — embedded in the .exe PE headers.
+; Windows SmartScreen uses FileDescription, CompanyName, and ProductName to
+; build publisher reputation over time. Without these fields the .exe is
+; treated as "unknown publisher" forever and every download triggers a
+; warning dialog.
+;
+; VIProductVersion requires exactly 4 dot-separated numbers (major.minor.patch.build).
+; Our version is 3-part (e.g. 0.7.108), so we append ".0".
+; ---------------------------------------------------------------------------
+VIProductVersion "${VERSION}.0"
+VIFileVersion "${VERSION}.0"
+
+VIAddVersionKey /LANG=0 "ProductName" "Tune Server"
+VIAddVersionKey /LANG=0 "CompanyName" "MozAIk Labs"
+VIAddVersionKey /LANG=0 "LegalCopyright" "© 2024-2026 MozAIk Labs (mozaiklabs.fr)"
+VIAddVersionKey /LANG=0 "FileDescription" "Tune Server — Serveur audio Hi-Res multi-room"
+VIAddVersionKey /LANG=0 "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=0 "ProductVersion" "${VERSION}"
+VIAddVersionKey /LANG=0 "OriginalFilename" "tune-server-${VERSION}-windows-setup.exe"
+VIAddVersionKey /LANG=0 "InternalName" "tune-server-setup"
 
 Name "Tune Server ${VERSION}"
 OutFile "tune-server-${VERSION}-windows-setup.exe"
 InstallDir "$LOCALAPPDATA\Tune Server"
 InstallDirRegKey HKCU "Software\MozAIkLabs\Tune Server" "InstallDir"
+
+; Per-user install (no UAC prompt). Combined with HKCU registry and
+; $LOCALAPPDATA install dir, the installer never triggers the UAC
+; elevation dialog — reducing friction on machines where the user
+; does not have admin rights.
 RequestExecutionLevel user
 
 ; --- UI ---
@@ -67,10 +95,17 @@ Section "Install"
         "DisplayVersion" "${VERSION}"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TuneServer" \
         "URLInfoAbout" "https://mozaiklabs.fr"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TuneServer" \
+        "URLUpdateInfo" "https://github.com/renesenses/tune-server-linux/releases"
     WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TuneServer" \
         "NoModify" 1
     WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TuneServer" \
         "NoRepair" 1
+    ; Estimated size in KB (helps Add/Remove Programs show disk usage)
+    ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+    IntFmt $0 "0x%08X" $0
+    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TuneServer" \
+        "EstimatedSize" $0
 
     ; Start Menu
     CreateDirectory "$SMPROGRAMS\Tune Server"

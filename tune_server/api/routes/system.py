@@ -1388,6 +1388,31 @@ async def diagnostics(errors_limit: int = Query(50, le=200)):
     # Music dirs status
     diag["music_dirs_status"] = _music_dirs_status()
 
+    # First-run detection: no tracks scanned yet
+    diag["first_run"] = diag["tracks_count"] == 0
+
+    # Self-service hints for common issues (Windows testers)
+    hints: list[str] = []
+    if diag["first_run"] and not settings.music_dirs:
+        hints.append("No music directory configured. Go to Settings in the web UI to add one.")
+    if diag["first_run"] and diag["tracks_count"] == 0 and settings.music_dirs:
+        for ms in diag.get("music_dirs_status", []):
+            if not ms.get("exists"):
+                hints.append(f"Music directory does not exist: {ms['path']}")
+            elif ms.get("file_count", 0) == 0:
+                hints.append(f"Music directory is empty: {ms['path']}")
+    if diag.get("ffmpeg_version") is None:
+        hints.append("FFmpeg not found. Streaming services require FFmpeg for transcoding.")
+    if platform.system() == "Windows":
+        out_health = diag.get("outputs_health", {})
+        if out_health.get("dlna", 0) == 0 and out_health.get("airplay", 0) == 0:
+            hints.append(
+                "No audio renderers discovered. Check that Windows Firewall allows "
+                "tune-server.exe on your private network (UDP 1900 for DLNA, UDP 5353 for AirPlay)."
+            )
+    diag["hints"] = hints
+    diag["faq_url"] = "https://mozaiklabs.fr/faq"
+
     return diag
 
 

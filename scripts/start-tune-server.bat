@@ -77,6 +77,12 @@ echo Demarrage de Tune Server...
 echo L'interface web s'ouvrira sur http://localhost:8888
 echo Logs : %cd%\tune-server.log
 echo.
+echo   Si vos enceintes DLNA ne sont pas detectees, verifiez que
+echo   le pare-feu Windows autorise tune-server.exe (reseau prive).
+echo.
+echo   Aide : https://mozaiklabs.fr/faq
+echo   Diagnostic : http://localhost:8888/api/v1/system/diagnostics
+echo.
 echo   Pour arreter le serveur, fermez cette fenetre.
 echo.
 
@@ -134,8 +140,10 @@ if exist "tune-server.log" (
     echo No log file was written ^(server may have failed before logging init^).
 )
 echo.
-echo Open the Web UI ^(if reachable^) and click "Telecharger le diagnostic"
-echo to send a support bundle, or attach tune-server.log to your bug report.
+echo Aide : https://mozaiklabs.fr/faq
+echo.
+echo Option 1 : Ouvrez http://localhost:8888 et cliquez "Telecharger le diagnostic"
+echo Option 2 : Envoyez le fichier tune-server.log a support@mozaiklabs.fr
 echo.
 
 :END
