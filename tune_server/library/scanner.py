@@ -403,13 +403,14 @@ class LibraryScanner:
                     "various artists", "various", "compilation", "va",
                     "artistes divers", "divers",
                 ))
+            track_year = metadata.year or metadata.original_year
             if not album:
                 if is_compilation:
-                    album = await self._album_repo.get_by_title(base_title)
+                    album = await self._album_repo.get_by_title(base_title, year=track_year)
                 elif metadata.album_artist:
-                    album = await self._album_repo.get_by_title_and_artist(base_title, artist.id)
+                    album = await self._album_repo.get_by_title_and_artist(base_title, artist.id, year=track_year)
                 else:
-                    album = await self._album_repo.get_by_title(base_title)
+                    album = await self._album_repo.get_by_title(base_title, year=track_year)
 
                 # Don't merge into an album that belongs to a different release
                 if (album and mb_release_id
@@ -420,7 +421,6 @@ class LibraryScanner:
                     album = None
 
                 # Don't merge into an album from a different year
-                track_year = metadata.year or metadata.original_year
                 if album and track_year and album.year and album.year != track_year:
                     logger.info("album_year_split", title=base_title,
                                 existing_year=album.year, new_year=track_year)

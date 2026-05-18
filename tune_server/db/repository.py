@@ -272,14 +272,28 @@ class AlbumRepo:
         )
         return _row_to_album(row) if row else None
 
-    async def get_by_title_and_artist(self, title: str, artist_id: int) -> Optional[Album]:
+    async def get_by_title_and_artist(self, title: str, artist_id: int, year: int | None = None) -> Optional[Album]:
+        if year:
+            row = await self._db.fetchone(
+                f"{self._SELECT} WHERE al.title = ? AND al.artist_id = ? AND al.year = ?",
+                (title, artist_id, year),
+            )
+            if row:
+                return _row_to_album(row)
         row = await self._db.fetchone(
             f"{self._SELECT} WHERE al.title = ? AND al.artist_id = ?",
             (title, artist_id),
         )
         return _row_to_album(row) if row else None
 
-    async def get_by_title(self, title: str) -> Album | None:
+    async def get_by_title(self, title: str, year: int | None = None) -> Album | None:
+        if year:
+            row = await self._db.fetchone(
+                f"{self._SELECT} WHERE al.title = ? AND al.year = ? LIMIT 1",
+                (title, year),
+            )
+            if row:
+                return _row_to_album(row)
         row = await self._db.fetchone(
             f"{self._SELECT} WHERE al.title = ? LIMIT 1",
             (title,),
@@ -446,7 +460,8 @@ class AlbumRepo:
             existing = await self.get_by_musicbrainz_release_id(mb_release_id)
             if existing:
                 return existing
-        existing = await self.get_by_title_and_artist(title, artist_id)
+        year = kwargs.get("year")
+        existing = await self.get_by_title_and_artist(title, artist_id, year=year)
         if existing:
             # Don't reuse an album that belongs to a different MusicBrainz release
             if (mb_release_id and existing.musicbrainz_release_id
