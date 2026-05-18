@@ -1040,6 +1040,76 @@ async def clear_cache():
     return {"cleared": cleared}
 
 
+@router.post("/cleanup")
+async def cleanup_server():
+    """Full server cleanup: orphan albums/artists, stale history, artwork cache, DB vacuum."""
+    results = {}
+
+    # 1. Delete orphan albums (no tracks)
+    try:
+        orphan_albums = await deps.album_repo.delete_orphans()
+        results["orphan_albums_deleted"] = orphan_albums
+    except Exception as e:
+        results["orphan_albums_error"] = str(e)
+
+    # 2. Delete orphan artists (no tracks, no albums)
+    try:
+        orphan_count = 0
+        all_artists = await deps.artist_repo.all(limit=50000)
+        for artist in all_artists:
+            tracks = await deps.track_repo.list_by_artist(artist.id, limit=1) if hasattr(deps.track_repo, "list_by_artist") else []
+            albums = await deps.album_repo.list_by_artist(artist.id, limit=1) if hasattr(deps.album_repo, "list_by_artist") else []
+            if not tracks and not albums:
+                await deps.artist_repo.delete(artist.id)
+                orphan_count += 1
+        results["orphan_artists_deleted"] = orphan_count
+    except Exception as e:
+        results["orphan_artists_error"] = str(e)
+
+    # 3. Clean stale artwork cache (files not referenced by any album)
+    try:
+        cache_dir = Path(settings.artwork_cache_dir)
+        if cache_dir.is_dir():
+            all_covers = set()
+            tracks_sample = await deps.track_repo.list(limit=50000)
+            for t in tracks_sample:
+                if t.cover_path:
+                    cover_file = Path(t.cover_path).name if "/" in (t.cover_path or "") else t.cover_path
+                    all_covers.add(cover_file)
+            stale = 0
+            for f in cache_dir.iterdir():
+                if f.is_file() and f.name not in all_covers:
+                    f.unlink()
+                    stale += 1
+            results["stale_artwork_deleted"] = stale
+    except Exception as e:
+        results["stale_artwork_error"] = str(e)
+
+    # 4. DB vacuum (SQLite only)
+    try:
+        if settings.db_engine == "sqlite":
+            await deps.db.execute("VACUUM")
+            results["db_vacuumed"] = True
+        else:
+            results["db_vacuumed"] = False
+    except Exception as e:
+        results["db_vacuum_error"] = str(e)
+
+    # 5. Clear playback history older than 90 days
+    try:
+        from datetime import datetime, timedelta
+        cutoff = (datetime.utcnow() - timedelta(days=90)).isoformat()
+        deleted = await deps.db.execute(
+            "DELETE FROM playback_history WHERE played_at < ?", (cutoff,)
+        )
+        results["old_history_deleted"] = getattr(deleted, "rowcount", 0) if deleted else 0
+    except Exception as e:
+        results["old_history_error"] = str(e)
+
+    logger.info("server_cleanup_completed", **results)
+    return results
+
+
 @router.get("/logs")
 async def get_logs(lines: int = 100):
     """Get recent server logs."""
