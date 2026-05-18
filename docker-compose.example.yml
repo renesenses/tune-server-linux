@@ -1,6 +1,6 @@
 services:
   tune:
-    image: mozaiklabs/tune:latest
+    image: renesenses/tune:latest
     container_name: tune-server
     restart: unless-stopped
     # network_mode: host est obligatoire pour DLNA (SSDP), AirPlay (mDNS) et Chromecast

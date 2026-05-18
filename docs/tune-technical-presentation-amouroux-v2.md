@@ -793,7 +793,7 @@ Même le format le plus gourmand (DSD512 stéréo à 44.8 Mbit/s) passe conforta
 - **iOS / macOS** : TestFlight (lien sur demande)
 - **Android** : Firebase App Distribution (lien sur demande)
 - **Web** : lancez tune-server et ouvrez `http://localhost:8888`
-- **Docker** : `docker pull mozaiklabs/tune-server` (bientot)
+- **Docker** : `docker pull renesenses/tune:latest`
 
 ---
 

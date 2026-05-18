@@ -3,7 +3,7 @@ services:
     # Build from local Dockerfile:
     build: .
     # Or use the official image:
-    # image: mozaiklabs/tune:latest
+    # image: renesenses/tune:latest
     container_name: tune-server
     restart: unless-stopped
     # host networking is required for DLNA/SSDP multicast discovery,
