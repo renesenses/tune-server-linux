@@ -79,8 +79,7 @@ class SsdpDiscovery:
     def _log_create_failure(self, usn: str, location: str, name: str, exc: Exception) -> None:
         count = self._create_failures.get(usn, 0) + 1
         self._create_failures[usn] = count
-        log = logger.warning if count <= 3 else logger.debug
-        log(
+        logger.debug(
             "ssdp_device_create_error",
             location=location, usn=usn, name=name,
             error=str(exc), failure_count=count,
