@@ -461,12 +461,7 @@ class SsdpDiscovery:
                     try:
                         await _run_search(MEDIA_RENDERER_URN, _forced_source)
                     except OSError as os_err:
-                        logger.warning("ssdp_multicast_error", error=str(os_err))
-                        try:
-                            if _forced_source:
-                                await _run_search(MEDIA_RENDERER_URN, _forced_source)
-                        except Exception:
-                            logger.debug("ssdp_retry_also_failed")
+                        logger.debug("ssdp_multicast_error", error=str(os_err))
 
                     # Search for OpenHome / Linn devices that may not respond
                     # to the standard MediaRenderer URN
