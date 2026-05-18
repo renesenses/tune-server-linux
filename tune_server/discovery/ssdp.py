@@ -478,8 +478,12 @@ class SsdpDiscovery:
                     _forced_source = self._get_local_ip()
                     try:
                         await _run_search(MEDIA_RENDERER_URN, _forced_source)
-                    except OSError as os_err:
+                    except (OSError, ValueError) as os_err:
                         logger.debug("ssdp_multicast_error", error=str(os_err))
+                        try:
+                            await _run_search(MEDIA_RENDERER_URN, None)
+                        except Exception:
+                            pass
 
                     # Windows multicast fix: also try binding to 0.0.0.0 since
                     # Windows multicast routing can be unpredictable with multiple
@@ -515,11 +519,9 @@ class SsdpDiscovery:
                     # filters and validates via DmrDevice.is_profile_device().
                     try:
                         await _run_search(SSDP_ALL, _forced_source)
-                    except OSError:
+                    except (OSError, ValueError):
                         try:
-                            source_ip = self._get_local_ip()
-                            if source_ip:
-                                await _run_search(SSDP_ALL, source_ip)
+                            await _run_search(SSDP_ALL, None)
                         except Exception:
                             pass
                     except Exception:
@@ -766,10 +768,13 @@ class SsdpDiscovery:
 
         try:
             await _run_search(MEDIA_RENDERER_URN)
-        except OSError:
-            source_ip = self._get_local_ip()
-            if source_ip:
-                await _run_search(MEDIA_RENDERER_URN, source_ip)
+        except (OSError, ValueError):
+            try:
+                source_ip = self._get_local_ip()
+                if source_ip:
+                    await _run_search(MEDIA_RENDERER_URN, source_ip)
+            except (OSError, ValueError):
+                pass
 
         # Search for OpenHome / Linn devices
         for oh_target in OPENHOME_SEARCH_TARGETS:
