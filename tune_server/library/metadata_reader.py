@@ -466,6 +466,33 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
 
         mb_ids = _extract_musicbrainz_ids(audio, tags)
 
+        # Filename fallback: parse "NN - Artist - Title" pattern when tags are missing
+        if title == path.stem:
+            import re
+            m = re.match(r"^(\d{1,3})\s*[-–.]\s*(.+?)\s*[-–]\s*(.+)$", str(title))
+            if m:
+                if track_num == 0:
+                    track_num = int(m.group(1))
+                if not artist:
+                    artist = m.group(2).strip()
+                title = m.group(3).strip()
+            else:
+                m2 = re.match(r"^(\d{1,3})\s*[-–.]\s*(.+)$", str(title))
+                if m2:
+                    if track_num == 0:
+                        track_num = int(m2.group(1))
+                    title = m2.group(2).strip()
+            if not album:
+                album = path.parent.name
+            if not artist:
+                grandparent = path.parent.parent.name
+                if grandparent and grandparent not in ("music", "data", "/"):
+                    artist = grandparent
+            if not genre:
+                great_grandparent = path.parent.parent.parent.name
+                if great_grandparent and great_grandparent not in ("music", "data", "/"):
+                    genre = great_grandparent
+
         return TrackMetadata(
             title=str(title) if title else "",
             artist=str(artist) if artist else None,
