@@ -8,11 +8,13 @@ from tune_server.discovery.network_shares import NetworkShareDiscovery
 from tune_server.models import (
     AudioFormat,
     DiscoveredMediaServer,
+    DiscoveredSmbShareModel,
     MediaServerBrowseResult,
     MountInfo,
     MountRequest,
     NetworkShare,
     ShareProtocol,
+    SmbCredentialsRequest,
     Track,
     Zone,
 )
@@ -56,6 +58,101 @@ async def scan_host(
     else:
         shares = await NetworkShareDiscovery._list_nfs_exports(host)
     return {"host": host, "protocol": protocol.value, "shares": shares}
+
+
+# --- SMB auto-discovery ---
+
+
+@router.get("/smb/discover", response_model=list[DiscoveredSmbShareModel])
+async def discover_smb_shares():
+    """List all SMB shares discovered by the periodic auto-discovery scanner.
+
+    If auto-discovery is not enabled (``TUNE_SMB_AUTO_DISCOVERY=false``),
+    falls back to listing shares from the mDNS-based discovery.
+    """
+    # Prefer the active auto-discovery engine
+    if deps.smb_discovery:
+        return [
+            DiscoveredSmbShareModel(**s.to_dict())
+            for s in deps.smb_discovery.discovered.values()
+        ]
+    # Fallback: mDNS-based share discovery (already running)
+    dm = deps.discovery_manager
+    if dm and dm.network_shares:
+        results: list[DiscoveredSmbShareModel] = []
+        for share in dm.network_shares.shares.values():
+            if share.protocol != ShareProtocol.SMB:
+                continue
+            for sname in share.shares:
+                results.append(DiscoveredSmbShareModel(
+                    id=f"smb://{share.host}/{sname}",
+                    host=share.host,
+                    host_name=share.name,
+                    share_name=sname,
+                ))
+        return results
+    return []
+
+
+@router.post("/smb/discover")
+async def trigger_smb_scan():
+    """Trigger an immediate SMB network scan and return results."""
+    if not deps.smb_discovery:
+        raise HTTPException(
+            status_code=503,
+            detail="SMB auto-discovery not enabled (set TUNE_SMB_AUTO_DISCOVERY=true)",
+        )
+    shares = await deps.smb_discovery.scan_now()
+    return [DiscoveredSmbShareModel(**s.to_dict()) for s in shares]
+
+
+@router.post("/smb/mount", response_model=MountInfo)
+async def mount_smb_share(request: MountRequest):
+    """Mount an SMB share with optional credentials.
+
+    This is a convenience alias for ``POST /network/mounts`` that forces
+    the protocol to SMB and auto-enables ``auto_mount``.
+    """
+    if not deps.mount_manager:
+        raise HTTPException(status_code=503, detail="Mount manager not available")
+    request.protocol = ShareProtocol.SMB
+    request.auto_mount = True
+    return await deps.mount_manager.mount_share(request)
+
+
+@router.post("/smb/credentials", status_code=204)
+async def save_smb_credentials(creds: SmbCredentialsRequest):
+    """Save encrypted credentials for an SMB share.
+
+    The password is encrypted with Fernet before being stored in the
+    ``network_mounts`` table.  Saved credentials are used for
+    auto-remount on server restart.
+    """
+    if not deps.mount_manager:
+        raise HTTPException(status_code=503, detail="Mount manager not available")
+    await deps.mount_manager.save_credentials(
+        host=creds.host,
+        share_name=creds.share_name,
+        username=creds.username,
+        password=creds.password,
+    )
+
+
+@router.get("/smb/mounts", response_model=list[MountInfo])
+async def list_smb_mounts():
+    """List current SMB mounts (subset of all network mounts)."""
+    if not deps.mount_manager:
+        return []
+    all_mounts = await deps.mount_manager.list_mounts()
+    return [m for m in all_mounts if m.protocol == ShareProtocol.SMB]
+
+
+@router.delete("/smb/mounts/{mount_id}", status_code=204)
+async def unmount_smb_share(mount_id: int):
+    """Unmount and remove an SMB share by its mount ID."""
+    if not deps.mount_manager:
+        raise HTTPException(status_code=503, detail="Mount manager not available")
+    await deps.mount_manager.unmount_share(mount_id)
 
 
 # --- DLNA Media Servers ---

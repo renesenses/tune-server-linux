@@ -6,13 +6,17 @@ import logging
 import os
 import re
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+import httpx
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from tune_server.api.deps import deps
 from tune_server.event_bus import Event, EventType
 from tune_server.models import (
     DiffTrackResult,
+    M3UImportResponse,
+    M3UImportTrackResult,
+    M3UImportUrlRequest,
     Playlist,
     PlaylistAddTracksRequest,
     PlaylistCreateRequest,
@@ -34,6 +38,7 @@ from tune_server.models import (
     TransferTrackResult,
     UnifiedPlaylistsResponse,
 )
+from tune_server.utils.m3u_parser import M3UEntry, generate_m3u8, parse_m3u_content
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +135,297 @@ async def import_playlist(body: PlaylistImportRequest):
         source="playlists",
     ))
     return PlaylistImportResponse(playlist_id=playlist_id, name=name, tracks_imported=len(all_track_ids))
+
+
+# ---------------------------------------------------------------------------
+# M3U / M3U8 import and export
+# ---------------------------------------------------------------------------
+
+
+async def _match_m3u_entry(entry: M3UEntry) -> M3UImportTrackResult:
+    """Try to match a single M3U entry against the local library.
+
+    Strategy:
+    1. Exact file path match (local files)
+    2. Fuzzy title+artist match via library search
+    """
+    result = M3UImportTrackResult(
+        entry_title=entry.title,
+        entry_artist=entry.artist,
+        entry_path=entry.path,
+        status="not_found",
+    )
+
+    # 1. If it is a URL, mark as url_added (will be handled by caller)
+    if entry.is_url:
+        result.status = "url_added"
+        return result
+
+    # 2. Exact file path match
+    track = await deps.track_repo.get_by_path(entry.path)
+    if track:
+        result.status = "matched"
+        result.matched_track_id = track.id
+        result.matched_title = track.title
+        result.matched_artist = track.artist_name
+        return result
+
+    # 3. Try with just the filename (relative paths from other systems)
+    basename = os.path.basename(entry.path)
+    name_no_ext = os.path.splitext(basename)[0]
+
+    # 4. Fuzzy search by title + artist from EXTINF metadata
+    search_terms: list[str] = []
+    if entry.artist and entry.title:
+        search_terms.append(f"{entry.artist} {entry.title}")
+    elif entry.title:
+        search_terms.append(entry.title)
+
+    # Also try the filename as a search term
+    if name_no_ext:
+        # Clean up common filename patterns: "01 - Artist - Title" or "01. Title"
+        cleaned = re.sub(r"^\d+[\s._-]+", "", name_no_ext)
+        cleaned = cleaned.replace("_", " ")
+        if cleaned and cleaned not in search_terms:
+            search_terms.append(cleaned)
+
+    for query in search_terms:
+        candidates = await deps.track_repo.search(query, limit=10)
+        for candidate in candidates:
+            quality = _fuzzy_match_track(
+                entry.title or name_no_ext,
+                entry.artist or "",
+                candidate.title,
+                candidate.artist_name or "",
+            )
+            if quality == "exact":
+                result.status = "matched"
+                result.matched_track_id = candidate.id
+                result.matched_title = candidate.title
+                result.matched_artist = candidate.artist_name
+                return result
+            if quality == "approximate" and result.status == "not_found":
+                result.status = "approximate"
+                result.matched_track_id = candidate.id
+                result.matched_title = candidate.title
+                result.matched_artist = candidate.artist_name
+                # Keep searching for an exact match
+
+    return result
+
+
+@router.post("/import/m3u", response_model=M3UImportResponse)
+async def import_m3u(
+    file: UploadFile = File(...),
+    name: str | None = Query(None, description="Playlist name (defaults to filename)"),
+):
+    """Import an M3U/M3U8 file and create a local playlist by matching tracks
+    against the library. HTTP URLs (radio streams) are added as streaming tracks."""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    # Determine if M3U8 (UTF-8) by extension
+    filename = file.filename or ""
+    force_utf8 = filename.lower().endswith(".m3u8")
+
+    entries = parse_m3u_content(raw, force_utf8=force_utf8)
+    if not entries:
+        raise HTTPException(status_code=400, detail="No entries found in M3U file")
+
+    playlist_name = name or os.path.splitext(filename)[0] or "M3U Import"
+
+    # Match each entry
+    results: list[M3UImportTrackResult] = []
+    matched_track_ids: list[int] = []
+    matched_count = 0
+    approximate_count = 0
+    not_found_count = 0
+    url_added_count = 0
+
+    for entry in entries:
+        result = await _match_m3u_entry(entry)
+
+        if result.status == "matched":
+            matched_count += 1
+            if result.matched_track_id:
+                matched_track_ids.append(result.matched_track_id)
+        elif result.status == "approximate":
+            approximate_count += 1
+            if result.matched_track_id:
+                matched_track_ids.append(result.matched_track_id)
+        elif result.status == "url_added":
+            url_added_count += 1
+            # Create a streaming track for the URL
+            display = entry.title or os.path.basename(entry.path.split("?")[0])
+            track_obj = Track(
+                title=display,
+                artist_name=entry.artist or "Radio",
+                album_title="Internet Radio" if not entry.artist else None,
+                file_path=entry.path,
+                duration_ms=max(entry.duration_s * 1000, 0) if entry.duration_s > 0 else 0,
+                source="radio",
+                source_id=entry.path,
+            )
+            existing = await deps.track_repo.get_by_source("radio", entry.path)
+            if existing:
+                matched_track_ids.append(existing.id)
+                result.matched_track_id = existing.id
+            else:
+                track_id = await deps.track_repo.create(track_obj)
+                matched_track_ids.append(track_id)
+                result.matched_track_id = track_id
+        else:
+            not_found_count += 1
+
+        results.append(result)
+
+    # Create playlist and add tracks
+    playlist_id = await deps.playlist_repo.create(playlist_name)
+    if matched_track_ids:
+        await deps.playlist_repo.add_tracks(playlist_id, matched_track_ids)
+
+    deps.event_bus.emit_nowait(Event(
+        type=EventType.PLAYLIST_CREATED,
+        data={"playlist_id": playlist_id, "name": playlist_name},
+        source="playlists",
+    ))
+
+    return M3UImportResponse(
+        playlist_id=playlist_id,
+        playlist_name=playlist_name,
+        total_entries=len(entries),
+        matched=matched_count,
+        approximate=approximate_count,
+        not_found=not_found_count,
+        url_added=url_added_count,
+        tracks=results,
+    )
+
+
+@router.post("/import/m3u/url", response_model=M3UImportResponse)
+async def import_m3u_from_url(body: M3UImportUrlRequest):
+    """Import an M3U/M3U8 from a URL (e.g. internet radio playlists)."""
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            resp = await client.get(body.url)
+            resp.raise_for_status()
+            raw = resp.content
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {exc}")
+
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty response from URL")
+
+    force_utf8 = body.url.lower().endswith(".m3u8")
+    entries = parse_m3u_content(raw, force_utf8=force_utf8)
+    if not entries:
+        raise HTTPException(status_code=400, detail="No entries found in M3U content")
+
+    # Derive playlist name from URL if not provided
+    playlist_name = body.name
+    if not playlist_name:
+        url_path = body.url.split("?")[0].rstrip("/")
+        basename = url_path.rsplit("/", 1)[-1]
+        playlist_name = os.path.splitext(basename)[0] or "M3U Import"
+
+    # Match entries (same logic as file import)
+    results: list[M3UImportTrackResult] = []
+    matched_track_ids: list[int] = []
+    matched_count = 0
+    approximate_count = 0
+    not_found_count = 0
+    url_added_count = 0
+
+    for entry in entries:
+        result = await _match_m3u_entry(entry)
+
+        if result.status == "matched":
+            matched_count += 1
+            if result.matched_track_id:
+                matched_track_ids.append(result.matched_track_id)
+        elif result.status == "approximate":
+            approximate_count += 1
+            if result.matched_track_id:
+                matched_track_ids.append(result.matched_track_id)
+        elif result.status == "url_added":
+            url_added_count += 1
+            display = entry.title or os.path.basename(entry.path.split("?")[0])
+            track_obj = Track(
+                title=display,
+                artist_name=entry.artist or "Radio",
+                album_title="Internet Radio" if not entry.artist else None,
+                file_path=entry.path,
+                duration_ms=max(entry.duration_s * 1000, 0) if entry.duration_s > 0 else 0,
+                source="radio",
+                source_id=entry.path,
+            )
+            existing = await deps.track_repo.get_by_source("radio", entry.path)
+            if existing:
+                matched_track_ids.append(existing.id)
+                result.matched_track_id = existing.id
+            else:
+                track_id = await deps.track_repo.create(track_obj)
+                matched_track_ids.append(track_id)
+                result.matched_track_id = track_id
+        else:
+            not_found_count += 1
+
+        results.append(result)
+
+    playlist_id = await deps.playlist_repo.create(playlist_name)
+    if matched_track_ids:
+        await deps.playlist_repo.add_tracks(playlist_id, matched_track_ids)
+
+    deps.event_bus.emit_nowait(Event(
+        type=EventType.PLAYLIST_CREATED,
+        data={"playlist_id": playlist_id, "name": playlist_name},
+        source="playlists",
+    ))
+
+    return M3UImportResponse(
+        playlist_id=playlist_id,
+        playlist_name=playlist_name,
+        total_entries=len(entries),
+        matched=matched_count,
+        approximate=approximate_count,
+        not_found=not_found_count,
+        url_added=url_added_count,
+        tracks=results,
+    )
+
+
+@router.get("/{playlist_id}/export/m3u")
+async def export_m3u(playlist_id: int):
+    """Export a local playlist as an M3U8 file download."""
+    playlist = await deps.playlist_repo.get(playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    tracks = await deps.playlist_repo.get_tracks(playlist_id)
+    entries = [
+        {
+            "title": t.title,
+            "artist_name": t.artist_name,
+            "duration_ms": t.duration_ms,
+            "file_path": t.file_path,
+            "source": t.source.value if hasattr(t.source, "value") else str(t.source),
+            "source_id": t.source_id,
+        }
+        for t in tracks
+    ]
+
+    m3u_content = generate_m3u8(entries)
+    safe_name = re.sub(r'[^\w\s-]', '', playlist.name).strip().replace(" ", "_")
+    filename = f"{safe_name}.m3u8"
+
+    return StreamingResponse(
+        content=iter([m3u_content.encode("utf-8")]),
+        media_type="audio/x-mpegurl",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.post("/match")

@@ -194,6 +194,12 @@ class SQLiteDatabase:
             "ALTER TABLE artists ADD COLUMN image_source TEXT",
             "ALTER TABLE zones ADD COLUMN was_playing INTEGER DEFAULT 0",
             "ALTER TABLE zones ADD COLUMN last_position_ms INTEGER DEFAULT 0",
+            # Multi-user profile columns
+            "ALTER TABLE user_profiles ADD COLUMN avatar_url TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN pin_hash TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN is_admin INTEGER DEFAULT 0",
+            "ALTER TABLE user_profiles ADD COLUMN eq_settings TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN quality_preference TEXT",
         ]
         for sql in migrations:
             try:
@@ -255,6 +261,11 @@ class SQLiteDatabase:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 avatar_color TEXT DEFAULT '#FF6B35',
+                avatar_url TEXT,
+                pin_hash TEXT,
+                is_admin INTEGER DEFAULT 0,
+                eq_settings TEXT,
+                quality_preference TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -577,6 +588,34 @@ class SQLiteDatabase:
             "CREATE INDEX IF NOT EXISTS idx_playback_history_source_played ON playback_history(source, played_at DESC)",
         ):
             await self.connection.execute(stmt)
+        await self.commit()
+
+        # User-defined tags/labels for tracks, albums, and artists
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS user_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                color TEXT NOT NULL DEFAULT '#6366f1',
+                icon TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS user_tag_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tag_id INTEGER NOT NULL REFERENCES user_tags(id) ON DELETE CASCADE,
+                item_type TEXT NOT NULL,
+                item_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(tag_id, item_type, item_id)
+            )
+        """)
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_tag_items_tag ON user_tag_items(tag_id)"
+        )
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_tag_items_item ON user_tag_items(item_type, item_id)"
+        )
         await self.commit()
 
         # Zone audio profiles (room correction / per-zone EQ)

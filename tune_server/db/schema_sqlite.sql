@@ -209,6 +209,11 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     avatar_color TEXT DEFAULT '#FF6B35',
+    avatar_url TEXT,
+    pin_hash TEXT,
+    is_admin INTEGER DEFAULT 0,
+    eq_settings TEXT,
+    quality_preference TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -405,3 +410,23 @@ CREATE TABLE IF NOT EXISTS smart_playlists (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- User-defined tags/labels for tracks, albums, and artists
+CREATE TABLE IF NOT EXISTS user_tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    color TEXT NOT NULL DEFAULT '#6366f1',
+    icon TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_tag_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tag_id INTEGER NOT NULL REFERENCES user_tags(id) ON DELETE CASCADE,
+    item_type TEXT NOT NULL,  -- 'track', 'album', 'artist'
+    item_id INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(tag_id, item_type, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_tag_items_tag ON user_tag_items(tag_id);
+CREATE INDEX IF NOT EXISTS idx_user_tag_items_item ON user_tag_items(item_type, item_id);

@@ -246,6 +246,8 @@ class Settings(BaseSettings):
     network_shares_enabled: bool = False
     network_media_servers_enabled: bool = False
     smb_mount_dir: str = "~/.tune/mounts"
+    smb_auto_discovery: bool = False
+    smb_scan_interval: int = 60  # seconds between active SMB scans
 
     # Logging
     log_level: str = "INFO"

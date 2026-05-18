@@ -348,6 +348,11 @@ user_profiles = sa.Table(
     sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
     sa.Column("name", sa.Text, nullable=False),
     sa.Column("avatar_color", sa.Text, server_default="#FF6B35"),
+    sa.Column("avatar_url", sa.Text),
+    sa.Column("pin_hash", sa.Text),
+    sa.Column("is_admin", sa.Integer, server_default="0"),
+    sa.Column("eq_settings", sa.Text),
+    sa.Column("quality_preference", sa.Text),
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
 )
 
@@ -861,3 +866,38 @@ alarms = sa.Table(
     sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
     sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
 )
+
+# ---------------------------------------------------------------------------
+# user_tags — user-defined labels for tracks, albums, and artists
+# ---------------------------------------------------------------------------
+user_tags = sa.Table(
+    "user_tags",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("name", sa.Text, nullable=False, unique=True),
+    sa.Column("color", sa.Text, nullable=False, server_default="#6366f1"),
+    sa.Column("icon", sa.Text),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+)
+
+# ---------------------------------------------------------------------------
+# user_tag_items — association between tags and library items
+# ---------------------------------------------------------------------------
+user_tag_items = sa.Table(
+    "user_tag_items",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column(
+        "tag_id",
+        sa.Integer,
+        sa.ForeignKey("user_tags.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("item_type", sa.Text, nullable=False),  # 'track', 'album', 'artist'
+    sa.Column("item_id", sa.Integer, nullable=False),
+    sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
+    sa.UniqueConstraint("tag_id", "item_type", "item_id"),
+)
+
+sa.Index("idx_user_tag_items_tag", user_tag_items.c.tag_id)
+sa.Index("idx_user_tag_items_item", user_tag_items.c.item_type, user_tag_items.c.item_id)

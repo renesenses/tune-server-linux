@@ -565,6 +565,35 @@ class PlaylistReorderRequest(BaseModel):
     track_ids: list[int]  # Full ordered list
 
 
+class M3UImportTrackResult(BaseModel):
+    """Result for a single track from M3U import."""
+    entry_title: str | None = None
+    entry_artist: str | None = None
+    entry_path: str | None = None
+    status: str  # "matched", "approximate", "not_found", "url_added"
+    matched_track_id: int | None = None
+    matched_title: str | None = None
+    matched_artist: str | None = None
+
+
+class M3UImportResponse(BaseModel):
+    """Response from M3U playlist import."""
+    playlist_id: int
+    playlist_name: str
+    total_entries: int
+    matched: int
+    approximate: int
+    not_found: int
+    url_added: int
+    tracks: list[M3UImportTrackResult] = Field(default_factory=list)
+
+
+class M3UImportUrlRequest(BaseModel):
+    """Request to import an M3U from a URL (internet radio playlists)."""
+    url: str
+    name: str | None = None
+
+
 class TrackUpdateRequest(BaseModel):
     title: Optional[str] = None
     album_id: Optional[int] = None
@@ -817,7 +846,27 @@ class MountInfo(BaseModel):
     mount_path: str
     status: str  # "mounted", "unmounted", "error"
     auto_mount: bool = True
+    has_credentials: bool = False
     error: Optional[str] = None
+
+
+class SmbCredentialsRequest(BaseModel):
+    """Save (or update) credentials for a specific SMB share."""
+
+    host: str
+    share_name: str
+    username: str
+    password: str
+
+
+class DiscoveredSmbShareModel(BaseModel):
+    """A single auto-discovered SMB share."""
+
+    id: str
+    host: str
+    host_name: str = ""
+    share_name: str
+    last_seen: float = 0
 
 
 class DiscoveredMediaServer(BaseModel):
@@ -864,12 +913,26 @@ class UserProfile(BaseModel):
     id: Optional[int] = None
     name: str
     avatar_color: str = "#FF6B35"
+    avatar_url: Optional[str] = None
+    is_admin: bool = False
+    has_pin: bool = False
+    eq_settings: Optional[str] = None
+    quality_preference: Optional[str] = None  # "lossless", "hi-res", "balanced"
     created_at: Optional[str] = None
 
 
 class UserProfileCreate(BaseModel):
     name: str
     avatar_color: str = "#FF6B35"
+    avatar_url: Optional[str] = None
+    pin: Optional[str] = None
+    eq_settings: Optional[str] = None
+    quality_preference: Optional[str] = None
+
+
+class ProfileSwitchRequest(BaseModel):
+    profile_id: int
+    pin: Optional[str] = None
 
 
 class UserFavorite(BaseModel):
@@ -891,3 +954,72 @@ class UserFavoritesResponse(BaseModel):
     tracks: list[Track] = Field(default_factory=list)
     albums: list[Album] = Field(default_factory=list)
     artists: list[Artist] = Field(default_factory=list)
+
+
+# --- Alarm models ---
+
+
+class AlarmCreate(BaseModel):
+    """Create a new alarm."""
+    name: str = "Alarm"
+    time: str = Field(description="HH:MM (24h)")
+    days: str = Field(
+        default="0,1,2,3,4",
+        description="Comma-separated day numbers 0=Mon..6=Sun, or 'daily', 'weekdays', 'weekends'",
+    )
+    one_shot: bool = False
+    skip_holidays: bool = False
+    holiday_country: str = "FR"
+    zone_id: Optional[int] = None
+    source_type: str = Field(
+        default="radio",
+        description="Source type: radio, playlist, album, artist",
+    )
+    source_id: str = ""
+    source_name: Optional[str] = None
+    volume: int = Field(default=50, ge=0, le=100)
+    fade_duration_s: int = Field(default=60, ge=0, le=600)
+    enabled: bool = True
+
+
+class AlarmUpdate(BaseModel):
+    """Update an existing alarm. Only provided fields are changed."""
+    name: Optional[str] = None
+    time: Optional[str] = None
+    days: Optional[str] = None
+    one_shot: Optional[bool] = None
+    skip_holidays: Optional[bool] = None
+    holiday_country: Optional[str] = None
+    zone_id: Optional[int] = None
+    source_type: Optional[str] = None
+    source_id: Optional[str] = None
+    source_name: Optional[str] = None
+    volume: Optional[int] = Field(default=None, ge=0, le=100)
+    fade_duration_s: Optional[int] = Field(default=None, ge=0, le=600)
+    enabled: Optional[bool] = None
+
+
+class AlarmResponse(BaseModel):
+    """Alarm as returned by the API."""
+    id: int
+    name: str
+    time: str
+    days: str
+    one_shot: bool = False
+    skip_holidays: bool = False
+    holiday_country: str = "FR"
+    zone_id: Optional[int] = None
+    source_type: str
+    source_id: str
+    source_name: Optional[str] = None
+    volume: int = 50
+    fade_duration_s: int = 60
+    enabled: bool = True
+    last_fired_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class AlarmSnoozeRequest(BaseModel):
+    """Snooze an alarm."""
+    minutes: int = Field(default=5, ge=1, le=60)

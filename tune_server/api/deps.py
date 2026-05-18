@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from tune_server.alarms import AlarmScheduler
     from tune_server.db.engine import Database
     from tune_server.db.repository import AlbumRatingRepo, AlbumRepo, ArtistRepo, PartyVoteRepo, PlaybackHistoryRepo, PlaylistRepo, PlayQueueRepo, RadioFavoriteRepo, RadioStationRepo, TrackCreditRepo, TrackRepo, ZoneRepo
     from tune_server.discovery.manager import DiscoveryManager
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
     from tune_server.library.watcher import FileSystemWatcher
     from tune_server.metadata.artist_enrichment import ArtistEnrichmentClient
     from tune_server.network.mount_manager import MountManager
+    from tune_server.network.smb_discovery import SmbAutoDiscovery
     from tune_server.plugins.loader import PluginLoader
     from tune_server.plugins.store import PluginStoreManager
     from tune_server.spotify_connect import SpotifyConnectManager
@@ -35,6 +37,7 @@ class AppDeps:
         self.group_manager: GroupManager | None = None
         self.discovery_manager: DiscoveryManager | None = None
         self.mount_manager: MountManager | None = None
+        self.smb_discovery: SmbAutoDiscovery | None = None
         self.streaming_services: dict[str, StreamingService] = {}
         self.watcher: FileSystemWatcher | None = None
         self.enricher: MetadataEnricher | None = None
@@ -45,6 +48,7 @@ class AppDeps:
         self.plugin_loader: PluginLoader | None = None
         self.store_manager: PluginStoreManager | None = None
         self.health_monitor: HealthMonitor | None = None
+        self.alarm_scheduler: AlarmScheduler | None = None
 
         # Repos (set after DB init)
         self.track_repo: TrackRepo | None = None

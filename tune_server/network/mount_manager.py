@@ -13,6 +13,7 @@ from tune_server.db.engine import Database
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.library.scanner import LibraryScanner
 from tune_server.models import MountInfo, MountRequest, ShareProtocol
+from tune_server.network.credentials_vault import decrypt_password, encrypt_password
 
 logger = structlog.get_logger()
 
@@ -74,6 +75,9 @@ class MountManager:
 
         mount_path = str(mount_point)
 
+        # Encrypt password before storing
+        encrypted_pw = encrypt_password(request.password) if request.password else None
+
         # Persist to DB first
         try:
             result = await self._db.execute(
@@ -85,7 +89,7 @@ class MountManager:
                     request.protocol.value,
                     mount_path,
                     request.username,
-                    request.password,
+                    encrypted_pw,
                     1 if request.auto_mount else 0,
                 ),
             )
@@ -103,7 +107,7 @@ class MountManager:
                 await self._db.execute(
                     """UPDATE network_mounts SET username = ?, password = ?, auto_mount = ?, updated_at = CURRENT_TIMESTAMP
                        WHERE id = ?""",
-                    (request.username, request.password, 1 if request.auto_mount else 0, mount_id),
+                    (request.username, encrypted_pw, 1 if request.auto_mount else 0, mount_id),
                 )
                 await self._db.commit()
             else:
@@ -207,12 +211,16 @@ class MountManager:
         mount_path = row["mount_path"]
         Path(mount_path).mkdir(parents=True, exist_ok=True)
 
+        # Decrypt password from vault before mounting
+        stored_pw = row["password"] or ""
+        plain_pw = decrypt_password(stored_pw)
+
         request = MountRequest(
             host=row["host"],
             share_name=row["share_name"],
             protocol=ShareProtocol(row["protocol"]),
             username=row["username"],
-            password=row["password"],
+            password=plain_pw,
             auto_mount=bool(row["auto_mount"]),
         )
 
@@ -398,8 +406,37 @@ class MountManager:
         except Exception:
             logger.exception("os_unmount_error", mount_path=mount_path)
 
+    async def save_credentials(self, host: str, share_name: str, username: str, password: str) -> None:
+        """Save (or update) encrypted credentials for a share in the vault.
+
+        If a ``network_mounts`` row already exists for this host/share/smb,
+        update it.  Otherwise create a new unmounted row so that the
+        credentials are available for future mount/auto-remount.
+        """
+        encrypted_pw = encrypt_password(password) if password else None
+        row = await self._db.fetchone(
+            "SELECT id FROM network_mounts WHERE host = ? AND share_name = ? AND protocol = 'smb'",
+            (host, share_name),
+        )
+        if row:
+            await self._db.execute(
+                "UPDATE network_mounts SET username = ?, password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (username, encrypted_pw, row["id"]),
+            )
+        else:
+            safe_name = re.sub(r"[^\w\-.]", "_", f"{host}_{share_name}")
+            mount_path = str(self._mount_base / safe_name)
+            await self._db.execute(
+                """INSERT INTO network_mounts (host, share_name, protocol, mount_path, username, password, auto_mount, status)
+                   VALUES (?, ?, 'smb', ?, ?, ?, 1, 'unmounted')""",
+                (host, share_name, mount_path, username, encrypted_pw),
+            )
+        await self._db.commit()
+        logger.info("smb_credentials_saved", host=host, share=share_name, user=username)
+
     @staticmethod
     def _row_to_mount(row) -> MountInfo:
+        has_creds = bool(row.get("username") or row.get("password"))
         return MountInfo(
             id=row["id"],
             host=row["host"],
@@ -408,6 +445,7 @@ class MountManager:
             mount_path=row["mount_path"],
             status=row["status"] or "unmounted",
             auto_mount=bool(row["auto_mount"]),
+            has_credentials=has_creds,
         )
 
     async def stop(self) -> None:

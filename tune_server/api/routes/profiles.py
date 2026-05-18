@@ -1,5 +1,14 @@
-"""User profiles and favorites API routes."""
+"""User profiles and favorites API routes.
+
+Multi-user authentication with separate profiles.  Each profile has its own
+favorites, play history, EQ settings, and quality preferences.  An optional
+PIN protects profile switching.  A default "Admin" profile is seeded on
+first server start.
+"""
 from __future__ import annotations
+
+import hashlib
+import secrets
 
 import structlog
 
@@ -7,7 +16,8 @@ from fastapi import APIRouter, HTTPException, Query
 
 from tune_server.api.deps import deps
 from tune_server.models import (
-    Album, Artist, Track, UserFavoriteAdd, UserFavoritesResponse,
+    Album, Artist, ProfileSwitchRequest, Track,
+    UserFavoriteAdd, UserFavoritesResponse,
     UserProfile, UserProfileCreate,
 )
 
@@ -21,6 +31,78 @@ _active_loaded: bool = False
 
 
 # ---------------------------------------------------------------------------
+# PIN hashing helpers
+# ---------------------------------------------------------------------------
+
+def _hash_pin(pin: str) -> str:
+    """Hash a PIN with a random salt.  Format: ``salt$sha256hex``."""
+    salt = secrets.token_hex(8)
+    digest = hashlib.sha256(f"{salt}${pin}".encode()).hexdigest()
+    return f"{salt}${digest}"
+
+
+def _verify_pin(pin: str, pin_hash: str) -> bool:
+    """Verify *pin* against a stored ``salt$sha256hex`` hash."""
+    if not pin_hash or "$" not in pin_hash:
+        return False
+    salt, expected = pin_hash.split("$", 1)
+    digest = hashlib.sha256(f"{salt}${pin}".encode()).hexdigest()
+    return secrets.compare_digest(digest, expected)
+
+
+# ---------------------------------------------------------------------------
+# Default Admin profile seeding
+# ---------------------------------------------------------------------------
+
+async def seed_default_admin_profile() -> None:
+    """Create the default Admin profile on first start (idempotent)."""
+    try:
+        row = await deps.db.fetchone(
+            "SELECT id FROM user_profiles WHERE is_admin = 1 LIMIT 1"
+        )
+        if row:
+            return  # Admin already exists
+
+        # Also skip if any profile exists at all (upgrade from pre-multi-user)
+        count_row = await deps.db.fetchone(
+            "SELECT COUNT(*) as cnt FROM user_profiles"
+        )
+        if count_row and count_row["cnt"] > 0:
+            # Promote the first existing profile to admin
+            first = await deps.db.fetchone(
+                "SELECT id FROM user_profiles ORDER BY id LIMIT 1"
+            )
+            if first:
+                await deps.db.execute(
+                    "UPDATE user_profiles SET is_admin = 1 WHERE id = ?",
+                    (first["id"],),
+                )
+                await deps.db.commit()
+                logger.info("existing_profile_promoted_to_admin", profile_id=first["id"])
+            return
+
+        await deps.db.execute(
+            """INSERT INTO user_profiles (name, avatar_color, is_admin)
+               VALUES (?, ?, 1)""",
+            ("Admin", "#FF6B35"),
+        )
+        await deps.db.commit()
+
+        # Auto-activate the Admin profile
+        admin = await deps.db.fetchone(
+            "SELECT id FROM user_profiles WHERE is_admin = 1 LIMIT 1"
+        )
+        if admin:
+            global _active_profile_id, _active_loaded
+            _active_profile_id = admin["id"]
+            _active_loaded = True
+            await _persist_active_profile(admin["id"])
+            logger.info("default_admin_profile_created", profile_id=admin["id"])
+    except Exception:
+        logger.exception("seed_admin_profile_failed")
+
+
+# ---------------------------------------------------------------------------
 # Profiles CRUD
 # ---------------------------------------------------------------------------
 
@@ -29,7 +111,7 @@ async def list_profiles() -> list[UserProfile]:
     rows = await deps.db.fetchall(
         "SELECT * FROM user_profiles ORDER BY name"
     )
-    return [UserProfile(**_clean_row(r)) for r in rows]
+    return [_row_to_profile(r) for r in rows]
 
 
 @router.post("", status_code=201)
@@ -45,16 +127,20 @@ async def create_profile(body: UserProfileCreate) -> UserProfile:
             detail={
                 "error": "profile_exists",
                 "message": f"A profile named '{existing['name']}' already exists",
-                "existing_profile": UserProfile(**_clean_row(existing)).model_dump(),
+                "existing_profile": _row_to_profile(existing).model_dump(),
             },
         )
+    pin_hash = _hash_pin(body.pin) if body.pin else None
     result = await deps.db.execute(
-        "INSERT INTO user_profiles (name, avatar_color) VALUES (?, ?) RETURNING id",
-        (body.name.strip(), body.avatar_color),
+        """INSERT INTO user_profiles
+           (name, avatar_color, avatar_url, pin_hash, eq_settings, quality_preference)
+           VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
+        (body.name.strip(), body.avatar_color, body.avatar_url,
+         pin_hash, body.eq_settings, body.quality_preference),
     )
     await deps.db.commit()
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (result.lastrowid,))
-    return UserProfile(**_clean_row(row))
+    return _row_to_profile(row)
 
 
 @router.get("/search")
@@ -64,8 +150,12 @@ async def search_profiles(q: str = Query(..., min_length=1)) -> list[UserProfile
         "SELECT * FROM user_profiles WHERE LOWER(name) LIKE LOWER(?) ORDER BY name",
         (f"%{q.strip()}%",),
     )
-    return [UserProfile(**_clean_row(r)) for r in rows]
+    return [_row_to_profile(r) for r in rows]
 
+
+# ---------------------------------------------------------------------------
+# Active / current profile
+# ---------------------------------------------------------------------------
 
 @router.get("/active")
 async def get_active_profile():
@@ -78,7 +168,48 @@ async def get_active_profile():
         return {"active_profile_id": None, "profile": None}
     return {
         "active_profile_id": pid,
-        "profile": UserProfile(**_clean_row(row)),
+        "profile": _row_to_profile(row),
+    }
+
+
+@router.get("/current")
+async def get_current_profile():
+    """Get the current active profile (alias for /active)."""
+    return await get_active_profile()
+
+
+@router.post("/switch")
+async def switch_profile(body: ProfileSwitchRequest):
+    """Switch active profile by id, with optional PIN verification."""
+    row = await deps.db.fetchone(
+        "SELECT * FROM user_profiles WHERE id = ?", (body.profile_id,)
+    )
+    if not row:
+        raise HTTPException(404, "Profile not found")
+
+    keys = row.keys() if hasattr(row, "keys") else []
+    pin_hash = row["pin_hash"] if "pin_hash" in keys else None
+
+    # Verify PIN if the target profile has one set
+    if pin_hash:
+        if not body.pin:
+            raise HTTPException(403, detail={
+                "error": "pin_required",
+                "message": "This profile requires a PIN to switch",
+            })
+        if not _verify_pin(body.pin, pin_hash):
+            raise HTTPException(403, detail={
+                "error": "invalid_pin",
+                "message": "Incorrect PIN",
+            })
+
+    global _active_profile_id
+    _active_profile_id = body.profile_id
+    await _persist_active_profile(body.profile_id)
+    logger.info("profile_switched", profile_id=body.profile_id, name=row["name"])
+    return {
+        "active_profile_id": body.profile_id,
+        "profile": _row_to_profile(row),
     }
 
 
@@ -91,12 +222,16 @@ async def deactivate_profile():
     return {"active_profile_id": None}
 
 
+# ---------------------------------------------------------------------------
+# Single profile CRUD (by id)
+# ---------------------------------------------------------------------------
+
 @router.get("/{profile_id}")
 async def get_profile(profile_id: int) -> UserProfile:
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
     if not row:
         raise HTTPException(404, "Profile not found")
-    return UserProfile(**_clean_row(row))
+    return _row_to_profile(row)
 
 
 @router.put("/{profile_id}")
@@ -114,20 +249,50 @@ async def update_profile(profile_id: int, body: UserProfileCreate) -> UserProfil
                 "message": f"A profile named '{existing['name']}' already exists",
             },
         )
+    # Build update — only update pin_hash if a new PIN is provided
+    pin_clause = ""
+    params: list = [body.name.strip(), body.avatar_color, body.avatar_url,
+                    body.eq_settings, body.quality_preference]
+    if body.pin is not None:
+        if body.pin == "":
+            # Empty string = remove PIN
+            pin_clause = ", pin_hash = ?"
+            params.append(None)
+        else:
+            pin_clause = ", pin_hash = ?"
+            params.append(_hash_pin(body.pin))
+
+    params.append(profile_id)
     await deps.db.execute(
-        "UPDATE user_profiles SET name = ?, avatar_color = ? WHERE id = ?",
-        (body.name.strip(), body.avatar_color, profile_id),
+        f"""UPDATE user_profiles
+            SET name = ?, avatar_color = ?, avatar_url = ?,
+                eq_settings = ?, quality_preference = ?{pin_clause}
+            WHERE id = ?""",
+        tuple(params),
     )
     await deps.db.commit()
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
     if not row:
         raise HTTPException(404, "Profile not found")
-    return UserProfile(**_clean_row(row))
+    return _row_to_profile(row)
 
 
 @router.delete("/{profile_id}", status_code=204)
 async def delete_profile(profile_id: int):
     global _active_profile_id
+    # Prevent deleting the last admin profile
+    row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
+    if not row:
+        raise HTTPException(404, "Profile not found")
+    keys = row.keys() if hasattr(row, "keys") else []
+    is_admin = bool(row["is_admin"]) if "is_admin" in keys else False
+    if is_admin:
+        admin_count = await deps.db.fetchone(
+            "SELECT COUNT(*) as cnt FROM user_profiles WHERE is_admin = 1"
+        )
+        if admin_count and admin_count["cnt"] <= 1:
+            raise HTTPException(400, "Cannot delete the last admin profile")
+
     await deps.db.execute("DELETE FROM user_profiles WHERE id = ?", (profile_id,))
     await deps.db.commit()
     # If the deleted profile was active, clear it
@@ -136,48 +301,9 @@ async def delete_profile(profile_id: int):
         await _persist_active_profile(None)
 
 
-# ---------------------------------------------------------------------------
-# Active profile
-# ---------------------------------------------------------------------------
-
-async def _load_active_profile() -> int | None:
-    """Load active profile ID from DB (streaming_auth table)."""
-    global _active_profile_id, _active_loaded
-    if _active_loaded:
-        return _active_profile_id
-    try:
-        row = await deps.db.fetchone(
-            "SELECT token_data FROM streaming_auth WHERE service = ?",
-            ("active_profile",),
-        )
-        if row:
-            import json
-            data = json.loads(row["token_data"])
-            _active_profile_id = data.get("profile_id")
-        _active_loaded = True
-    except Exception:
-        _active_loaded = True
-    return _active_profile_id
-
-
-async def _persist_active_profile(profile_id: int | None) -> None:
-    """Persist active profile ID to DB."""
-    import json
-    data = json.dumps({"profile_id": profile_id})
-    try:
-        await deps.db.execute(
-            """INSERT INTO streaming_auth (service, token_data) VALUES (?, ?)
-               ON CONFLICT(service) DO UPDATE SET token_data = ?, updated_at = CURRENT_TIMESTAMP""",
-            ("active_profile", data, data),
-        )
-        await deps.db.commit()
-    except Exception:
-        logger.exception("active_profile_persist_error")
-
-
 @router.post("/{profile_id}/activate")
 async def activate_profile(profile_id: int):
-    """Switch the active profile for the session."""
+    """Switch the active profile for the session (legacy endpoint)."""
     global _active_profile_id
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
     if not row:
@@ -187,8 +313,63 @@ async def activate_profile(profile_id: int):
     logger.info("profile_activated", profile_id=profile_id, name=row["name"])
     return {
         "active_profile_id": profile_id,
-        "profile": UserProfile(**_clean_row(row)),
+        "profile": _row_to_profile(row),
     }
+
+
+# ---------------------------------------------------------------------------
+# Profile settings (EQ + quality)
+# ---------------------------------------------------------------------------
+
+@router.get("/{profile_id}/settings")
+async def get_profile_settings(profile_id: int):
+    """Get per-profile settings (EQ, quality preference)."""
+    row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
+    if not row:
+        raise HTTPException(404, "Profile not found")
+    keys = row.keys() if hasattr(row, "keys") else []
+    import json
+    eq = None
+    raw_eq = row["eq_settings"] if "eq_settings" in keys else None
+    if raw_eq:
+        try:
+            eq = json.loads(raw_eq)
+        except (json.JSONDecodeError, TypeError):
+            eq = raw_eq
+    return {
+        "profile_id": profile_id,
+        "eq_settings": eq,
+        "quality_preference": row["quality_preference"] if "quality_preference" in keys else None,
+    }
+
+
+@router.put("/{profile_id}/settings")
+async def update_profile_settings(profile_id: int, body: dict):
+    """Update per-profile settings.  Accepts eq_settings (object/string)
+    and quality_preference (string)."""
+    import json
+    row = await deps.db.fetchone("SELECT id FROM user_profiles WHERE id = ?", (profile_id,))
+    if not row:
+        raise HTTPException(404, "Profile not found")
+
+    updates = []
+    params: list = []
+    if "eq_settings" in body:
+        eq = body["eq_settings"]
+        updates.append("eq_settings = ?")
+        params.append(json.dumps(eq) if isinstance(eq, (dict, list)) else eq)
+    if "quality_preference" in body:
+        updates.append("quality_preference = ?")
+        params.append(body["quality_preference"])
+    if not updates:
+        raise HTTPException(400, "No settings provided")
+    params.append(profile_id)
+    await deps.db.execute(
+        f"UPDATE user_profiles SET {', '.join(updates)} WHERE id = ?",
+        tuple(params),
+    )
+    await deps.db.commit()
+    return await get_profile_settings(profile_id)
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +382,7 @@ async def get_profile_stats(profile_id: int):
     row = await deps.db.fetchone("SELECT * FROM user_profiles WHERE id = ?", (profile_id,))
     if not row:
         raise HTTPException(404, "Profile not found")
-    profile = UserProfile(**_clean_row(row))
+    profile = _row_to_profile(row)
 
     # Count favorites by type
     fav_tracks = await deps.db.fetchone(
@@ -221,13 +402,13 @@ async def get_profile_stats(profile_id: int):
     history_count = 0
     try:
         hist_row = await deps.db.fetchone(
-            "SELECT COUNT(*) as cnt FROM playback_history WHERE profile_id = ?",
+            "SELECT COUNT(*) as cnt FROM playback_history WHERE user_id = ?",
             (profile_id,),
         )
         if hist_row:
             history_count = hist_row["cnt"]
     except Exception:
-        pass  # Table may not have profile_id column yet
+        pass  # Table may not have user_id column yet
 
     return {
         "profile": profile,
@@ -373,16 +554,87 @@ async def check_favorite(
 
 
 # ---------------------------------------------------------------------------
+# Play history (per-profile)
+# ---------------------------------------------------------------------------
+
+@router.get("/{profile_id}/history")
+async def get_profile_history(profile_id: int, limit: int = Query(50, ge=1, le=500)):
+    """Get play history for a specific profile."""
+    try:
+        rows = await deps.db.fetchall(
+            """SELECT * FROM playback_history
+               WHERE user_id = ?
+               ORDER BY played_at DESC LIMIT ?""",
+            (profile_id, limit),
+        )
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Active profile persistence
+# ---------------------------------------------------------------------------
+
+async def _load_active_profile() -> int | None:
+    """Load active profile ID from DB (streaming_auth table)."""
+    global _active_profile_id, _active_loaded
+    if _active_loaded:
+        return _active_profile_id
+    try:
+        row = await deps.db.fetchone(
+            "SELECT token_data FROM streaming_auth WHERE service = ?",
+            ("active_profile",),
+        )
+        if row:
+            import json
+            data = json.loads(row["token_data"])
+            _active_profile_id = data.get("profile_id")
+        _active_loaded = True
+    except Exception:
+        _active_loaded = True
+    return _active_profile_id
+
+
+async def _persist_active_profile(profile_id: int | None) -> None:
+    """Persist active profile ID to DB."""
+    import json
+    data = json.dumps({"profile_id": profile_id})
+    try:
+        await deps.db.execute(
+            """INSERT INTO streaming_auth (service, token_data) VALUES (?, ?)
+               ON CONFLICT(service) DO UPDATE SET token_data = ?, updated_at = CURRENT_TIMESTAMP""",
+            ("active_profile", data, data),
+        )
+        await deps.db.commit()
+    except Exception:
+        logger.exception("active_profile_persist_error")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _clean_row(row) -> dict:
-    """Convert row to dict, stringify datetime fields for Pydantic."""
+def _row_to_profile(row) -> UserProfile:
+    """Convert a DB row to a UserProfile model, handling missing columns
+    gracefully (for DBs not yet migrated)."""
+    keys = row.keys() if hasattr(row, "keys") else []
     d = dict(row)
+    # Stringify non-primitive fields (datetime, etc.)
     for k, v in d.items():
         if v is not None and not isinstance(v, (str, int, float, bool)):
             d[k] = str(v)
-    return d
+    return UserProfile(
+        id=d.get("id"),
+        name=d.get("name", ""),
+        avatar_color=d.get("avatar_color", "#FF6B35"),
+        avatar_url=d.get("avatar_url") if "avatar_url" in keys else None,
+        is_admin=bool(d.get("is_admin", 0)) if "is_admin" in keys else False,
+        has_pin=bool(d.get("pin_hash")) if "pin_hash" in keys else False,
+        eq_settings=d.get("eq_settings") if "eq_settings" in keys else None,
+        quality_preference=d.get("quality_preference") if "quality_preference" in keys else None,
+        created_at=d.get("created_at"),
+    )
 
 
 def _track_from_row(row) -> dict:

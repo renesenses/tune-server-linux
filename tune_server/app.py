@@ -389,6 +389,17 @@ class TuneServer:
             await self._mount_manager.initialize()
             deps.mount_manager = self._mount_manager
 
+        # SMB auto-discovery (active network scan)
+        self._smb_discovery = None
+        if settings.smb_auto_discovery:
+            from tune_server.network.smb_discovery import SmbAutoDiscovery
+            self._smb_discovery = SmbAutoDiscovery(
+                self._event_bus,
+                scan_interval=settings.smb_scan_interval,
+            )
+            await self._smb_discovery.start()
+            deps.smb_discovery = self._smb_discovery
+
         # WebSocket manager — start BEFORE zones so events are never lost
         self._ws_manager = await setup_websocket_manager(self._event_bus)
 
@@ -473,6 +484,14 @@ class TuneServer:
                 logger.info("smart_playlists_seeded", count=inserted)
         except Exception:
             logger.exception("smart_playlists_seed_failed")
+
+        # Seed default Admin profile on first start (idempotent)
+        try:
+            from tune_server.api.routes.profiles import seed_default_admin_profile
+            await seed_default_admin_profile()
+        except Exception:
+            logger.exception("admin_profile_seed_failed")
+
         if settings.spotify_connect_enabled and settings.spotify_connect_zone_id is not None:
             try:
                 await self._spotify_connect.enable(
@@ -524,6 +543,7 @@ class TuneServer:
         from tune_server.alarms import AlarmScheduler
         self._alarm_scheduler = AlarmScheduler(self._db, self._trigger_alarm)
         await self._alarm_scheduler.start()
+        deps.alarm_scheduler = self._alarm_scheduler
 
         # Scan scheduler (daily scheduled scan)
         from tune_server.library.scan_scheduler import ScanScheduler
@@ -542,6 +562,10 @@ class TuneServer:
         self._health_monitor = HealthMonitor(self._event_bus)
         await self._health_monitor.start()
         deps.health_monitor = self._health_monitor
+
+        # Desktop notifications for track changes (opt-in via TUNE_NOTIFICATIONS_ENABLED)
+        from tune_server.notifications import setup_notifications
+        setup_notifications(self._event_bus, self._server_ip, settings.api_port)
 
         # Initial scan
         if settings.scan_on_startup:
@@ -1193,8 +1217,16 @@ class TuneServer:
         except Exception:
             logger.exception("component_shutdown_error", component=name)
 
-    async def _trigger_alarm(self, zone_id, source_type, source_id, volume=50, fade_in=30):
-        """Called by AlarmScheduler when an alarm fires."""
+    async def _trigger_alarm(self, zone_id, source_type, source_id, volume=50, fade_in=60):
+        """Called by AlarmScheduler when an alarm fires.
+
+        Starts playback at volume 0 then fades in to the target volume
+        over *fade_in* seconds.
+        """
+        from tune_server.alarms import fade_in_volume
+        from tune_server.db.repository import _row_to_track
+        from tune_server.models import Source, Track
+
         zone = self._zone_manager.get_zone(zone_id) if zone_id else None
         if not zone:
             zones = self._zone_manager.list_zones()
@@ -1203,28 +1235,58 @@ class TuneServer:
             logger.warning("alarm_no_zone")
             return
 
+        target_vol = max(0.0, min(1.0, volume / 100.0))
+        tracks: list[Track] = []
+
         if source_type == "radio":
-            await zone.play_radio(source_id, volume=volume / 100.0)
+            row = await self._db.fetchone(
+                "SELECT * FROM radio_stations WHERE id = ?", (int(source_id),)
+            )
+            if row:
+                tracks = [Track(
+                    title=row["name"],
+                    file_path=row["stream_url"],
+                    source=Source.RADIO,
+                    cover_path=row.get("logo_url"),
+                )]
+            else:
+                logger.warning("alarm_radio_not_found", source_id=source_id)
+                return
+
         elif source_type == "playlist":
-            tracks = await self._db.fetchall(
+            rows = await self._db.fetchall(
                 "SELECT t.* FROM tracks t JOIN playlist_tracks pt ON pt.track_id = t.id "
                 "WHERE pt.playlist_id = ? ORDER BY pt.position",
                 (int(source_id),),
             )
-            if tracks:
-                from tune_server.models import Track
-                track_list = [Track.from_db_row(r) for r in tracks]
-                await zone.play_tracks(track_list, shuffle=False, volume=volume / 100.0)
+            tracks = [_row_to_track(r) for r in rows]
+
         elif source_type == "album":
-            tracks = await self._db.fetchall(
+            rows = await self._db.fetchall(
                 "SELECT * FROM tracks WHERE album_id = ? ORDER BY disc_number, track_number",
                 (int(source_id),),
             )
-            if tracks:
-                from tune_server.models import Track
-                track_list = [Track.from_db_row(r) for r in tracks]
-                await zone.play_tracks(track_list, volume=volume / 100.0)
-        logger.info("alarm_playback_started", zone=zone.name, source_type=source_type)
+            tracks = [_row_to_track(r) for r in rows]
+
+        elif source_type == "artist":
+            rows = await self._db.fetchall(
+                "SELECT * FROM tracks WHERE artist_id = ? ORDER BY RANDOM() LIMIT 50",
+                (int(source_id),),
+            )
+            tracks = [_row_to_track(r) for r in rows]
+
+        if not tracks:
+            logger.warning("alarm_no_tracks", source_type=source_type, source_id=source_id)
+            return
+
+        # Start at volume 0, begin playback, then fade in
+        await zone.player.set_volume(0.0)
+        await zone.player.play(tracks=tracks)
+        logger.info("alarm_playback_started", zone=zone.name, source_type=source_type,
+                     source_id=source_id, target_volume=target_vol, fade_in=fade_in)
+
+        # Fade in volume in background
+        await fade_in_volume(zone.player.set_volume, target_vol, fade_in)
 
     async def stop(self) -> None:
         logger.info("tune_server_stopping")
@@ -1249,6 +1311,9 @@ class TuneServer:
             except asyncio.CancelledError:
                 pass
 
+        if hasattr(self, "_alarm_scheduler") and self._alarm_scheduler:
+            await self._safe_stop("alarm_scheduler", self._alarm_scheduler.stop())
+
         if hasattr(self, "_scan_scheduler") and self._scan_scheduler:
             await self._safe_stop("scan_scheduler", self._scan_scheduler.stop())
 
@@ -1272,6 +1337,9 @@ class TuneServer:
 
         if self._mount_manager:
             await self._safe_stop("mount_manager", self._mount_manager.stop())
+
+        if hasattr(self, "_smb_discovery") and self._smb_discovery:
+            await self._safe_stop("smb_discovery", self._smb_discovery.stop())
 
         if hasattr(self, "_spotify_connect") and self._spotify_connect:
             await self._safe_stop("spotify_connect", self._spotify_connect.disable())

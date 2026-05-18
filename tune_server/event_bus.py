@@ -64,6 +64,7 @@ class EventType(str, Enum):
     NETWORK_SHARE_LOST = "network.share.lost"
     NETWORK_MOUNT_ADDED = "network.mount.added"
     NETWORK_MOUNT_REMOVED = "network.mount.removed"
+    SMB_SHARES_DISCOVERED = "network.smb.discovered"
     MEDIA_SERVER_DISCOVERED = "network.media_server.discovered"
     MEDIA_SERVER_LOST = "network.media_server.lost"
 
@@ -76,6 +77,11 @@ class EventType(str, Enum):
     PEER_DISCOVERED = "peer.discovered"
     PEER_LOST = "peer.lost"
     PEER_UPDATED = "peer.updated"
+
+    # Alarm events
+    ALARM_TRIGGERED = "alarm.triggered"
+    ALARM_SNOOZED = "alarm.snoozed"
+    ALARM_COMPLETED = "alarm.completed"
 
     # System events
     SYSTEM_STARTED = "system.started"
