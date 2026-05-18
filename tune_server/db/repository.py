@@ -188,7 +188,7 @@ class ArtistRepo:
         if musicbrainz_id:
             existing = await self.get_by_musicbrainz_id(musicbrainz_id)
             if existing:
-                if sort_name and (not existing.sort_name or existing.sort_name == existing.name):
+                if sort_name and existing.sort_name != sort_name:
                     existing.sort_name = sort_name
                     await self.update(existing)
                 return existing
@@ -197,7 +197,7 @@ class ArtistRepo:
             if musicbrainz_id and not existing.musicbrainz_id:
                 existing.musicbrainz_id = musicbrainz_id
                 await self.update(existing)
-            if sort_name and (not existing.sort_name or existing.sort_name == existing.name):
+            if sort_name and existing.sort_name != sort_name:
                 existing.sort_name = sort_name
                 await self.update(existing)
             return existing
