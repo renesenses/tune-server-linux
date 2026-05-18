@@ -204,7 +204,7 @@ class TuneServer:
         self._mount_manager = None
         self._ws_manager = None
         self._scan_task: asyncio.Task | None = None
-        self._server_ip = get_local_ip()
+        self._server_ip = settings.advertise_ip or get_local_ip()
         self._api_app = None  # bare FastAPI created in start() (plugins mount here)
         self._serving_app = None  # SPA-wrapped ASGI app passed to uvicorn
         self._plugin_loader = None  # PluginLoader, instantiated in start()
@@ -626,6 +626,7 @@ class TuneServer:
         from tune_server.outputs.bluos import BluosOutput
         from tune_server.outputs.chromecast import ChromecastOutput
         from tune_server.outputs.local import LocalOutput
+        from tune_server.outputs.squeezebox import SqueezeboxOutput
 
         async def create_dlna_output(device_id: str | None):
             if not device_id or not self._discovery_manager or not self._discovery_manager.ssdp:
@@ -803,12 +804,33 @@ class TuneServer:
                 event_sub_urls=oh.get_event_sub_urls(device_id),
             )
 
+        async def create_squeezebox_output(device_id: str | None):
+            if not device_id:
+                raise RuntimeError("Squeezebox: no device_id specified")
+            if not self._discovery_manager or not self._discovery_manager.squeezebox:
+                raise RuntimeError("Squeezebox: Squeezebox discovery is not running")
+            info = self._discovery_manager.squeezebox.get_lms_for_player(device_id)
+            if not info:
+                known = list(self._discovery_manager.squeezebox.devices.keys())
+                raise RuntimeError(
+                    f"Squeezebox: device '{device_id}' not found. "
+                    f"Discovered: {known or 'none'}."
+                )
+            lms_host, lms_port, player_mac = info
+            device = self._discovery_manager.get_device(device_id)
+            name = device.name if device else "Squeezebox"
+            return SqueezeboxOutput(
+                lms_host, player_mac, self._http_streamer, self._server_ip,
+                lms_port=lms_port, device_name=name,
+            )
+
         self._zone_manager.register_output_factory(OutputType.DLNA, create_dlna_output)
         self._zone_manager.register_output_factory(OutputType.AIRPLAY, create_airplay_output)
         self._zone_manager.register_output_factory(OutputType.CHROMECAST, create_chromecast_output)
         self._zone_manager.register_output_factory(OutputType.BLUOS, create_bluos_output)
         self._zone_manager.register_output_factory(OutputType.LOCAL, create_local_output)
         self._zone_manager.register_output_factory(OutputType.OPENHOME, create_openhome_output)
+        self._zone_manager.register_output_factory(OutputType.SQUEEZEBOX, create_squeezebox_output)
 
     def _setup_auto_resume(self) -> None:
         """Save playback state on events and auto-resume on startup."""

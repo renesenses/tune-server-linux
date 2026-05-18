@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     api_port: int = 8888
     stream_host: str = "0.0.0.0"
     stream_port: int = 8080
+    advertise_ip: str | None = None
 
     # Qobuz outbound proxy. Akamai blacklists most Free / OVH / datacenter
     # ASNs at the CDN edge, so direct calls to www.qobuz.com return a hard
@@ -222,6 +223,7 @@ class Settings(BaseSettings):
     mdns_enabled: bool = True
     cast_enabled: bool = True
     bluos_enabled: bool = True
+    squeezebox_enabled: bool = True
 
     # Peer discovery (find other Tune servers on the LAN via mDNS)
     peer_discovery_enabled: bool = True
