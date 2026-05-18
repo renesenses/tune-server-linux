@@ -318,13 +318,16 @@ echo [%DATE% %TIME%] install_dir: {install_dir} >> "%LOGFILE%"
 REM Create sentinel so the watchdog steps aside on any exit code.
 echo update > "_update_pending"
 
-REM Kill the CMD watchdog window. Use PID-based kill via WMIC to avoid
-REM locale-dependent window title matching (broke on French Windows).
+REM Kill the CMD watchdog window. Try PowerShell first (WMIC deprecated on Win11),
+REM fall back to WMIC, then skip if neither works.
 echo [%DATE% %TIME%] Killing watchdog CMD windows... >> "%LOGFILE%"
-for /f "tokens=2 delims=," %%p in ('tasklist /FI "IMAGENAME eq cmd.exe" /FO CSV /NH 2^>nul ^| findstr /I "cmd.exe"') do (
-    wmic process where "ProcessId=%%~p" get CommandLine 2>nul | findstr /I "start-tune-server" >nul && (
-        echo [%DATE% %TIME%] Killing watchdog PID %%~p >> "%LOGFILE%"
-        taskkill /PID %%~p /F >> "%LOGFILE%" 2>&1
+powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='cmd.exe'\" | Where-Object { $_.CommandLine -match 'start-tune-server' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >> "%LOGFILE%" 2>&1
+if errorlevel 1 (
+    for /f "tokens=2 delims=," %%p in ('tasklist /FI "IMAGENAME eq cmd.exe" /FO CSV /NH 2^>nul ^| findstr /I "cmd.exe"') do (
+        wmic process where "ProcessId=%%~p" get CommandLine 2>nul | findstr /I "start-tune-server" >nul && (
+            echo [%DATE% %TIME%] Killing watchdog PID %%~p >> "%LOGFILE%"
+            taskkill /PID %%~p /F >> "%LOGFILE%" 2>&1
+        )
     )
 )
 

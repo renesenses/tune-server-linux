@@ -1336,8 +1336,18 @@ async def diagnostics(errors_limit: int = Query(50, le=200)):
 
     db_engine = settings.db_engine if hasattr(settings, "db_engine") else "sqlite"
 
+    web_version = None
+    web_index = Path(settings.web_dir or "") / "index.html" if settings.web_dir else None
+    if web_index and web_index.is_file():
+        import re
+        html = web_index.read_text(encoding="utf-8", errors="ignore")[:2000]
+        m = re.search(r'content="tune-version:([\d.]+)"', html)
+        if m:
+            web_version = m.group(1)
+
     diag: dict = {
         "version": __version__,
+        "web_version": web_version or __version__,
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "pid": os.getpid(),

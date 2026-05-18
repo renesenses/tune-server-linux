@@ -12,6 +12,13 @@ from tune_server.config import settings
 from tune_server.models import Album, Artist, AudioFormat, FeaturedSection, SearchResult, Source, StreamingGenre, StreamingPlaylist, Track
 from tune_server.streaming.base import StreamingService, http_request_with_retry
 from tune_server.streaming.cache import StreamUrlCache
+from urllib.parse import quote as _url_quote
+
+
+def _proxy_cover(url: str | None) -> str | None:
+    if not url or not url.startswith("http"):
+        return url
+    return f"/api/v1/library/artwork/proxy?url={_url_quote(url, safe='')}"
 
 if TYPE_CHECKING:
     from tune_server.db.engine import Database
@@ -497,7 +504,7 @@ class QobuzService(StreamingService):
         album = t.get("album", {})
         album_artist = album.get("artist", {}) if album else {}
         image = album.get("image", {}) if album else {}
-        cover_path = image.get("large") or image.get("small") or image.get("thumbnail") or None
+        cover_path = _proxy_cover(image.get("large") or image.get("small") or image.get("thumbnail"))
 
         # Artist: prefer performer, fallback to album artist
         artist_name = (
@@ -526,7 +533,7 @@ class QobuzService(StreamingService):
     def _map_album(self, a: dict) -> Album:
         artist = a.get("artist", {})
         image = a.get("image", {})
-        cover_path = image.get("large") or image.get("small") or image.get("thumbnail") or None
+        cover_path = _proxy_cover(image.get("large") or image.get("small") or image.get("thumbnail"))
         return Album(
             title=a.get("title", "Unknown"),
             artist_name=artist.get("name", "Unknown"),
@@ -541,7 +548,7 @@ class QobuzService(StreamingService):
         return Artist(
             name=ar.get("name", "Unknown"),
             source_id=str(ar.get("id", "")),
-            image_path=ar.get("image", {}).get("large") if isinstance(ar.get("image"), dict) else None,
+            image_path=_proxy_cover(ar.get("image", {}).get("large") if isinstance(ar.get("image"), dict) else None),
         )
 
     # ------------------------------------------------------------------
