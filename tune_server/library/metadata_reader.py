@@ -286,7 +286,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             artist = _get_first(tags, ["artist"]) or None
             album = _get_first(tags, ["album"]) or None
             album_artist = _get_first(tags, ["albumartist", "album_artist"]) or None
-            album_artist_sort = _get_first(tags, ["albumartistsort", "ALBUMARTISTSORT"]) or None
+            album_artist_sort = _get_first(tags, ["albumartistsort", "album_artist_sort", "ALBUMARTISTSORT"]) or None
             compilation_tag = _get_first(tags, ["compilation", "COMPILATION", "itunescompilation", "ITUNESCOMPILATION"])
             is_compilation = compilation_tag in ("1", "true", "True")
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
@@ -348,7 +348,7 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             artist = _get_first(tags, ["artist"]) or None
             album = _get_first(tags, ["album"]) or None
             album_artist = _get_first(tags, ["albumartist"]) or None
-            album_artist_sort = _get_first(tags, ["albumartistsort", "ALBUMARTISTSORT"]) or None
+            album_artist_sort = _get_first(tags, ["albumartistsort", "album_artist_sort", "ALBUMARTISTSORT"]) or None
             compilation_tag = _get_first(tags, ["compilation", "COMPILATION", "itunescompilation", "ITUNESCOMPILATION"])
             is_compilation = compilation_tag in ("1", "true", "True")
             track_num = _parse_int(_get_first(tags, ["tracknumber"]))
