@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     music_dirs: list[str] = Field(default_factory=lambda: [str(Path.home() / "Music")])
     scan_on_startup: bool = True
     scan_schedule: str | None = None  # "HH:MM" for daily scheduled scan, e.g. "03:00"
+    quality_split: bool = True  # Split albums by quality tier (44.1 vs 96 kHz)
     watch_filesystem: bool = True
     watcher_debounce_seconds: float = 2.0
 

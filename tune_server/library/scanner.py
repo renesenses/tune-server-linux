@@ -408,14 +408,9 @@ class LibraryScanner:
                     album = await self._album_repo.get_by_title(base_title)
                 elif metadata.album_artist:
                     album = await self._album_repo.get_by_title_and_artist(base_title, artist.id)
-                    if not album:
-                        existing = await self._album_repo.get_by_title(base_title)
-                        if existing and existing.artist_id != artist.id:
-                            album = existing
-                            logger.info("album_compilation_merge", title=base_title,
-                                        existing_artist=existing.artist_id, new_artist=artist.id)
                 else:
                     album = await self._album_repo.get_by_title(base_title)
+
                 # Don't merge into an album that belongs to a different release
                 if (album and mb_release_id
                         and album.musicbrainz_release_id
@@ -424,10 +419,17 @@ class LibraryScanner:
                                 new=mb_release_id, title=base_title)
                     album = None
 
+                # Don't merge into an album from a different year
+                track_year = metadata.year or metadata.original_year
+                if album and track_year and album.year and album.year != track_year:
+                    logger.info("album_year_split", title=base_title,
+                                existing_year=album.year, new_year=track_year)
+                    album = None
+
             if album:
                 # Check if existing album has a different sample rate
                 dominant_sr = await self._album_repo.get_dominant_sample_rate(album.id)
-                if not _same_quality_tier(dominant_sr, metadata.sample_rate):
+                if settings.quality_split and not _same_quality_tier(dominant_sr, metadata.sample_rate):
                     # Different quality — create a suffixed album for the new track
                     suffix = _quality_suffix(metadata.sample_rate, metadata.bit_depth)
                     qualified_title = f"{base_title} ({suffix})" if suffix else base_title
