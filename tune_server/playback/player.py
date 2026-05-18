@@ -565,6 +565,8 @@ class Player:
                     "artist_name": track.artist_name,
                     "album_title": track.album_title,
                     "cover_path": cover_url_for_client(track.cover_path),
+                    "duration_ms": track.duration_ms,
+                    "position_ms": 0,
                 },
                 source="player",
             ))
@@ -661,6 +663,8 @@ class Player:
                 "artist_name": track.artist_name,
                 "album_title": track.album_title,
                 "cover_path": cover_url_for_client(track.cover_path),
+                "duration_ms": track.duration_ms,
+                "position_ms": seek_ms,
             },
             source="player",
         ))
