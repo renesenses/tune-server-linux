@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     stream_host: str = "0.0.0.0"
     stream_port: int = 8080
     advertise_ip: str | None = None
+    default_zone_id: int | None = None
 
     # Qobuz outbound proxy. Akamai blacklists most Free / OVH / datacenter
     # ASNs at the CDN edge, so direct calls to www.qobuz.com return a hard

@@ -4,6 +4,7 @@ import structlog
 from fastapi import APIRouter, HTTPException
 
 from tune_server.api.deps import deps
+from tune_server.config import settings
 from tune_server.models import Zone, ZoneCreateRequest, ZoneUpdateRequest, ZoneGroupRequest, ZoneGroupResponse, StereoPairRequest, StereoPairResponse
 
 logger = structlog.get_logger()
@@ -13,9 +14,13 @@ router = APIRouter(prefix="/zones", tags=["zones"])
 
 @router.get("", response_model=list[Zone])
 async def list_zones():
-    """List all configured zones."""
+    """List all configured zones. Default zone (TUNE_DEFAULT_ZONE_ID) is returned first."""
     zones = deps.zone_manager.list_zones()
-    return [z.to_model() for z in zones]
+    models = [z.to_model() for z in zones]
+    default_id = settings.default_zone_id
+    if default_id:
+        models.sort(key=lambda z: (0 if z.id == default_id else 1, z.id or 0))
+    return models
 
 
 @router.post("", response_model=Zone, status_code=201)
