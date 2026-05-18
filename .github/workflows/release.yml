@@ -627,6 +627,8 @@ jobs:
           rm -f "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
           cd "${GITHUB_WORKSPACE}"
           if [ -d .git ]; then
+            git checkout -- . 2>/dev/null || true
+            git clean -fd 2>/dev/null || true
             git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
             git fetch --depth 1 origin "${{ github.sha }}"
           else
