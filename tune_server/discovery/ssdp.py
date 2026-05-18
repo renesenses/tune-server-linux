@@ -457,17 +457,14 @@ class SsdpDiscovery:
                             kwargs["source"] = source_ip
                         await async_search(_on_response, **kwargs)
 
-                    # Always bind to LAN IP when advertise_ip is set (VPN environments)
-                    _forced_source = self._get_local_ip() if settings.advertise_ip else None
+                    _forced_source = self._get_local_ip()
                     try:
                         await _run_search(MEDIA_RENDERER_URN, _forced_source)
                     except OSError as os_err:
                         logger.warning("ssdp_multicast_error", error=str(os_err))
                         try:
-                            source_ip = self._get_local_ip()
-                            if source_ip:
-                                logger.info("ssdp_retry_with_source", source=source_ip)
-                                await _run_search(MEDIA_RENDERER_URN, source_ip)
+                            if _forced_source:
+                                await _run_search(MEDIA_RENDERER_URN, _forced_source)
                         except Exception:
                             logger.debug("ssdp_retry_also_failed")
 
@@ -503,24 +500,26 @@ class SsdpDiscovery:
                     except Exception:
                         logger.debug("ssdp_all_search_error")
 
-                    # Mark lost devices (with grace period for slow responders)
-                    async with self._lock:
-                        for dev_id in list(self._devices.keys()):
-                            if dev_id in discovered:
-                                self._miss_count.pop(dev_id, None)
-                            else:
-                                device = self._devices[dev_id]
-                                if device.available:
-                                    misses = self._miss_count.get(dev_id, 0) + 1
-                                    self._miss_count[dev_id] = misses
-                                    if misses >= _MISS_GRACE_CYCLES:
-                                        device.available = False
-                                        self._miss_count.pop(dev_id, None)
-                                        await self._event_bus.emit(Event(
-                                            type=EventType.DEVICE_LOST,
-                                            data={"id": dev_id, "name": device.name},
-                                            source="ssdp",
-                                        ))
+                    # Mark lost devices (with grace period for slow responders).
+                    # Skip if no devices were discovered at all (search failure).
+                    if discovered:
+                        async with self._lock:
+                            for dev_id in list(self._devices.keys()):
+                                if dev_id in discovered:
+                                    self._miss_count.pop(dev_id, None)
+                                else:
+                                    device = self._devices[dev_id]
+                                    if device.available:
+                                        misses = self._miss_count.get(dev_id, 0) + 1
+                                        self._miss_count[dev_id] = misses
+                                        if misses >= _MISS_GRACE_CYCLES:
+                                            device.available = False
+                                            self._miss_count.pop(dev_id, None)
+                                            await self._event_bus.emit(Event(
+                                                type=EventType.DEVICE_LOST,
+                                                data={"id": dev_id, "name": device.name},
+                                                source="ssdp",
+                                            ))
 
                 except Exception:
                     logger.exception("ssdp_scan_error")
