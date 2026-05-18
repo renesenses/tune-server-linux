@@ -331,7 +331,7 @@ class QobuzService(StreamingService):
         try:
             data = await self._api_get("album/getFeatured", {
                 "type": "new-releases",
-                "genre_id": genre_id,
+                "genre_ids": genre_id,
                 "limit": limit,
             })
             albums = data.get("albums", {}).get("items", [])
