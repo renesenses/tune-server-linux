@@ -142,8 +142,8 @@ class DiscoveryManager:
             await self._media_servers.stop()
 
     _TYPE_PRIORITY = {
-        "openhome": 7, "bluos": 6, "squeezebox": 5, "chromecast": 4,
-        "airplay": 3, "dlna": 2, "local": 1,
+        "openhome": 7, "bluos": 6, "squeezebox": 5, "dlna": 4,
+        "chromecast": 3, "airplay": 2, "local": 1,
     }
 
     def list_devices(self) -> list[DiscoveredDevice]:
