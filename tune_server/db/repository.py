@@ -733,24 +733,25 @@ class TrackRepo:
         limit: int = 5000,
     ) -> list[Track]:
         """Return up to *limit* tracks matching *query* in random order."""
-        like_pat = f"%{query}%"
+        folded = fold_accents(query)
+        like_folded = f"%{folded}%"
         rows = await self._db.fetchall(
             f"""SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name,
                        al.cover_path as cover_path
                 FROM tracks t
                 LEFT JOIN albums al ON t.album_id = al.id
                 LEFT JOIN artists ar ON t.artist_id = ar.id
-                LEFT JOIN track_credits tc ON tc.track_id = t.id
                 LEFT JOIN tracks_fts fts ON t.id = fts.rowid AND tracks_fts MATCH ?
                 WHERE fts.rowid IS NOT NULL
-                   OR ar.name LIKE ?
-                   OR t.genre LIKE ?
-                   OR t.composer LIKE ?
+                   OR fold_accents(ar.name) LIKE ?
+                   OR fold_accents(t.genre) LIKE ?
+                   OR fold_accents(t.composer) LIKE ?
                    OR CAST(al.year AS TEXT) = ?
-                   OR tc.artist_name LIKE ?
-                   OR tc.instrument LIKE ?
+                   OR t.id IN (SELECT tc.track_id FROM track_credits tc
+                               WHERE fold_accents(tc.artist_name) LIKE ?
+                                  OR tc.instrument LIKE ?)
                 ORDER BY RANDOM() LIMIT ?""",
-            (sanitize_fts_query(query) + "*", like_pat, like_pat, like_pat, query.strip(), like_pat, like_pat, limit),
+            (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
         )
         return [_row_to_track(r) for r in rows]
 
