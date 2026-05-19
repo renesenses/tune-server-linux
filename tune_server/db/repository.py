@@ -232,7 +232,7 @@ class ArtistRepo:
         like_folded = f"%{folded}%"
         if getattr(self._db, 'engine_name', 'sqlite') == 'postgres':
             rows = await self._db.fetchall(
-                """SELECT DISTINCT a.* FROM artists a
+                """SELECT a.* FROM artists a
                    WHERE a.fts_vector @@ plainto_tsquery('simple', ?)
                       OR a.name ILIKE ?
                       OR unaccent(a.name) ILIKE ?
