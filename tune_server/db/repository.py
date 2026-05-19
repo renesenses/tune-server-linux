@@ -467,6 +467,8 @@ class AlbumRepo:
             if (mb_release_id and existing.musicbrainz_release_id
                     and existing.musicbrainz_release_id != mb_release_id):
                 existing = None
+            elif year and existing.year and existing.year != year:
+                existing = None
             else:
                 if mb_release_id and not existing.musicbrainz_release_id:
                     await self.update_musicbrainz_ids(
@@ -908,6 +910,19 @@ class TrackRepo:
         )
         await self._db.commit()
         return cursor.rowcount
+
+    async def list_recent_duplicates(self, limit: int = 50) -> list[dict]:
+        rows = await self._db.fetchall(
+            """SELECT audio_hash, COUNT(*) as cnt,
+                      GROUP_CONCAT(file_path, ' | ') as paths
+               FROM tracks
+               WHERE audio_hash IS NOT NULL AND album_id IS NOT NULL
+               GROUP BY audio_hash
+               HAVING COUNT(*) > 1
+               LIMIT ?""",
+            (limit,),
+        )
+        return [dict(r) for r in rows]
 
     async def find_by_audio_hash(self, audio_hash: str) -> Optional[Track]:
         row = await self._db.fetchone(

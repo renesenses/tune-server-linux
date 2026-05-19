@@ -257,10 +257,13 @@ class LibraryScanner:
                     await self._track_repo.delete_by_path(path_str)
                     stats["removed"] += 1
 
-            # Remove duplicate tracks (same album + disc + track from different mount points)
+            # Remove duplicate tracks (same audio_hash from different mount points)
             deduped = await self._track_repo.deduplicate()
             if deduped:
                 logger.info("deduplicated_tracks", count=deduped)
+                dups = await self._track_repo.list_recent_duplicates()
+                for d in dups:
+                    logger.debug("deduplicated_detail", **d)
 
             # Clean up orphan albums (no tracks)
             orphans = await self._album_repo.delete_orphans()
@@ -462,6 +465,8 @@ class LibraryScanner:
                     album = None
 
             if album:
+                logger.debug("album_resolved", title=base_title, album_id=album.id,
+                             album_year=album.year, track_year=track_year, action="reuse")
                 # Check if existing album has a different sample rate
                 dominant_sr = await self._album_repo.get_dominant_sample_rate(album.id)
                 if settings.quality_split and not _same_quality_tier(dominant_sr, metadata.sample_rate):
@@ -499,6 +504,8 @@ class LibraryScanner:
                     artist_id=artist.id,
                     **album_kwargs,
                 )
+                logger.debug("album_resolved", title=base_title, album_id=album.id,
+                             album_year=album.year, track_year=track_year, action="get_or_create")
 
             # Create track
             track = Track(
