@@ -70,12 +70,10 @@ class BluosOutput(OutputTarget):
         return self._direct_url
 
     def supports_direct_url(self, track: Track) -> bool:
-        if not track or not track.file_path:
-            return False
-        if not track.file_path.startswith(("http://", "https://")):
-            return False
-        fmt = AudioFormat(track.format) if track.format else None
-        return fmt in _BLUOS_DIRECT_FORMATS
+        # Always route through the HTTP streamer so ICY metadata headers
+        # (title, artist, cover) are served.  BluOS /Play has no metadata
+        # parameters — ICY is the only channel for track info.
+        return False
 
     def _base_url(self) -> str:
         return f"http://{self._host}:{self._port}"
@@ -119,26 +117,17 @@ class BluosOutput(OutputTarget):
         album = track.album_title if track else ""
         cover_url = self._resolve_cover_url(track)
 
-        # Determine URL
-        if track and self.supports_direct_url(track):
-            url = track.file_path
-            self._direct_url = True
-        elif track and track.file_path and track.file_path.startswith(("http://", "https://")):
-            url = track.file_path
-            self._direct_url = True
-        else:
-            file_path = track.file_path if track else None
-            self._stream_id = self._streamer.create_session(stream_info, file_path)
-            url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
-            # Attach track metadata so the HTTP streamer can serve ICY
-            # headers — this is how BluOS discovers title/artist/cover.
-            self._streamer.set_session_metadata(
-                self._stream_id,
-                title=title,
-                artist=artist,
-                album=album,
-                cover_url=cover_url,
-            )
+        # Always route through the HTTP streamer for ICY metadata headers.
+        file_path = track.file_path if track else None
+        self._stream_id = self._streamer.create_session(stream_info, file_path)
+        url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+        self._streamer.set_session_metadata(
+            self._stream_id,
+            title=title,
+            artist=artist,
+            album=album,
+            cover_url=cover_url,
+        )
 
         # BluOS /Play only accepts 'url' (and 'seek') — title/artist/album
         # are NOT API parameters (they are read-only /Status attributes).
