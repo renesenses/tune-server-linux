@@ -17,18 +17,46 @@ from tune_server.models import AudioFormat, AudioStreamInfo
 logger = structlog.get_logger()
 
 
+def _build_wav_header_extensible(channels: int, sample_rate: int, bit_depth: int) -> bytes:
+    """WAVEFORMATEXTENSIBLE header for >2 channels with proper channel mask."""
+    byte_rate = sample_rate * channels * (bit_depth // 8)
+    block_align = channels * (bit_depth // 8)
+    data_size = 0x7FFFFFFF
+    _CHANNEL_MASKS = {1: 0x4, 2: 0x3, 4: 0x33, 6: 0x60F, 8: 0x63F}
+    channel_mask = _CHANNEL_MASKS.get(channels, (1 << channels) - 1)
+    pcm_guid = b"\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71"
+    fmt_size = 40
+    file_size = data_size + 20 + fmt_size
+    fmt_chunk = struct.pack(
+        "<4sIHHIIHHH",
+        b"fmt ", fmt_size, 0xFFFE,
+        channels, sample_rate, byte_rate, block_align, bit_depth,
+        22,
+    )
+    fmt_chunk += struct.pack("<HI", bit_depth, channel_mask) + pcm_guid
+    return (
+        struct.pack("<4sI4s", b"RIFF", file_size, b"WAVE")
+        + fmt_chunk
+        + struct.pack("<4sI", b"data", data_size)
+    )
+
+
 try:
     from tune_native import build_wav_header as _rust_wav_header
     def _build_wav_header(stream_info: AudioStreamInfo) -> bytes:
         channels = stream_info.channels or 2
         sample_rate = stream_info.sample_rate or 44100
         bit_depth = stream_info.bit_depth or 16
+        if channels > 2:
+            return _build_wav_header_extensible(channels, sample_rate, bit_depth)
         return _rust_wav_header(channels, sample_rate, bit_depth)
 except ImportError:
     def _build_wav_header(stream_info: AudioStreamInfo) -> bytes:
         channels = stream_info.channels or 2
         sample_rate = stream_info.sample_rate or 44100
         bit_depth = stream_info.bit_depth or 16
+        if channels > 2:
+            return _build_wav_header_extensible(channels, sample_rate, bit_depth)
         byte_rate = sample_rate * channels * (bit_depth // 8)
         block_align = channels * (bit_depth // 8)
         data_size = 0x7FFFFFFF

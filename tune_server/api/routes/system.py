@@ -74,6 +74,9 @@ async def get_config():
         dsp_filter=settings.dsp_filter,
         dsp_impulse_response=settings.dsp_impulse_response,
         dsp_sample_rate=settings.dsp_sample_rate,
+        downmix_policy=settings.downmix_policy,
+        surround_bass_management=settings.surround_bass_management,
+        surround_crossover_hz=settings.surround_crossover_hz,
         metadata_readonly=settings.metadata_readonly,
         discogs_token_set=bool(settings.discogs_token),
         enrich_on_scan=settings.enrich_on_scan,
@@ -102,6 +105,26 @@ async def update_config(body: dict):
         settings.local_exclusive_mode = val
         persist_env_var("TUNE_LOCAL_EXCLUSIVE_MODE", str(val))
         updated["local_exclusive_mode"] = val
+
+    if "downmix_policy" in body:
+        val = str(body["downmix_policy"])
+        if val in ("auto", "stereo_always", "passthrough"):
+            settings.downmix_policy = val
+            persist_env_var("TUNE_DOWNMIX_POLICY", val)
+            updated["downmix_policy"] = val
+
+    if "surround_bass_management" in body:
+        val = bool(body["surround_bass_management"])
+        settings.surround_bass_management = val
+        persist_env_var("TUNE_SURROUND_BASS_MANAGEMENT", str(val))
+        updated["surround_bass_management"] = val
+
+    if "surround_crossover_hz" in body:
+        val = int(body["surround_crossover_hz"])
+        if 40 <= val <= 200:
+            settings.surround_crossover_hz = val
+            persist_env_var("TUNE_SURROUND_CROSSOVER_HZ", str(val))
+            updated["surround_crossover_hz"] = val
 
     if not updated:
         raise HTTPException(status_code=400, detail="No valid configuration fields provided")

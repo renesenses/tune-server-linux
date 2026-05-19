@@ -126,6 +126,8 @@ class ZoneManager:
                     zone.sync_delay_ms = row.get("sync_delay_ms", 0) or 0
                     zone.stereo_pair_id = row.get("stereo_pair_id")
                     zone.stereo_channel = row.get("stereo_channel")
+                    zone.surround_group_id = row.get("surround_group_id")
+                    zone.surround_channel = row.get("surround_channel")
                     if self._stream_url_resolver:
                         zone.player.set_stream_url_resolver(self._stream_url_resolver)
 
@@ -171,6 +173,8 @@ class ZoneManager:
                     zone.sync_delay_ms = row.get("sync_delay_ms", 0) or 0
                     zone.stereo_pair_id = row.get("stereo_pair_id")
                     zone.stereo_channel = row.get("stereo_channel")
+                    zone.surround_group_id = row.get("surround_group_id")
+                    zone.surround_channel = row.get("surround_channel")
                     if self._stream_url_resolver:
                         zone.player.set_stream_url_resolver(self._stream_url_resolver)
                     saved_volume = row.get("volume", 0.5)
@@ -479,6 +483,112 @@ class ZoneManager:
                     raw = zone.name
                     entry["name"] = raw[:-4] if raw.endswith(" (R)") else raw
         return list(pairs.values())
+
+    # -----------------------------------------------------------------
+    # Surround groups
+    # -----------------------------------------------------------------
+
+    _CHANNEL_SUFFIXES = {
+        "FL": "FL", "FR": "FR", "FC": "C", "LFE": "Sub",
+        "BL": "RL", "BR": "RR", "SL": "SL", "SR": "SR",
+    }
+
+    _LAYOUT_MAP = {
+        2: "stereo", 4: "quad", 6: "5.1", 8: "7.1",
+    }
+
+    async def create_surround_group(
+        self, name: str, channel_map: dict[str, str],
+    ) -> dict:
+        """Create a surround group from N DLNA devices mapped to channels."""
+        surround_group_id = str(uuid.uuid4())
+        zones_info: list[dict] = []
+        created_zones: list = []
+
+        # First zone (FL) becomes the leader
+        leader_zone = None
+        for device_id, channel in channel_map.items():
+            suffix = self._CHANNEL_SUFFIXES.get(channel, channel)
+            zone = await self.create_zone(
+                f"{name} ({suffix})", OutputType.DLNA, output_device_id=device_id,
+            )
+            zone.surround_group_id = surround_group_id
+            zone.surround_channel = channel
+            await self._zone_repo.update(
+                zone.zone_id,
+                surround_group_id=surround_group_id,
+                surround_channel=channel,
+            )
+            created_zones.append(zone)
+            zones_info.append({
+                "zone_id": zone.zone_id,
+                "channel": channel,
+                "device_id": device_id,
+            })
+            if leader_zone is None:
+                leader_zone = zone
+
+        # Group them: leader is first zone, rest are followers
+        if self._group_manager and leader_zone and len(created_zones) > 1:
+            followers = [z for z in created_zones if z is not leader_zone]
+            await self._group_manager.create_group(leader_zone, followers)
+
+        layout = self._LAYOUT_MAP.get(len(channel_map), f"{len(channel_map)}ch")
+        logger.info(
+            "surround_group_created",
+            group_id=surround_group_id, name=name,
+            layout=layout, zones=len(created_zones),
+        )
+        return {
+            "surround_group_id": surround_group_id,
+            "name": name,
+            "layout": layout,
+            "zones": zones_info,
+        }
+
+    async def dissolve_surround_group(self, surround_group_id: str) -> None:
+        """Dissolve a surround group — ungroup and delete all zones."""
+        zones = [
+            z for z in self._zones.values()
+            if z.surround_group_id == surround_group_id
+        ]
+        if not zones:
+            raise KeyError(f"Surround group {surround_group_id} not found")
+
+        if self._group_manager and zones[0].group_id:
+            await self._group_manager.dissolve_group(zones[0].group_id)
+
+        for zone in zones:
+            await self.delete_zone(zone.zone_id)
+
+        logger.info("surround_group_dissolved", group_id=surround_group_id)
+
+    def get_surround_groups(self) -> list[dict]:
+        """Return all active surround groups."""
+        groups: dict[str, dict] = {}
+        for zone in self._zones.values():
+            if not zone.surround_group_id:
+                continue
+            gid = zone.surround_group_id
+            if gid not in groups:
+                raw = zone.name
+                base_name = raw.rsplit(" (", 1)[0] if " (" in raw else raw
+                groups[gid] = {
+                    "surround_group_id": gid,
+                    "name": base_name,
+                    "layout": "",
+                    "zones": [],
+                }
+            groups[gid]["zones"].append({
+                "zone_id": zone.zone_id,
+                "channel": zone.surround_channel,
+                "device_id": zone.output_device_id,
+                "zone": zone.to_model(),
+            })
+        for g in groups.values():
+            n = len(g["zones"])
+            g["layout"] = self._LAYOUT_MAP.get(n, f"{n}ch")
+        return list(groups.values())
 
     async def cleanup(self) -> None:
         for zone in self._zones.values():

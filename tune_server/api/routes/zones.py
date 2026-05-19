@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from tune_server.api.deps import deps
 from tune_server.config import settings
-from tune_server.models import Zone, ZoneCreateRequest, ZoneUpdateRequest, ZoneGroupRequest, ZoneGroupResponse, StereoPairRequest, StereoPairResponse
+from tune_server.models import Zone, ZoneCreateRequest, ZoneUpdateRequest, ZoneGroupRequest, ZoneGroupResponse, StereoPairRequest, StereoPairResponse, SurroundGroupRequest, SurroundGroupResponse
 
 logger = structlog.get_logger()
 
@@ -165,6 +165,58 @@ async def dissolve_stereo_pair(pair_id: str):
 async def list_stereo_pairs():
     """List all active stereo pairs."""
     return deps.zone_manager.get_stereo_pairs()
+
+
+@router.post("/surround", response_model=SurroundGroupResponse, status_code=201)
+async def create_surround_group(request: SurroundGroupRequest):
+    """Create a surround group from N DLNA devices mapped to channels."""
+    try:
+        result = await deps.zone_manager.create_surround_group(
+            name=request.name,
+            channel_map=request.channel_map,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return SurroundGroupResponse(**result)
+
+
+@router.delete("/surround/{group_id}", status_code=204)
+async def dissolve_surround_group(group_id: str):
+    """Dissolve a surround group and delete all its zones."""
+    try:
+        await deps.zone_manager.dissolve_surround_group(group_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Surround group not found")
+
+
+@router.get("/surround/list")
+async def list_surround_groups():
+    """List all active surround groups."""
+    return deps.zone_manager.get_surround_groups()
+
+
+@router.put("/surround/{group_id}/calibrate")
+async def calibrate_surround_group(group_id: str, delays: dict):
+    """Set per-zone delay offsets for time alignment.
+
+    Body: {"zone_id": delay_ms, ...} e.g. {"3": 15, "5": 0, "7": 8}
+    """
+    groups = deps.zone_manager.get_surround_groups()
+    group = next((g for g in groups if g["surround_group_id"] == group_id), None)
+    if not group:
+        raise HTTPException(status_code=404, detail="Surround group not found")
+    updated = {}
+    for z_info in group["zones"]:
+        zid = z_info["zone_id"]
+        delay = delays.get(str(zid))
+        if delay is not None:
+            zone = deps.zone_manager.get_zone(zid)
+            if zone:
+                zone.sync_delay_ms = int(delay)
+                updated[zid] = int(delay)
+    return {"calibrated": updated}
 
 
 def _resolve_zone_brand_key(output_device_id: str | None) -> str:

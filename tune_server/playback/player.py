@@ -1447,6 +1447,15 @@ class Player:
                 detail="FFmpeg decode + re-encode" + (" with resampling" if resampled else ""),
             ))
 
+        # Step 2b: Channel mapping (downmix)
+        if src_ch != stream_info.channels and not bit_perfect:
+            steps.append(SignalPathStep(
+                stage="channel_map",
+                description=f"Downmix: {src_ch}ch → {stream_info.channels}ch",
+                channels=stream_info.channels,
+                detail="ITU-R BS.775" if src_ch >= 6 and stream_info.channels == 2 else "FFmpeg auto",
+            ))
+
         # Step 3: Output
         steps.append(SignalPathStep(
             stage="output",

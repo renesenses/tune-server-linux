@@ -366,12 +366,18 @@ class SsdpDiscovery:
                                     logger.info("sonos_room_resolved", raw=name, resolved=sonos_name)
                                     name = sonos_name
 
+                            from tune_server.audio.formats import detect_max_channels_from_device_info, detect_max_channels_from_sink_protocols
+                            proto_ch = detect_max_channels_from_sink_protocols(sink_protocols)
+                            device_ch = detect_max_channels_from_device_info(name, device.model_name or "")
+                            max_channels = max(proto_ch, device_ch or 2)
+
                             capabilities = {
                                 "dlna": True,
                                 "manufacturer": device.manufacturer or "",
                                 "model": device.model_name or "",
                                 "sink_protocols": sink_protocols,
                                 "device_name": device.friendly_name or "",
+                                "max_channels": max_channels,
                             }
                             if is_openhome:
                                 capabilities["openhome"] = True
@@ -680,12 +686,18 @@ class SsdpDiscovery:
                         logger.info("sonos_room_resolved", raw=name, resolved=sonos_name)
                         name = sonos_name
 
+                from tune_server.audio.formats import detect_max_channels_from_device_info, detect_max_channels_from_sink_protocols
+                proto_ch = detect_max_channels_from_sink_protocols(sink_protocols)
+                device_ch = detect_max_channels_from_device_info(name, device.model_name or "")
+                max_channels = max(proto_ch, device_ch or 2)
+
                 capabilities = {
                     "dlna": True,
                     "manufacturer": device.manufacturer or "",
                     "model": device.model_name or "",
                     "sink_protocols": sink_protocols,
                     "device_name": device.friendly_name or "",
+                    "max_channels": max_channels,
                 }
                 if is_openhome:
                     capabilities["openhome"] = True
