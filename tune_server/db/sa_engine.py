@@ -463,7 +463,24 @@ class SADatabase:
 
     @staticmethod
     def _translate_placeholders(sql: str) -> str:
-        """Replace ? placeholders with :p1, :p2, ... (outside string literals)."""
+        """Replace ? placeholders with :p1, :p2, ... and translate SQLite
+        dialect constructs to PostgreSQL equivalents."""
+        import re
+
+        # INSERT OR IGNORE → INSERT ... ON CONFLICT DO NOTHING
+        if re.search(r'INSERT\s+OR\s+IGNORE\s+', sql, re.IGNORECASE):
+            sql = re.sub(r'INSERT\s+OR\s+IGNORE\s+', 'INSERT ', sql, flags=re.IGNORECASE)
+            returning = re.search(r'\)\s*(RETURNING\b.*)', sql, re.IGNORECASE)
+            if returning:
+                sql = sql[:returning.start(1)] + 'ON CONFLICT DO NOTHING ' + sql[returning.start(1):]
+            else:
+                sql = sql.rstrip() + ' ON CONFLICT DO NOTHING'
+
+        # INSERT OR REPLACE → INSERT ... ON CONFLICT DO NOTHING
+        if re.search(r'INSERT\s+OR\s+REPLACE\s+', sql, re.IGNORECASE):
+            sql = re.sub(r'INSERT\s+OR\s+REPLACE\s+', 'INSERT ', sql, flags=re.IGNORECASE)
+            sql = sql.rstrip() + ' ON CONFLICT DO NOTHING'
+
         result = []
         counter = 0
         in_string = False
