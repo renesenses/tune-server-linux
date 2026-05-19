@@ -75,6 +75,13 @@ class SQLiteDatabase:
         # at the same time and SQLITE_BUSY surfaces as a 500.
         await self._db.execute("PRAGMA busy_timeout=5000")
 
+        # Register fold_accents UDF for accent-insensitive search queries
+        try:
+            from tune_server.utils import fold_accents as _fold
+            await self._db.create_function("fold_accents", 1, lambda v: _fold(v) if v else v)
+        except Exception:
+            logger.debug("fold_accents_udf_not_registered")
+
         await self._init_schema()
         logger.info("database_connected", path=self._db_path, engine="sqlite")
 
