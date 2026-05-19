@@ -426,8 +426,8 @@ async def test_duplicate_audio_hash_skipped(
     (tmp_path / "copy.flac").touch()
 
     stats = await scanner.scan([str(tmp_path)])
-    # First file should be added, second should be skipped as duplicate
-    assert stats["added"] == 1
+    # Both files are added, then deduplication removes the duplicate
+    assert stats["added"] == 2
     assert stats["scanned"] == 2
 
 

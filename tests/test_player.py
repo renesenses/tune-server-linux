@@ -761,14 +761,14 @@ class TestVolumeControl:
 class TestErrorHandling:
     """Error scenarios: output failure during play, decode failure, etc."""
 
-    @patch("tune_server.playback.player.AudioPipeline")
-    async def test_pipeline_start_error_emits_event(self, MockPipeline, mock_output, event_bus):
+    @patch("tune_server.playback.player.create_pipeline")
+    async def test_pipeline_start_error_emits_event(self, mock_create, mock_output, event_bus):
         """If AudioPipeline.start() raises, player emits a PLAYBACK_ERROR event
         and transitions to STOPPED."""
         pipeline = AsyncMock()
         pipeline.start = AsyncMock(side_effect=RuntimeError("decode error"))
         pipeline.stop = AsyncMock()
-        MockPipeline.return_value = pipeline
+        mock_create.return_value = pipeline
 
         # Ensure output does NOT claim direct URL support
         mock_output.supports_direct_url = MagicMock(return_value=False)
@@ -792,8 +792,8 @@ class TestErrorHandling:
         assert len(error_events) >= 1
         assert "pipeline_error" in error_events[0].data["error"]
 
-    @patch("tune_server.playback.player.AudioPipeline")
-    async def test_pipeline_start_timeout_stops(self, MockPipeline, mock_output, event_bus):
+    @patch("tune_server.playback.player.create_pipeline")
+    async def test_pipeline_start_timeout_stops(self, mock_create, mock_output, event_bus):
         """If pipeline.start() times out, player should stop gracefully."""
         pipeline = AsyncMock()
 
@@ -802,7 +802,7 @@ class TestErrorHandling:
 
         pipeline.start = slow_start
         pipeline.stop = AsyncMock()
-        MockPipeline.return_value = pipeline
+        mock_create.return_value = pipeline
 
         # Ensure output does NOT claim direct URL support
         mock_output.supports_direct_url = MagicMock(return_value=False)
