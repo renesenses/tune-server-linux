@@ -139,10 +139,15 @@ class ChromecastOutput(OutputTarget):
         if track and track.duration_ms:
             metadata["duration"] = track.duration_ms / 1000.0
 
+        media_info = {}
+        if track and track.duration_ms:
+            media_info["duration"] = track.duration_ms / 1000.0
+
         try:
             await self._cast_call(
                 mc.play_media, url, content_type,
                 title=title, thumb=thumb, metadata=metadata,
+                media_info=media_info if media_info else None,
             )
             await self._cast_call(mc.block_until_active, timeout=15)
             self._last_content_id = url

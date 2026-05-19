@@ -6,7 +6,7 @@ import structlog
 
 from tune_server.db.engine import Database
 from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track, TrackCredit
-from tune_server.utils import fold_accents
+from tune_server.utils import fold_accents, sanitize_fts_query
 
 logger = structlog.get_logger()
 
@@ -248,7 +248,7 @@ class ArtistRepo:
                    WHERE fts.rowid IS NOT NULL
                       OR fold_accents(a.name) LIKE ?
                    LIMIT ?""",
-                (query + "*", like_folded, limit),
+                (sanitize_fts_query(query) + "*", like_folded, limit),
             )
         return [_row_to_artist(r) for r in rows]
 
@@ -646,7 +646,7 @@ class AlbumRepo:
                       OR CAST(al.year AS TEXT) = ?
                       OR fold_accents(al.label) LIKE ?
                    LIMIT ?""",
-                (query + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, limit),
+                (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, limit),
             )
         return [_row_to_album(r) for r in rows]
 
@@ -750,7 +750,7 @@ class TrackRepo:
                    OR tc.artist_name LIKE ?
                    OR tc.instrument LIKE ?
                 ORDER BY RANDOM() LIMIT ?""",
-            (query + "*", like_pat, like_pat, like_pat, query.strip(), like_pat, like_pat, limit),
+            (sanitize_fts_query(query) + "*", like_pat, like_pat, like_pat, query.strip(), like_pat, like_pat, limit),
         )
         return [_row_to_track(r) for r in rows]
 
@@ -1001,7 +1001,7 @@ class TrackRepo:
                                    WHERE fold_accents(tc.artist_name) LIKE ?
                                       OR tc.instrument LIKE ?)
                     LIMIT ?""",
-                (query + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
+                (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
             )
         return [_row_to_track(r) for r in rows]
 
@@ -1669,7 +1669,7 @@ class SmartPlaylistRepo:
         match_mode = sp.get("match_mode", "all")  # "all" = AND, "any" = OR
         sort_by = sp.get("sort_by", "title")
         sort_order = sp.get("sort_order", "asc")
-        max_tracks = sp.get("max_tracks", 200)
+        max_tracks = sp.get("max_tracks", 5000)
 
         conditions = []
         params = []

@@ -17,7 +17,7 @@ from tune_server.db.tables import (
     user_profiles, user_favorites, party_votes, album_ratings,
 )
 from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track
-from tune_server.utils import fold_accents
+from tune_server.utils import fold_accents, sanitize_fts_query
 
 logger = structlog.get_logger()
 
@@ -288,7 +288,7 @@ class SAArtistRepo:
         like_folded = f"%{folded}%"
 
         # Build query with FTS plugin clauses + accent-folded LIKE fallback
-        fts_query = query + "*" if self._db.engine_name == "sqlite" else query
+        fts_query = sanitize_fts_query(query) + "*" if self._db.engine_name == "sqlite" else query
         like_col = "name"
         if self._db.engine_name in ("postgres", "postgresql"):
             accent_fallback = sa.text(f"unaccent(artists.{like_col}) ILIKE :like_folded")
@@ -663,7 +663,7 @@ class SAAlbumRepo:
         where_clause = self._db.fts.search_where("albums", query)
         folded = fold_accents(query)
         like_folded = f"%{folded}%"
-        fts_query = query + "*" if self._db.engine_name == "sqlite" else query
+        fts_query = sanitize_fts_query(query) + "*" if self._db.engine_name == "sqlite" else query
         if self._db.engine_name in ("postgres", "postgresql"):
             accent_fallback = sa.text("unaccent(albums.title) ILIKE :like_folded")
         else:
@@ -828,7 +828,7 @@ class SATrackRepo:
     async def search_random(self, query: str, limit: int = 5000) -> list[Track]:
         """Return up to *limit* tracks matching *query* in random order."""
         where_clause = self._db.fts.search_where("tracks", query)
-        fts_query = query + "*" if self._db.engine_name == "sqlite" else query
+        fts_query = sanitize_fts_query(query) + "*" if self._db.engine_name == "sqlite" else query
         stmt = (
             self._track_select()
             .where(where_clause)
@@ -940,7 +940,7 @@ class SATrackRepo:
         where_clause = self._db.fts.search_where("tracks", query)
         folded = fold_accents(query)
         like_folded = f"%{folded}%"
-        fts_query = query + "*" if self._db.engine_name == "sqlite" else query
+        fts_query = sanitize_fts_query(query) + "*" if self._db.engine_name == "sqlite" else query
         if self._db.engine_name in ("postgres", "postgresql"):
             accent_fallback = sa.text("unaccent(tracks.title) ILIKE :like_folded")
         else:

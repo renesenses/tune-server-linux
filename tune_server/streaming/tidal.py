@@ -516,6 +516,45 @@ class TidalService(StreamingService):
             logger.exception("tidal_user_playlists_error")
             return self._playlists_cache or []
 
+    async def get_user_favorites(self, fav_type: str = "tracks", limit: int = 500) -> dict:
+        if not await self._ensure_authenticated():
+            return {}
+        try:
+            import tidalapi
+
+            def _fetch():
+                favs = self._session.user.favorites
+                items = []
+                offset = 0
+                while True:
+                    if fav_type == "albums":
+                        batch = favs.albums(limit=100, offset=offset)
+                    elif fav_type == "artists":
+                        batch = favs.artists(limit=100, offset=offset)
+                    elif fav_type == "tracks":
+                        batch = favs.tracks(limit=100, offset=offset)
+                    else:
+                        break
+                    if not batch:
+                        break
+                    items.extend(batch)
+                    if len(batch) < 100 or len(items) >= limit:
+                        break
+                    offset += 100
+                return items[:limit]
+
+            raw = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=60)
+            if fav_type == "albums":
+                return {"albums": [self._map_album(a) for a in raw if hasattr(a, "name")]}
+            elif fav_type == "artists":
+                return {"artists": [self._map_artist(a) for a in raw if hasattr(a, "name")]}
+            elif fav_type == "tracks":
+                return {"tracks": [self._map_track(t) for t in raw if hasattr(t, "name")]}
+            return {}
+        except Exception:
+            logger.exception("tidal_user_favorites_error", type=fav_type)
+            return {}
+
     async def get_playlist_tracks(self, playlist_id: str) -> list[Track]:
         if not await self._ensure_authenticated():
             return []
