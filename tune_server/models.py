@@ -710,6 +710,10 @@ class SystemConfigResponse(BaseModel):
     dsp_filter: str = ""
     dsp_impulse_response: str = ""
     dsp_sample_rate: int = 0
+    # Multichannel
+    downmix_policy: str = "auto"
+    surround_bass_management: bool = True
+    surround_crossover_hz: int = 120
     # Metadata
     metadata_readonly: bool = False
     # Enrichment

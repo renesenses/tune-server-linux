@@ -197,6 +197,28 @@ async def list_surround_groups():
     return deps.zone_manager.get_surround_groups()
 
 
+@router.put("/surround/{group_id}/calibrate")
+async def calibrate_surround_group(group_id: str, delays: dict):
+    """Set per-zone delay offsets for time alignment.
+
+    Body: {"zone_id": delay_ms, ...} e.g. {"3": 15, "5": 0, "7": 8}
+    """
+    groups = deps.zone_manager.get_surround_groups()
+    group = next((g for g in groups if g["surround_group_id"] == group_id), None)
+    if not group:
+        raise HTTPException(status_code=404, detail="Surround group not found")
+    updated = {}
+    for z_info in group["zones"]:
+        zid = z_info["zone_id"]
+        delay = delays.get(str(zid))
+        if delay is not None:
+            zone = deps.zone_manager.get_zone(zid)
+            if zone:
+                zone.sync_delay_ms = int(delay)
+                updated[zid] = int(delay)
+    return {"calibrated": updated}
+
+
 def _resolve_zone_brand_key(output_device_id: str | None) -> str:
     """Return a brand identifier for a zone's output device.
 

@@ -134,24 +134,29 @@ class ZoneInstance:
     def surround_channel(self) -> str | None:
         return self._surround_channel
 
-    _SURROUND_CHANNEL_FILTERS: dict[str, str] = {
-        "FL": "pan=mono|c0=FL",
-        "FR": "pan=mono|c0=FR",
-        "FC": "pan=mono|c0=FC",
-        "LFE": "pan=mono|c0=LFE,lowpass=f=120",
-        "BL": "pan=mono|c0=BL",
-        "BR": "pan=mono|c0=BR",
-        "SL": "pan=mono|c0=SL",
-        "SR": "pan=mono|c0=SR",
-    }
-
     @surround_channel.setter
     def surround_channel(self, value: str | None) -> None:
         self._surround_channel = value
-        if value and value in self._SURROUND_CHANNEL_FILTERS:
-            self._player.set_channel_filter(self._SURROUND_CHANNEL_FILTERS[value])
-        elif not value:
+        if value:
+            self._player.set_channel_filter(self._build_surround_filter(value))
+        else:
             self._player.set_channel_filter(None)
+
+    @staticmethod
+    def _build_surround_filter(channel: str) -> str | None:
+        from tune_server.config import settings as _s
+        base_filters = {
+            "FL": "pan=mono|c0=FL",
+            "FR": "pan=mono|c0=FR",
+            "FC": "pan=mono|c0=FC",
+            "BL": "pan=mono|c0=BL",
+            "BR": "pan=mono|c0=BR",
+            "SL": "pan=mono|c0=SL",
+            "SR": "pan=mono|c0=SR",
+        }
+        if channel == "LFE":
+            return f"pan=mono|c0=LFE,lowpass=f={_s.surround_crossover_hz}"
+        return base_filters.get(channel)
 
     @property
     def state(self) -> PlaybackState:

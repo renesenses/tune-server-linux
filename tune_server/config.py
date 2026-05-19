@@ -111,6 +111,8 @@ class Settings(BaseSettings):
     # Multichannel / Surround
     downmix_policy: str = "auto"  # "auto", "stereo_always", "passthrough"
     downmix_matrix: str = ""  # Custom FFmpeg pan filter override for downmix
+    surround_bass_management: bool = True  # Redirect bass from all channels to LFE
+    surround_crossover_hz: int = 120  # Bass crossover frequency for LFE redirect
 
     # Crossfade
     crossfade_enabled: bool = False
