@@ -777,11 +777,11 @@ async def check_update():
     }
     homebrew_install = deps.update_checker.is_homebrew_install
     macos_dmg = deps.update_checker.is_macos_dmg_install
-    payload["installable"] = not source_install
+    payload["installable"] = True
     payload["homebrew"] = homebrew_install
     payload["macos_dmg"] = macos_dmg
     if source_install:
-        payload["install_hint"] = "Source install detected. Run `git pull && pip install -e .` then restart."
+        payload["install_hint"] = "Source install — le bouton Mettre à jour fera git pull + pip install + restart."
     elif homebrew_install:
         payload["install_hint"] = "Homebrew install detected. Update will run `brew upgrade tune-server`."
     elif macos_dmg:
@@ -808,10 +808,70 @@ async def install_update():
     if not deps.update_checker:
         raise HTTPException(status_code=503, detail="Update checker not available")
     if deps.update_checker.is_source_install:
-        raise HTTPException(
-            status_code=409,
-            detail="Source install detected. Run `git pull && pip install -e .` then restart the service.",
-        )
+        if not deps.update_checker.update_available:
+            raise HTTPException(status_code=400, detail="No update available")
+
+        from datetime import datetime as _dt
+        deps.update_checker._install_state = {
+            "phase": "updating",
+            "version": deps.update_checker.latest_version or "latest",
+            "started_at": _dt.utcnow().isoformat(),
+        }
+
+        async def _run_source_update():
+            import subprocess, sys
+            try:
+                git_dir = Path(__file__).resolve().parents[2]
+                logger.info("source_update_started", git_dir=str(git_dir))
+
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "pull", "--ff-only"],
+                    cwd=str(git_dir), capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode != 0:
+                    logger.error("source_update_git_pull_failed", stderr=result.stderr)
+                    deps.update_checker._install_state["phase"] = "failed"
+                    deps.update_checker._install_state["error"] = result.stderr.strip()
+                    return
+                logger.info("source_update_git_pull_ok", stdout=result.stdout.strip())
+
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    [sys.executable, "-m", "pip", "install", "-e", "."],
+                    cwd=str(git_dir), capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode != 0:
+                    logger.error("source_update_pip_failed", stderr=result.stderr[:500])
+                    deps.update_checker._install_state["phase"] = "failed"
+                    deps.update_checker._install_state["error"] = "pip install failed"
+                    return
+                logger.info("source_update_pip_ok")
+
+                deps.update_checker._install_state["phase"] = "restarting"
+                await deps.event_bus.emit(Event(
+                    type=EventType.SYSTEM_RESTART,
+                    data={"reason": "source_update"},
+                    source="updater",
+                )) if deps.event_bus else None
+                await asyncio.sleep(2)
+
+                import os, signal
+                os.kill(os.getpid(), signal.SIGTERM)
+            except Exception as e:
+                logger.exception("source_update_error")
+                deps.update_checker._install_state["phase"] = "failed"
+                deps.update_checker._install_state["error"] = str(e)
+
+        asyncio.create_task(_run_source_update())
+
+        return {
+            "status": "started",
+            "version": deps.update_checker.latest_version or "latest",
+            "source_install": True,
+            "poll_url": "/api/v1/system/update/status",
+        }
+
     if not deps.update_checker.update_available:
         raise HTTPException(status_code=400, detail="No update available")
 
@@ -832,8 +892,6 @@ async def install_update():
             deps.update_checker._install_state["phase"] = "failed"
             return
         if is_macos:
-            # macOS: download_and_install already set phase to "dmg_ready".
-            # Do NOT SIGTERM — the user drag-installs from the DMG.
             pass
         elif is_windows:
             deps.update_checker._spawn_windows_apply_helper()
