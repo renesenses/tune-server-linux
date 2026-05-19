@@ -150,6 +150,13 @@ class DlnaOutput(OutputTarget):
             detect_dsd_from_sink_protocols(sink_protocols or [])
             or detect_dsd_from_device_info(device_name, device_model)
         )
+        # Multichannel detection: protocol info first, then device heuristic
+        from tune_server.audio.formats import detect_max_channels_from_device_info, detect_max_channels_from_sink_protocols
+        proto_channels = detect_max_channels_from_sink_protocols(sink_protocols or [])
+        device_channels = detect_max_channels_from_device_info(device_name, device_model)
+        self._max_channels = max(proto_channels, device_channels or 2)
+        if self._max_channels > 2:
+            logger.info("dlna_multichannel_detected", device=device_name, max_channels=self._max_channels)
         self._capabilities = self._build_capabilities()
         self._watchdog_task: asyncio.Task | None = None
         # Register device in buffer stats registry
@@ -167,6 +174,7 @@ class DlnaOutput(OutputTarget):
             max_sample_rate=192000,
             max_bit_depth=24,
             supports_gapless=True,
+            max_channels=self._max_channels,
         )
 
     @staticmethod

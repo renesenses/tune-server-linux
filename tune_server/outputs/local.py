@@ -95,14 +95,28 @@ class LocalOutput(OutputTarget):
     @property
     def capabilities(self) -> AudioCapabilities:
         capped_rate = min(LOCAL_CAPABILITIES.max_sample_rate, _settings.max_sample_rate)
-        if capped_rate == LOCAL_CAPABILITIES.max_sample_rate:
+        max_ch = self._detect_max_channels()
+        if capped_rate == LOCAL_CAPABILITIES.max_sample_rate and max_ch == 2:
             return LOCAL_CAPABILITIES
         return AudioCapabilities(
             formats=LOCAL_CAPABILITIES.formats,
             max_sample_rate=capped_rate,
             max_bit_depth=LOCAL_CAPABILITIES.max_bit_depth,
             supports_gapless=LOCAL_CAPABILITIES.supports_gapless,
+            max_channels=max_ch,
         )
+
+    def _detect_max_channels(self) -> int:
+        try:
+            devices = sd.query_devices()
+            if self._device_name:
+                idx = _find_device_index(self._device_name)
+                if idx is not None:
+                    return max(2, int(devices[idx]["max_output_channels"]))
+            default = sd.query_devices(kind="output")
+            return max(2, int(default["max_output_channels"]))
+        except Exception:
+            return 2
 
     @property
     def is_available(self) -> bool:
