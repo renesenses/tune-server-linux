@@ -1456,6 +1456,19 @@ async def diagnostics(errors_limit: int = Query(50, le=200)):
     import shutil
     diag["ffprobe_available"] = shutil.which(settings.ffprobe_path) is not None or Path(settings.ffprobe_path).is_file()
 
+    # Rust native engine status
+    rust_engines: dict = {"available": False}
+    try:
+        import tune_native
+        rust_engines["available"] = True
+        rust_engines["version"] = tune_native.version()
+        rust_engines["metadata_engine"] = os.environ.get("TUNE_METADATA_ENGINE", "rust")
+        rust_engines["pipeline_engine"] = os.environ.get("TUNE_PIPELINE_ENGINE", "auto")
+        rust_engines["discovery_engine"] = os.environ.get("TUNE_DISCOVERY_ENGINE", "auto")
+    except ImportError:
+        pass
+    diag["rust_engines"] = rust_engines
+
     # Disk free on DB partition
     diag["disk_free_mb"] = _disk_free_mb()
 

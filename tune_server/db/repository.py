@@ -246,7 +246,7 @@ class ArtistRepo:
                 """SELECT DISTINCT a.* FROM artists a
                    LEFT JOIN artists_fts fts ON a.id = fts.rowid AND artists_fts MATCH ?
                    WHERE fts.rowid IS NOT NULL
-                      OR a.name LIKE ?
+                      OR fold_accents(a.name) LIKE ?
                    LIMIT ?""",
                 (query + "*", like_folded, limit),
             )
@@ -640,11 +640,11 @@ class AlbumRepo:
                    LEFT JOIN artists ar ON al.artist_id = ar.id
                    LEFT JOIN albums_fts fts ON al.id = fts.rowid AND albums_fts MATCH ?
                    WHERE fts.rowid IS NOT NULL
-                      OR ar.name LIKE ?
-                      OR al.artist_name LIKE ?
-                      OR al.genre LIKE ?
+                      OR fold_accents(ar.name) LIKE ?
+                      OR fold_accents(al.artist_name) LIKE ?
+                      OR fold_accents(al.genre) LIKE ?
                       OR CAST(al.year AS TEXT) = ?
-                      OR al.label LIKE ?
+                      OR fold_accents(al.label) LIKE ?
                    LIMIT ?""",
                 (query + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, limit),
             )
@@ -991,15 +991,15 @@ class TrackRepo:
                     FROM tracks t
                     LEFT JOIN albums al ON t.album_id = al.id
                     LEFT JOIN artists ar ON t.artist_id = ar.id
-                    LEFT JOIN track_credits tc ON tc.track_id = t.id
                     LEFT JOIN tracks_fts fts ON t.id = fts.rowid AND tracks_fts MATCH ?
                     WHERE fts.rowid IS NOT NULL
-                       OR ar.name LIKE ?
-                       OR t.genre LIKE ?
-                       OR t.composer LIKE ?
+                       OR fold_accents(ar.name) LIKE ?
+                       OR fold_accents(t.genre) LIKE ?
+                       OR fold_accents(t.composer) LIKE ?
                        OR CAST(al.year AS TEXT) = ?
-                       OR tc.artist_name LIKE ?
-                       OR tc.instrument LIKE ?
+                       OR t.id IN (SELECT tc.track_id FROM track_credits tc
+                                   WHERE fold_accents(tc.artist_name) LIKE ?
+                                      OR tc.instrument LIKE ?)
                     LIMIT ?""",
                 (query + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
             )

@@ -293,7 +293,7 @@ class SAArtistRepo:
         if self._db.engine_name in ("postgres", "postgresql"):
             accent_fallback = sa.text(f"unaccent(artists.{like_col}) ILIKE :like_folded")
         else:
-            accent_fallback = sa.text(f"artists.{like_col} LIKE :like_folded")
+            accent_fallback = sa.text(f"fold_accents(artists.{like_col}) LIKE :like_folded")
         stmt = (
             sa.select(artists)
             .where(sa.or_(where_clause, accent_fallback))
@@ -667,7 +667,7 @@ class SAAlbumRepo:
         if self._db.engine_name in ("postgres", "postgresql"):
             accent_fallback = sa.text("unaccent(albums.title) ILIKE :like_folded")
         else:
-            accent_fallback = sa.text("albums.title LIKE :like_folded")
+            accent_fallback = sa.text("fold_accents(albums.title) LIKE :like_folded")
         stmt = (
             self._album_select()
             .where(sa.or_(where_clause, accent_fallback))
@@ -944,7 +944,7 @@ class SATrackRepo:
         if self._db.engine_name in ("postgres", "postgresql"):
             accent_fallback = sa.text("unaccent(tracks.title) ILIKE :like_folded")
         else:
-            accent_fallback = sa.text("tracks.title LIKE :like_folded")
+            accent_fallback = sa.text("fold_accents(tracks.title) LIKE :like_folded")
         stmt = (
             self._track_select()
             .where(sa.or_(where_clause, accent_fallback))

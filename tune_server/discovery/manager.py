@@ -10,6 +10,11 @@ from tune_server.discovery.bluos import BluosDiscovery
 from tune_server.discovery.cast import CastDiscovery
 from tune_server.discovery.mdns import MdnsDiscovery
 from tune_server.discovery.openhome import OpenHomeDiscovery
+from tune_server.discovery.rust_discovery import (
+    RustMdnsBackend,
+    RustSsdpBackend,
+    rust_discovery_available,
+)
 from tune_server.discovery.squeezebox import SqueezeboxDiscovery
 from tune_server.discovery.ssdp import SsdpDiscovery
 from tune_server.discovery.tune_discovery import TuneDiscovery
@@ -21,6 +26,8 @@ if TYPE_CHECKING:
     from tune_server.discovery.network_shares import NetworkShareDiscovery
 
 logger = structlog.get_logger()
+
+_USE_RUST = rust_discovery_available()
 
 
 class DiscoveryManager:
@@ -38,6 +45,24 @@ class DiscoveryManager:
         self._tune = TuneDiscovery(event_bus) if settings.peer_discovery_enabled else None
         self._network_shares: NetworkShareDiscovery | None = None
         self._media_servers: MediaServerDiscovery | None = None
+
+        self._rust_ssdp: RustSsdpBackend | None = None
+        self._rust_mdns: RustMdnsBackend | None = None
+        if _USE_RUST:
+            if settings.ssdp_enabled:
+                self._rust_ssdp = RustSsdpBackend(event_bus)
+            if settings.mdns_enabled:
+                self._rust_mdns = RustMdnsBackend(
+                    event_bus,
+                    airplay=settings.mdns_enabled,
+                    bluos=getattr(settings, 'bluos_enabled', True),
+                    chromecast=getattr(settings, 'cast_enabled', True),
+                    squeezebox=getattr(settings, 'squeezebox_enabled', True),
+                    tune_peers=settings.peer_discovery_enabled,
+                )
+            logger.info("discovery_engine", engine="rust")
+        else:
+            logger.info("discovery_engine", engine="python")
 
         if settings.network_shares_enabled:
             from tune_server.discovery.network_shares import NetworkShareDiscovery as NSDisc
@@ -76,6 +101,14 @@ class DiscoveryManager:
         return self._tune
 
     @property
+    def rust_ssdp(self) -> RustSsdpBackend | None:
+        return self._rust_ssdp
+
+    @property
+    def rust_mdns(self) -> RustMdnsBackend | None:
+        return self._rust_mdns
+
+    @property
     def network_shares(self) -> NetworkShareDiscovery | None:
         return self._network_shares
 
@@ -87,6 +120,12 @@ class DiscoveryManager:
         if not settings.discovery_enabled:
             logger.info("discovery_disabled")
             return
+
+        # Rust backends: fast parallel discovery via native sockets
+        if self._rust_ssdp:
+            await self._rust_ssdp.start()
+        if self._rust_mdns:
+            await self._rust_mdns.start()
 
         # Create a shared Zeroconf instance for mDNS + Cast + BluOS + Squeezebox + Tune
         # peer discovery to avoid port 5353 conflicts from multiple instances.
@@ -119,6 +158,10 @@ class DiscoveryManager:
         logger.info("discovery_manager_started")
 
     async def stop(self) -> None:
+        if self._rust_ssdp:
+            await self._rust_ssdp.stop()
+        if self._rust_mdns:
+            await self._rust_mdns.stop()
         if self._ssdp:
             await self._ssdp.stop()
         if self._mdns:
@@ -148,6 +191,10 @@ class DiscoveryManager:
 
     def list_devices(self) -> list[DiscoveredDevice]:
         devices: list[DiscoveredDevice] = []
+        if self._rust_ssdp:
+            devices.extend(self._rust_ssdp.devices.values())
+        if self._rust_mdns:
+            devices.extend(self._rust_mdns.devices.values())
         if self._ssdp:
             devices.extend(self._ssdp.devices.values())
         if self._mdns:
@@ -198,6 +245,8 @@ class DiscoveryManager:
         """Force an immediate rescan of all discovery sources."""
         logger.info("discovery_rescan_requested")
         tasks = []
+        if self._rust_ssdp:
+            tasks.append(self._rust_ssdp.rescan())
         if self._ssdp:
             tasks.append(self._ssdp.rescan())
         if self._mdns:
@@ -215,6 +264,14 @@ class DiscoveryManager:
         return self.list_devices()
 
     def get_device(self, device_id: str) -> DiscoveredDevice | None:
+        if self._rust_ssdp:
+            dev = self._rust_ssdp.devices.get(device_id)
+            if dev:
+                return dev
+        if self._rust_mdns:
+            dev = self._rust_mdns.devices.get(device_id)
+            if dev:
+                return dev
         if self._ssdp:
             dev = self._ssdp.devices.get(device_id)
             if dev:

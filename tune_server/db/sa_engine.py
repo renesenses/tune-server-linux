@@ -124,9 +124,10 @@ class SADatabase:
 
         self._engine = create_async_engine(self._sa_url, **engine_kwargs)
 
-        # Set SQLite PRAGMAs
+        # Set SQLite PRAGMAs and custom functions
         if self.engine_name == "sqlite":
             from sqlalchemy import event
+            from tune_server.utils import fold_accents as _fold
 
             @event.listens_for(self._engine.sync_engine, "connect")
             def _set_sqlite_pragmas(dbapi_conn, _):
@@ -136,6 +137,7 @@ class SADatabase:
                 cursor.execute("PRAGMA synchronous=NORMAL")
                 cursor.execute("PRAGMA busy_timeout=5000")
                 cursor.close()
+                dbapi_conn.create_function("fold_accents", 1, lambda v: _fold(v) if v else v)
 
         # Backup the SQLite file BEFORE any schema changes so a botched
         # migration is recoverable. PostgreSQL users have pg_dump; we don't
