@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -129,16 +130,22 @@ def _list_audio_files(dir_path: Path) -> list[Path]:
             return [Path(p) for p in _rust_list([str(dir_path)])]
         except Exception:
             pass
-    try:
-        return [
-            f for f in dir_path.rglob("*")
-            if f.suffix.lower() in SUPPORTED_EXTENSIONS
-            and not any(skip in f.parts for skip in SKIP_DIRS)
-            and not f.name.startswith("._")
-        ]
-    except PermissionError as e:
-        logger.debug("list_audio_files_permission_denied", path=str(dir_path), error=str(e))
-        return []
+
+    def _onerror(exc: OSError) -> None:
+        logger.debug("list_audio_files_permission_denied", path=str(exc.filename), error=str(exc))
+
+    result: list[Path] = []
+    for root, dirs, files in os.walk(dir_path, topdown=True, onerror=_onerror):
+        # Prune skip dirs in-place so os.walk never descends into them
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        root_path = Path(root)
+        for name in files:
+            if name.startswith("._"):
+                continue
+            f = root_path / name
+            if f.suffix.lower() in SUPPORTED_EXTENSIONS:
+                result.append(f)
+    return result
 
 
 class LibraryScanner:
