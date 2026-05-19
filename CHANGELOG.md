@@ -2,7 +2,43 @@
 
 All notable changes to Tune Server.
 
+## v0.7.115 — 2026-05-19
+
+### Added
+- **Source install update button** — installations source (git) peuvent se mettre à jour via le bouton MAJ (git pull + pip install + restart systemd).
+- **Docker multi-arch** — image amd64 + arm64 (Raspberry Pi, Apple Silicon via Docker).
+- **VPS auto-publish** — le workflow CI publie automatiquement sur mozaiklabs.fr/download après le build.
+
+### Fixed
+- **FTS5 crash** — titres avec parenthèses ou AND/OR/NOT ne crashent plus la recherche (`sanitize_fts_query`).
+- **fold_accents UDF** — enregistrée dans le moteur SQLite brut (corrige "no such function" en recherche).
+- **Chromecast Nest Hub** — barre de progression fonctionnelle (durée via media_info).
+- **Tests CI** — formats WavPack/APE, enum OutputType, backup path corrigés.
+
+### Improved
+- **Smart playlists** — limite relevée de 200 à 5 000 pistes.
+- **Tidal favorites** — accès aux albums, artistes et pistes favoris.
+
+---
+
 ## v0.7.114 — 2026-05-19
+
+> **Multichannel Audio Support** (Windows & Linux)
+
+---
+
+## v0.7.113 — 2026-05-19
+
+### Added
+- **Recherche accent-insensitive** — « Bécaud » trouve « Becaud » et vice versa (artistes, genres, compositeurs, labels).
+- **Bouton MAJ** pour installations source (git pull + pip install + restart).
+
+### Fixed
+- **Genres préservés** — Hard Rock, Progressive Rock, Classic Rock, Alternative ne sont plus écrasés vers le genre parent.
+- **Web mobile** — layout responsive corrigé sous 480px.
+- **PostgreSQL** — fix recherche artistes (DISTINCT retiré pour asyncpg).
+
+---
 
 ### Added
 - **Accent-insensitive search** — "carlao" finds "carlão", "resume" finds "résumé". Custom SQLite `fold_accents` function for LIKE fallback.
