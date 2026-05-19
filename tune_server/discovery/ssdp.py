@@ -298,11 +298,17 @@ class SsdpDiscovery:
                         discovered.add(usn)
 
                         try:
-                            # If already registered via a previous search target, skip
                             dev_id = usn or location
                             async with self._lock:
                                 if dev_id in self._devices and self._devices[dev_id].available:
                                     return
+                                # Check if same host+port already registered under a different ID
+                                _parsed_loc = urlparse(location)
+                                _loc_host = _parsed_loc.hostname or ""
+                                for _eid, _edev in self._devices.items():
+                                    if _edev.host == _loc_host and _edev.available and _eid != dev_id:
+                                        dev_id = _eid
+                                        return
 
                             if is_openhome and not is_media_renderer:
                                 logger.info(
