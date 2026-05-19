@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     dlna_slow_retry_timeout_ms: int = 3000          # ms, wait for position > 0 before retrying
     dlna_slow_max_retries: int = 2                  # max retry attempts for slow renderers
 
+    # Multichannel / Surround
+    downmix_policy: str = "auto"  # "auto", "stereo_always", "passthrough"
+    downmix_matrix: str = ""  # Custom FFmpeg pan filter override for downmix
+
     # Crossfade
     crossfade_enabled: bool = False
     crossfade_duration: float = 3.0  # seconds

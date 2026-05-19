@@ -11,6 +11,7 @@ class AudioCapabilities:
     max_sample_rate: int
     max_bit_depth: int
     supports_gapless: bool = False
+    max_channels: int = 2
 
 
 # Common capability profiles
@@ -85,8 +86,11 @@ def can_passthrough(
     source_sample_rate: int,
     source_bit_depth: int,
     target_caps: AudioCapabilities,
+    source_channels: int = 2,
 ) -> bool:
     if source_format not in target_caps.formats:
+        return False
+    if source_channels > target_caps.max_channels:
         return False
     # DSD is 1-bit at MHz rates — skip normal rate/depth checks
     if source_format == AudioFormat.DSD:
@@ -201,6 +205,58 @@ _DSD_CAPABLE_PATTERNS = [
     "accuphase",  # Accuphase DP/DC series
     "ps audio",   # PS Audio DirectStream
 ]
+
+
+def build_downmix_filter(source_channels: int, target_channels: int, custom_matrix: str = "") -> str | None:
+    """Build FFmpeg -af filter for channel downmix. Returns None if no downmix needed."""
+    if source_channels <= target_channels:
+        return None
+    if custom_matrix:
+        return custom_matrix
+    # ITU-R BS.775 standard 5.1→stereo downmix
+    if source_channels >= 6 and target_channels == 2:
+        return "pan=stereo|c0=FL+0.707*FC+0.707*BL|c1=FR+0.707*FC+0.707*BR"
+    if source_channels >= 6 and target_channels == 1:
+        return "pan=mono|c0=0.5*FL+0.5*FR+0.707*FC+0.354*BL+0.354*BR"
+    # Generic fallback: let FFmpeg handle it via -ac
+    return None
+
+
+# Known multichannel-capable device name/model patterns (case-insensitive)
+_MULTICHANNEL_CAPABLE_PATTERNS: dict[str, int] = {
+    "marantz": 8,
+    "denon": 8,
+    "yamaha": 8,
+    "pioneer": 8,
+    "onkyo": 8,
+    "nad": 8,
+    "anthem": 8,
+    "arcam": 8,
+    "sonos arc": 6,
+    "sonos beam": 6,
+    "samsung": 6,
+}
+
+
+def detect_max_channels_from_device_info(name: str, model: str) -> int | None:
+    """Heuristic: check device name/model against known multichannel-capable devices."""
+    combined = f"{name} {model}".lower()
+    for pattern, channels in _MULTICHANNEL_CAPABLE_PATTERNS.items():
+        if pattern in combined:
+            return channels
+    return None
+
+
+def detect_max_channels_from_sink_protocols(sink_protocols: list[str]) -> int:
+    """Parse DLNA sink protocol entries for max channel count."""
+    max_ch = 2
+    import re
+    _ch_re = re.compile(r"channels=(\d+)")
+    for entry in sink_protocols:
+        m = _ch_re.search(entry.lower())
+        if m:
+            max_ch = max(max_ch, int(m.group(1)))
+    return max_ch
 
 
 def detect_dsd_from_sink_protocols(sink_protocols: list[str]) -> bool:

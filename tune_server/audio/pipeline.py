@@ -8,7 +8,7 @@ import structlog
 
 from tune_server.audio.buffer import AsyncRingBuffer
 from tune_server.audio.decoder import FFmpegDecoder, IcyMetadataCallback
-from tune_server.audio.formats import AudioCapabilities, can_passthrough
+from tune_server.audio.formats import AudioCapabilities, build_downmix_filter, can_passthrough
 from tune_server.models import AudioFormat, AudioStreamInfo
 
 logger = structlog.get_logger()
@@ -89,9 +89,24 @@ class AudioPipeline:
     ) -> AudioStreamInfo:
         # Check if we can do passthrough
         self._passthrough = can_passthrough(
-            source_format, sample_rate, bit_depth, self._capabilities
+            source_format, sample_rate, bit_depth, self._capabilities, channels
         )
-        self._decisions.append(f"can_passthrough={self._passthrough} (format={source_format}, rate={sample_rate}, depth={bit_depth})")
+        self._decisions.append(f"can_passthrough={self._passthrough} (format={source_format}, rate={sample_rate}, depth={bit_depth}, ch={channels})")
+
+        # Multichannel downmix
+        from tune_server.config import settings as _cfg
+        if _cfg.downmix_policy == "stereo_always":
+            out_channels = min(channels, 2)
+        elif _cfg.downmix_policy == "passthrough":
+            out_channels = channels
+        else:  # auto
+            out_channels = min(channels, self._capabilities.max_channels)
+
+        downmix_filter: str | None = None
+        if out_channels < channels:
+            downmix_filter = build_downmix_filter(channels, out_channels, _cfg.downmix_matrix)
+            self._decisions.append(f"downmix: {channels}ch→{out_channels}ch" + (f" (filter={downmix_filter})" if downmix_filter else " (via -ac)"))
+            self._passthrough = False
 
         _is_url = file_path.startswith("http://") or file_path.startswith("https://")
         if _is_url:
@@ -111,19 +126,19 @@ class AudioPipeline:
             self._decisions.append(f"passthrough=False (extra_filters={extra_filters})")
 
         # Resample policy check
-        from tune_server.config import settings as _settings
-        if not self._passthrough and _settings.resample_policy == "never":
+        if not self._passthrough and _cfg.resample_policy == "never":
             needs_resample = sample_rate > self._capabilities.max_sample_rate or bit_depth > self._capabilities.max_bit_depth
             if needs_resample and source_format in self._capabilities.formats:
                 self._decisions.append(f"resample_policy=never — refusing incompatible rate/depth, forcing passthrough")
                 self._passthrough = True
 
         if self._passthrough:
-            self._decisions.append(f"PASSTHROUGH: {source_format} {sample_rate}Hz/{bit_depth}bit — no processing")
+            self._decisions.append(f"PASSTHROUGH: {source_format} {sample_rate}Hz/{bit_depth}bit/{channels}ch — no processing")
             logger.info(
                 "pipeline_passthrough",
                 format=source_format,
                 sample_rate=sample_rate,
+                channels=channels,
             )
             file_size = Path(file_path).stat().st_size if Path(file_path).exists() else 0
             self._stream_info = AudioStreamInfo(
@@ -150,7 +165,7 @@ class AudioPipeline:
                 out_depth = min(bit_depth, self._capabilities.max_bit_depth)
 
                 # Integer ratio resampling preference
-                if _settings.resample_policy == "integer_ratio" and out_rate != sample_rate:
+                if _cfg.resample_policy == "integer_ratio" and out_rate != sample_rate:
                     integer_rates = [r for r in _441_FAMILY + [384000, 192000, 96000, 48000] if r <= self._capabilities.max_sample_rate and sample_rate % r == 0 or r % sample_rate == 0]
                     if integer_rates:
                         out_rate = max(r for r in integer_rates if r <= self._capabilities.max_sample_rate)
@@ -183,18 +198,23 @@ class AudioPipeline:
                 format=out_format,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
-                channels=channels,
+                channels=out_channels,
             )
+
+            # Merge downmix filter into channel_filter chain
+            effective_channel_filter = self._channel_filter
+            if downmix_filter:
+                effective_channel_filter = f"{downmix_filter},{self._channel_filter}" if self._channel_filter else downmix_filter
 
             # Decoder: source file → PCM or encoded format
             self._decoder = FFmpegDecoder(
                 file_path=file_path,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
-                channels=channels,
+                channels=out_channels,
                 output_format=out_format if use_flac else None,
                 icy_callback=self._icy_callback if _is_url else None,
-                channel_filter=self._channel_filter,
+                channel_filter=effective_channel_filter,
                 extra_filters=extra_filters,
             )
             await self._decoder.start(seek_ms=seek_ms)
@@ -317,12 +337,25 @@ try:
             extra_filters: str | None = None,
         ) -> AudioStreamInfo:
             _is_url = file_path.startswith("http://") or file_path.startswith("https://")
+
+            # Multichannel downmix
+            from tune_server.config import settings as _cfg
+            if _cfg.downmix_policy == "stereo_always":
+                out_channels = min(channels, 2)
+            elif _cfg.downmix_policy == "passthrough":
+                out_channels = channels
+            else:
+                out_channels = min(channels, self._capabilities.max_channels)
+
+            needs_downmix = out_channels < channels
+
             self._passthrough = (
-                can_passthrough(source_format, sample_rate, bit_depth, self._capabilities)
+                can_passthrough(source_format, sample_rate, bit_depth, self._capabilities, channels)
                 and not _is_url
                 and seek_ms == 0
                 and not self._channel_filter
                 and not extra_filters
+                and not needs_downmix
             )
 
             if self._passthrough:
@@ -337,6 +370,9 @@ try:
                 self._decisions.append(f"PASSTHROUGH: {source_format}")
                 return self._stream_info
 
+            if needs_downmix:
+                self._decisions.append(f"downmix: {channels}ch→{out_channels}ch")
+
             from tune_server.audio.formats import best_output_format
             out_fmt = best_output_format(source_format, sample_rate, bit_depth, self._capabilities)
             out_rate = min(sample_rate, self._capabilities.max_sample_rate)
@@ -345,7 +381,7 @@ try:
             fmt_str = out_fmt.value if hasattr(out_fmt, 'value') else str(out_fmt)
 
             self._rust_pipeline = _rust.RustPipeline(
-                file_path, fmt_str, out_rate, out_depth, channels,
+                file_path, fmt_str, out_rate, out_depth, out_channels,
                 seek_ms if seek_ms > 0 else None, 512,
             )
             await asyncio.to_thread(self._rust_pipeline.start)
@@ -354,9 +390,9 @@ try:
                 format=out_fmt,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
-                channels=channels,
+                channels=out_channels,
             )
-            self._decisions.append(f"RUST: {source_format}→{out_fmt} {out_rate}Hz/{out_depth}bit")
+            self._decisions.append(f"RUST: {source_format}→{out_fmt} {out_rate}Hz/{out_depth}bit/{out_channels}ch")
 
             self._feed_task = asyncio.create_task(self._feed_loop())
             return self._stream_info
