@@ -890,8 +890,11 @@ class SATrackRepo:
         return [_row_to_track(r) for r in ordered]
 
     async def create(self, track: Track) -> int:
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-        stmt = sqlite_insert(tracks).values(
+        if self._db.engine_name == "postgres":
+            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+        stmt = dialect_insert(tracks).values(
                 title=track.title,
                 album_id=track.album_id,
                 artist_id=track.artist_id,

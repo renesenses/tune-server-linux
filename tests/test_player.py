@@ -524,8 +524,8 @@ class TestGaplessPreBuffering:
         await player.play(tracks=tracks)
         await asyncio.sleep(0.05)
 
-        # Gapless handler was created but supports_gapless is False on AIRPLAY_CAPABILITIES
-        assert not output.capabilities.supports_gapless
+        # AirPlay now supports gapless (pre-transcode next track)
+        assert output.capabilities.supports_gapless
 
         pipeline.output_buffer.close()
         await player.stop()

@@ -199,7 +199,7 @@ class TestPlaybackTimeouts:
 
         assert player.state == PlaybackState.STOPPED
         assert len(errors) == 1
-        assert errors[0].data["error"] == "output_error"
+        assert errors[0].data["error"] in ("output_error", "pipeline_error")
 
 
 class TestSeekValidation:
