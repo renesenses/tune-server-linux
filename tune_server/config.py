@@ -15,6 +15,16 @@ def _detect_base_dir() -> Path:
     return Path.cwd()
 
 
+def _env_file_candidates() -> list[str]:
+    """Build ordered list of .env paths: exe dir, %LOCALAPPDATA%/Tune, CWD."""
+    candidates = [str(_detect_base_dir() / ".env")]
+    if sys.platform == "win32":
+        local = Path.home() / "AppData" / "Local" / "Tune" / ".env"
+        candidates.append(str(local))
+    candidates.append(".env")
+    return candidates
+
+
 def _detect_web_dir() -> str | None:
     """Auto-detect web/ directory next to the binary or in _internal/."""
     base = _detect_base_dir()
@@ -37,7 +47,7 @@ def _detect_bin(name: str) -> str:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="TUNE_",
-        env_file=[str(_detect_base_dir() / ".env"), ".env"],
+        env_file=_env_file_candidates(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
