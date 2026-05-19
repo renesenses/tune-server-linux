@@ -327,7 +327,9 @@ class LibraryScanner:
             if stored_mtime and file_mtime <= stored_mtime:
                 stored_size = row["file_size"] if row else None
                 if stored_size is not None and file_size == stored_size:
-                    return  # File truly unchanged
+                    # File truly unchanged — but backfill album cover if missing
+                    await self._backfill_missing_cover(path_str)
+                    return
                 # Size mismatch (or no stored size yet) — backfill or re-read
                 if stored_size is None:
                     # First scan after migration: just store the size, no re-read
@@ -346,6 +348,35 @@ class LibraryScanner:
         added = await self._rescan_file(path_str)
         if added:
             stats["updated"] += 1
+
+    async def _backfill_missing_cover(self, file_path: str) -> None:
+        """Fetch and store cover art for albums whose cover_path is NULL.
+
+        Called for unchanged files so that covers are filled in even when
+        artwork extraction previously failed (e.g. after a bug-fix deploy).
+        """
+        async with self._lock:
+            album_row = await self._db.fetchone(
+                "SELECT a.id, a.cover_path FROM albums a "
+                "JOIN tracks t ON t.album_id = a.id "
+                "WHERE t.file_path = ?",
+                (file_path,),
+            )
+        if not album_row or album_row["cover_path"]:
+            return
+        cover_path = await asyncio.to_thread(get_album_artwork, file_path)
+        if not cover_path:
+            cover_path = await asyncio.to_thread(
+                fetch_cover_from_musicbrainz,
+                None, None, settings.artwork_cache_dir,
+            ) if False else None  # skip MusicBrainz — no metadata available here
+        if cover_path:
+            async with self._lock:
+                album = await self._album_repo.get(album_row["id"])
+                if album and not album.cover_path:
+                    album.cover_path = cover_path
+                    await self._album_repo.update(album)
+            logger.info("album_cover_backfilled", album_id=album_row["id"], cover=cover_path)
 
     async def _process_new_file(self, file_path: str) -> bool:
         """Process a new file: read metadata & artwork outside lock, write DB under lock."""

@@ -44,9 +44,50 @@ def _hash_path(file_path: str) -> str:
     return hashlib.md5(file_path.encode()).hexdigest()
 
 
+def _extract_wavpack_cover(file_path: str) -> Optional[bytes]:
+    """Extract cover art from a WavPack file whose audio-info block mutagen
+    cannot parse (e.g. 384 kHz custom-rate files).  Reads APEv2 binary items
+    ('Cover Art (Front)' etc.) directly, without touching stream info.
+    Falls back to folder image files if no embedded art is found."""
+    try:
+        from mutagen.apev2 import APEv2, APENoHeaderError
+        ape = APEv2(file_path)
+        for key in ape:
+            if "cover art" in key.lower():
+                raw = bytes(ape[key])
+                # APEv2 binary cover: <filename>\x00<image bytes>
+                nul = raw.find(b"\x00")
+                if nul != -1:
+                    data = raw[nul + 1:]
+                    if data:
+                        return data
+                elif raw:
+                    return raw
+    except Exception:
+        pass
+
+    # Folder image fallback
+    _cover_names = {"cover", "folder", "front", "album", "artwork", "thumb"}
+    _cover_exts = {".jpg", ".jpeg", ".png", ".webp"}
+    try:
+        for child in Path(file_path).parent.iterdir():
+            if child.is_file() and child.stem.lower() in _cover_names and child.suffix.lower() in _cover_exts:
+                return child.read_bytes()
+    except Exception:
+        pass
+    return None
+
+
 def extract_cover_art(file_path: str) -> Optional[bytes]:
     try:
-        audio = MutagenFile(file_path)
+        try:
+            audio = MutagenFile(file_path)
+        except IndexError:
+            # mutagen's WavPack RATES table doesn't cover non-standard sample
+            # rates (e.g. 384 kHz).  Try APEv2 binary cover art, then folder.
+            if Path(file_path).suffix.lower() == ".wv":
+                return _extract_wavpack_cover(file_path)
+            raise
         if audio is None:
             return None
 

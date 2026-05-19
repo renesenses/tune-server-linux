@@ -322,6 +322,191 @@ def _use_rust_engine() -> bool:
     return engine != "python"
 
 
+def _read_wavpack_fallback(file_path: str) -> Optional[TrackMetadata]:
+    """Fallback for WavPack files with non-standard sample rates (e.g. 384 kHz)
+    whose flags index falls outside mutagen's hardcoded RATES table.
+    Tags are read via mutagen.apev2.APEv2 (no audio-info parsing);
+    audio stream info is obtained from ffprobe.
+    """
+    import json
+    import re
+    import subprocess
+    from mutagen.apev2 import APEv2, APENoHeaderError
+
+    path = Path(file_path)
+
+    # 1. Read APEv2 tags without touching audio stream info
+    raw_tags: dict[str, str] = {}
+    try:
+        ape = APEv2(file_path)
+        for k, v in ape.items():
+            raw_tags[k.lower()] = str(v)
+    except APENoHeaderError:
+        pass
+    except Exception:
+        logger.debug("wavpack_ape_tag_read_failed", path=file_path)
+
+    def _tag(*keys: str) -> str:
+        for k in keys:
+            val = raw_tags.get(k.lower())
+            if val:
+                return _clean_text(val)
+        return ""
+
+    # 2. Get audio stream info via ffprobe
+    sample_rate = 44100
+    bit_depth = 32
+    duration_ms = 0
+    channels = 2
+    try:
+        try:
+            from tune_server.config import settings
+            ffprobe_bin = settings.ffprobe_path
+        except Exception:
+            ffprobe_bin = "ffprobe"
+        result = subprocess.run(
+            [
+                ffprobe_bin, "-hide_banner", "-loglevel", "error",
+                "-show_streams", "-select_streams", "a:0",
+                "-show_format", "-print_format", "json", file_path,
+            ],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            streams = data.get("streams", [])
+            if streams:
+                s = streams[0]
+                sample_rate = int(s.get("sample_rate") or 44100)
+                bit_depth = int(
+                    s.get("bits_per_raw_sample")
+                    or s.get("bits_per_sample")
+                    or 32
+                )
+                channels = int(s.get("channels") or 2)
+                dur = s.get("duration") or data.get("format", {}).get("duration")
+                if dur:
+                    duration_ms = int(float(dur) * 1000)
+    except Exception:
+        logger.warning("wavpack_ffprobe_probe_failed", path=file_path)
+
+    # 3. Parse tag fields
+    # APEv2 uses "Album Artist" (with space) or "Albumartist" depending on tagger
+    title = _tag("title") or path.stem
+    artist = _tag("artist") or None
+    album = _tag("album") or None
+    album_artist = _tag("album artist", "albumartist") or None
+    album_artist_sort = _tag("albumartistsort", "album artist sort") or None
+    compilation_tag = _tag("compilation")
+    is_compilation = compilation_tag in ("1", "true", "True")
+    track_num = _parse_int(_tag("track"))
+    disc_num = _parse_int(_tag("disc", "discnumber"), 1)
+    disc_subtitle = _tag("discsubtitle", "disc subtitle", "setsubtitle") or None
+    original_year_str = _tag("originaldate", "originalyear")
+    year_str = _tag("year", "date")
+    genre = _tag("genre") or None
+    label = _tag("label", "publisher", "organization") or None
+    catalog_number = _tag("catalognumber", "catalogno") or None
+
+    bpm_value = None
+    try:
+        raw_bpm = _tag("bpm") or None
+        if raw_bpm:
+            bpm_value = float(raw_bpm)
+            if bpm_value <= 0 or bpm_value > 999:
+                bpm_value = None
+    except (ValueError, TypeError):
+        bpm_value = None
+
+    year = None
+    if year_str:
+        try:
+            year = int(str(year_str)[:4])
+        except (ValueError, TypeError):
+            pass
+    original_year = None
+    if original_year_str:
+        try:
+            original_year = int(str(original_year_str)[:4])
+        except (ValueError, TypeError):
+            pass
+
+    release_date = str(year_str).strip() if year_str and len(str(year_str).strip()) > 4 else None
+    original_date = str(original_year_str).strip() if original_year_str and len(str(original_year_str).strip()) > 4 else None
+
+    # Filename fallback when no tags
+    if title == path.stem:
+        # Vinyl side notation: "A1. Artist - Title" or "B2 - Artist - Title"
+        # Side letter → disc number (A=1, B=2, C=3, …)
+        mv = re.match(r"^([A-Za-z])(\d+)[.\s]+(.+?)\s*[-–]\s*(.+)$", title)
+        if mv and track_num == 0:
+            disc_num = ord(mv.group(1).upper()) - ord('A') + 1
+            track_num = int(mv.group(2))
+            if not artist:
+                artist = mv.group(3).strip()
+            title = mv.group(4).strip()
+        else:
+            m = re.match(r"^(\d{1,3})\s*[-–.]\s*(.+?)\s*[-–]\s*(.+)$", title)
+            if m:
+                if track_num == 0:
+                    track_num = int(m.group(1))
+                if not artist:
+                    artist = m.group(2).strip()
+                title = m.group(3).strip()
+            else:
+                m2 = re.match(r"^(\d{1,3})\s*[-–.]\s*(.+)$", title)
+                if m2:
+                    if track_num == 0:
+                        track_num = int(m2.group(1))
+                    title = m2.group(2).strip()
+        if not album:
+            album = path.parent.name
+        if not artist:
+            grandparent = path.parent.parent.name
+            if grandparent and grandparent not in ("music", "data", "/"):
+                artist = grandparent
+
+    logger.warning(
+        "wavpack_mutagen_fallback",
+        path=file_path,
+        sample_rate=sample_rate,
+        bit_depth=bit_depth,
+    )
+
+    return TrackMetadata(
+        title=str(title) if title else "",
+        artist=str(artist) if artist else None,
+        album=str(album) if album else None,
+        album_artist=str(album_artist) if album_artist else None,
+        album_artist_sort=str(album_artist_sort) if album_artist_sort else None,
+        track_number=track_num,
+        disc_number=disc_num,
+        year=year,
+        original_year=original_year,
+        genre=str(genre) if genre else None,
+        duration_ms=duration_ms,
+        format="wv",
+        sample_rate=sample_rate or 44100,
+        bit_depth=bit_depth or 32,
+        channels=channels or 2,
+        has_cover=False,
+        label=_clean_text(str(label)) if label else None,
+        catalog_number=_clean_text(str(catalog_number)) if catalog_number else None,
+        bpm=bpm_value,
+        credits=None,
+        disc_subtitle=_clean_text(str(disc_subtitle)) if disc_subtitle else None,
+        musicbrainz_recording_id=None,
+        musicbrainz_release_id=None,
+        musicbrainz_artist_id=None,
+        musicbrainz_album_artist_id=None,
+        musicbrainz_release_group_id=None,
+        release_date=release_date,
+        original_date=original_date,
+        compilation=is_compilation,
+    )
+
+
 def read_metadata(file_path: str) -> Optional[TrackMetadata]:
     if _use_rust_engine():
         try:
@@ -337,7 +522,15 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
         return None
 
     try:
-        audio = MutagenFile(file_path)
+        try:
+            audio = MutagenFile(file_path)
+        except IndexError:
+            # mutagen's WavPack parser has a fixed RATES table that doesn't cover
+            # non-standard sample rates (e.g. 384 kHz stored as custom rate in
+            # WavPack 5 blocks).  Fall back to the ffprobe-based reader.
+            if path.suffix.lower() == ".wv":
+                return _read_wavpack_fallback(file_path)
+            raise
         if audio is None:
             logger.warning("mutagen_unsupported", path=file_path)
             return None
