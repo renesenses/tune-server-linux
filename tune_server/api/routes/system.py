@@ -1971,9 +1971,10 @@ async def get_changelog(limit: int = Query(5, le=20)):
             else:
                 current["_section"] = "improvements"
             continue
-        item = re.match(r"^[-*]\s+\*?\*?(.+?)(?:\*?\*?)$", line.strip())
+        item = re.match(r"^[-*]\s+(.+)$", line.strip())
         if item and current.get("_section"):
-            current[current["_section"]].append(item.group(1).strip().strip("*").strip())
+            text = re.sub(r"\*\*(.+?)\*\*", r"\1", item.group(1)).strip()
+            current[current["_section"]].append(text)
 
     if current and len(entries) < limit:
         entries.append(current)
