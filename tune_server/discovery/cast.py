@@ -143,16 +143,21 @@ class CastDiscovery:
             self._devices[device_id] = device
 
             def _connect():
-                try:
-                    result, _ = self._pychromecast.get_listed_chromecasts(
-                        friendly_names=[friendly], zeroconf_instance=self._zc
-                    )
-                    if result:
-                        cc = result[0]
-                        cc.wait(timeout=10)
-                        return cc
-                except Exception:
-                    logger.debug("cast_connect_failed", name=friendly)
+                for attempt in range(3):
+                    try:
+                        result, _ = self._pychromecast.get_listed_chromecasts(
+                            friendly_names=[friendly], zeroconf_instance=self._zc
+                        )
+                        if result:
+                            cc = result[0]
+                            cc.wait(timeout=15)
+                            return cc
+                    except Exception:
+                        logger.debug("cast_connect_attempt_failed", name=friendly,
+                                     attempt=attempt + 1)
+                        if attempt < 2:
+                            import time
+                            time.sleep(2)
                 return None
 
             cast = await asyncio.to_thread(_connect)

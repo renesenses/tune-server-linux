@@ -330,7 +330,16 @@ class SsdpDiscovery:
 
                             dmr = DmrDevice(device, event_handler=None)
 
-                            name = device.friendly_name or "Unknown DLNA"
+                            import re as _re
+                            _raw_name = device.friendly_name or ""
+                            _is_uuid = bool(_re.fullmatch(
+                                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                                _raw_name, _re.IGNORECASE,
+                            ))
+                            if _is_uuid or not _raw_name:
+                                name = device.model_name or device.device_type or _raw_name or "Unknown DLNA"
+                            else:
+                                name = _raw_name
                             parsed = urlparse(device.device_url or location)
 
                             # Query sink protocol info for format detection
