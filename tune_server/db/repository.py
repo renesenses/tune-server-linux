@@ -799,7 +799,7 @@ class TrackRepo:
 
     async def create(self, track: Track) -> int:
         result = await self._db.execute(
-            """INSERT INTO tracks (title, album_id, artist_id, disc_number,
+            """INSERT OR IGNORE INTO tracks (title, album_id, artist_id, disc_number,
                disc_subtitle, track_number, duration_ms, file_path, format,
                sample_rate, bit_depth, channels, source, source_id,
                musicbrainz_recording_id)

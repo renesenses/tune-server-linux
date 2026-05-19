@@ -890,8 +890,8 @@ class SATrackRepo:
         return [_row_to_track(r) for r in ordered]
 
     async def create(self, track: Track) -> int:
-        result = await self._db.sa_execute(
-            tracks.insert().values(
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+        stmt = sqlite_insert(tracks).values(
                 title=track.title,
                 album_id=track.album_id,
                 artist_id=track.artist_id,
@@ -908,8 +908,8 @@ class SATrackRepo:
                 channels=track.channels or 2,
                 source=track.source or "local",
                 source_id=track.source_id,
-            )
-        )
+        ).on_conflict_do_nothing()
+        result = await self._db.sa_execute(stmt)
         return result.lastrowid
 
     async def update(self, track: Track) -> None:
