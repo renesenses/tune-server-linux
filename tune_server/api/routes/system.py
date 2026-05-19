@@ -1930,3 +1930,55 @@ def _detect_audio_issues(
             "severity": "warning",
         })
     return issues
+
+
+@router.get("/changelog")
+async def get_changelog(limit: int = Query(5, le=20)):
+    """Parse CHANGELOG.md and return structured release notes."""
+    import re
+    changelog_path = Path(__file__).resolve().parents[3] / "CHANGELOG.md"
+    if not changelog_path.exists():
+        return []
+
+    text = changelog_path.read_text(encoding="utf-8", errors="replace")
+    entries = []
+    current: dict | None = None
+
+    for line in text.splitlines():
+        m = re.match(r"^## v?([\d.]+)\s*[—–-]\s*(.+)", line)
+        if m:
+            if current:
+                entries.append(current)
+                if len(entries) >= limit:
+                    break
+            current = {
+                "version": m.group(1),
+                "date": m.group(2).strip(),
+                "features": [],
+                "fixes": [],
+                "improvements": [],
+            }
+            continue
+        if not current:
+            continue
+        heading = re.match(r"^###\s+(.+)", line)
+        if heading:
+            h = heading.group(1).lower()
+            if "add" in h or "new" in h or "feat" in h:
+                current["_section"] = "features"
+            elif "fix" in h:
+                current["_section"] = "fixes"
+            else:
+                current["_section"] = "improvements"
+            continue
+        item = re.match(r"^[-*]\s+\*?\*?(.+?)(?:\*?\*?)$", line.strip())
+        if item and current.get("_section"):
+            current[current["_section"]].append(item.group(1).strip().strip("*").strip())
+
+    if current and len(entries) < limit:
+        entries.append(current)
+
+    for e in entries:
+        e.pop("_section", None)
+
+    return entries

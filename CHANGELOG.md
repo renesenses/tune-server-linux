@@ -2,6 +2,61 @@
 
 All notable changes to Tune Server.
 
+## v0.7.114 — 2026-05-19
+
+### Added
+- **Accent-insensitive search** — "carlao" finds "carlão", "resume" finds "résumé". Custom SQLite `fold_accents` function for LIKE fallback.
+- **Docker ARM64** — multi-arch build (amd64 + arm64) for Raspberry Pi and ARM NAS.
+- **Tidal favorites** — albums, artists and tracks from your Tidal collection now accessible.
+- **Home → Search passthrough** — search term preserved when navigating from Home to Search view.
+- **Dynamic changelog** — What's New dialog fetches release notes from `/system/changelog` API.
+
+### Fixed
+- **FTS5 crash** — titles with parentheses or AND/OR/NOT keywords no longer crash search (sanitize_fts_query).
+- **Chromecast Nest Hub progress bar** — duration passed via media_info for working progress display.
+- **Mobile CSS overflow** — no more horizontal scroll on screens < 480px.
+- **Track search performance** — track_credits LEFT JOIN replaced with subquery (fixes loading on large libraries).
+- **PostgreSQL DISTINCT/ORDER BY** — removed DISTINCT from artist search to fix asyncpg error.
+- **Shuffle after search** — now uses accent-folded matching and subquery for credits.
+
+### Improved
+- **Smart playlists** — default track limit raised from 200 to 5000.
+- **Mobile responsive** — stacked header layout, full-width tabs and search below 480px.
+
+## v0.7.112 — 2026-05-18
+
+### Added
+- **Rust metadata reader** — 5x faster audio tag scanning (30 fields, artist credits).
+- **Rust audio pipeline** — FFmpeg transcoding via Rust/tokio, native WAV headers.
+- **POST /system/cleanup** — complete maintenance endpoint (cache, logs, orphans).
+
+### Fixed
+- **Windows updater** — PowerShell brace syntax crash in f-string template.
+
+## v0.7.110 — 2026-05-18
+
+### Added
+- **Squeezebox/LMS** — new output and discovery for Squeezebox players (SlimProto).
+- **OpenHome** — Linn, Naim, Auralic support via SSDP + UPnP eventing.
+- **APE and WavPack** — scan and playback for Monkey Audio (.ape) and WavPack (.wv).
+- **ALAC in .m4a** — files containing ALAC correctly identified.
+- **Multi-user profiles** — save and restore zone presets.
+- **Default zone** — TUNE_DEFAULT_ZONE_ID setting.
+
+### Fixed
+- **SSDP crash** — AddressValueError on Windows/macOS multi-NIC (VPN, Hyper-V, Docker).
+- **Service Worker white screen** — switched to network-first strategy for /assets/.
+- **24-bit white noise** — native int32 instead of float32 for local outputs.
+- **Chromecast metadata** — migrated to dict metadata (pychromecast v14+).
+- **Album grouping** — year as discriminant prevents remaster merging.
+- **AirPlay radio** — HTTP streamer for infinite streams instead of stream_file.
+
+### Improved
+- **Device alternatives** — multi-protocol devices show available options in capabilities.
+- **Browser history** — mouse back/forward navigation with context.
+- **Genre sub-labels** — displayed under album covers in branch view.
+- **Nest Hub** — full-screen artwork and progress bar metadata.
+
 ## v0.7.68 — 2026-05-12
 
 ### Added
