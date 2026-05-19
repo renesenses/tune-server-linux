@@ -719,7 +719,10 @@ class Player:
         )
 
         # DLNA renderers: use SetNextAVTransportURI for gapless.
-        if hasattr(self._output, 'set_next_track'):
+        # Skip for slow renderers — they mishandle SetNextAVTransportURI
+        # (e.g., Shanling SCD1.3 immediately switches to the next URI).
+        if (hasattr(self._output, 'set_next_track')
+                and not getattr(self._output, '_is_slow_renderer', False)):
             try:
                 file_size = None
                 is_local = next_track.file_path and not next_track.file_path.startswith("http")
