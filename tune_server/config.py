@@ -37,7 +37,7 @@ def _detect_bin(name: str) -> str:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="TUNE_",
-        env_file=".env",
+        env_file=[str(_detect_base_dir() / ".env"), ".env"],
         env_file_encoding="utf-8",
         extra="ignore",
     )
