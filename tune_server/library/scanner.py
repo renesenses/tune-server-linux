@@ -186,6 +186,17 @@ class LibraryScanner:
 
             found_paths: set[str] = set()
 
+            # Deduplicate: remove dirs that are subdirectories of another
+            resolved = [str(Path(d).resolve()) for d in music_dirs]
+            deduped: list[str] = []
+            for i, d in enumerate(resolved):
+                if any(d.startswith(other + os.sep) for j, other in enumerate(resolved) if j != i):
+                    logger.warning("music_dir_overlap_skipped", path=music_dirs[i],
+                                   parent=[music_dirs[j] for j, other in enumerate(resolved) if j != i and d.startswith(other + os.sep)][0])
+                else:
+                    deduped.append(music_dirs[i])
+            music_dirs = deduped
+
             for music_dir in music_dirs:
                 dir_path = Path(music_dir)
                 if not dir_path.exists():
