@@ -411,7 +411,7 @@ class AmazonMusicService(StreamingService):
             format=fmt,
             sample_rate=44100 if self._quality in ("SD", "HD") else 96000,
             bit_depth=16 if self._quality in ("SD", "HD") else 24,
-            channels=2,
+            channels=8 if "DOLBY_ATMOS" in (t.get("audioModes") or []) else 2,
             source=Source.AMAZON,
             source_id=str(t.get("id", t.get("trackId", ""))),
         )

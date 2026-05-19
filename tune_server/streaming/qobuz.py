@@ -524,7 +524,7 @@ class QobuzService(StreamingService):
             format=AudioFormat.FLAC,
             sample_rate=t.get("maximum_sampling_rate", 44.1) * 1000,
             bit_depth=t.get("maximum_bit_depth", 16),
-            channels=2,
+            channels=t.get("audio_info", {}).get("channels") or 2,
             cover_path=cover_path,
             source=Source.QOBUZ,
             source_id=str(t.get("id", "")),

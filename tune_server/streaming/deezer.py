@@ -587,7 +587,7 @@ class DeezerService(StreamingService):
             format=fmt,
             sample_rate=sample_rate,
             bit_depth=bit_depth,
-            channels=2,
+            channels=6 if t.get("is_360_ra") else 2,
             cover_path=cover,
             source=Source.DEEZER,
             source_id=str(t.get("id", "")),

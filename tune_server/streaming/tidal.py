@@ -588,12 +588,17 @@ class TidalService(StreamingService):
         # défaut — la vraie valeur arrive via Stream.audio_quality au moment du
         # get_stream() lors de la lecture).
         tags = set(getattr(t, "media_metadata_tags", []) or [])
+        audio_modes = set(getattr(t, "audio_modes", []) or [])
         if "HIRES_LOSSLESS" in tags:
             fmt, sample_rate, bit_depth = AudioFormat.FLAC, 96000, 24
         elif "LOSSLESS" in tags:
             fmt, sample_rate, bit_depth = AudioFormat.FLAC, 44100, 16
         else:
             fmt, sample_rate, bit_depth = AudioFormat.AAC, 44100, 16
+
+        channels = 2
+        if "DOLBY_ATMOS" in tags or "DOLBY_ATMOS" in audio_modes:
+            channels = 8
 
         return Track(
             title=t.name or "Unknown",
@@ -605,7 +610,7 @@ class TidalService(StreamingService):
             format=fmt,
             sample_rate=sample_rate,
             bit_depth=bit_depth,
-            channels=2,
+            channels=channels,
             cover_path=cover_path,
             source=Source.TIDAL,
             source_id=str(t.id),
