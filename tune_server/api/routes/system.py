@@ -55,6 +55,7 @@ async def get_config():
         spotify_enabled=settings.spotify_enabled,
         deezer_enabled=settings.deezer_enabled,
         discovery_enabled=settings.discovery_enabled,
+        squeezebox_enabled=settings.squeezebox_enabled,
         sync_poll_playing_interval=settings.sync_poll_playing_interval,
         sync_poll_idle_interval=settings.sync_poll_idle_interval,
         sync_drift_threshold_ms=settings.sync_drift_threshold_ms,
@@ -99,6 +100,12 @@ async def update_config(body: dict):
         settings.enrich_on_scan = val
         persist_env_var("TUNE_ENRICH_ON_SCAN", str(val))
         updated["enrich_on_scan"] = val
+
+    if "squeezebox_enabled" in body:
+        val = bool(body["squeezebox_enabled"])
+        settings.squeezebox_enabled = val
+        persist_env_var("TUNE_SQUEEZEBOX_ENABLED", str(val))
+        updated["squeezebox_enabled"] = val
 
     if "local_exclusive_mode" in body:
         val = bool(body["local_exclusive_mode"])
