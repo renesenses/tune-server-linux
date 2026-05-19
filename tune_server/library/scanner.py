@@ -14,10 +14,13 @@ from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork
 from tune_server.library.enrichment import normalize_genre
 from tune_server.library.metadata_reader import SUPPORTED_EXTENSIONS, read_metadata
+from tune_server.library.rust_scanner import rust_scanner_available
 from tune_server.config import settings
 from tune_server.models import Track, TrackCredit
 
 logger = structlog.get_logger()
+
+_USE_RUST_SCANNER = rust_scanner_available()
 
 
 AUDIO_HASH_SAMPLE_SIZE = 64 * 1024  # 64KB sample for audio hash
@@ -88,13 +91,18 @@ def compute_audio_hash(file_path: str) -> str | None:
     """Compute MD5 hash of a 64KB audio sample from the middle of the file.
 
     Skips metadata (typically at start/end) by reading from 25% into the file.
-    Returns None if file cannot be read.
+    Uses Rust implementation when available (Phase 4).
     """
+    if _USE_RUST_SCANNER:
+        try:
+            from tune_server.library.rust_scanner import compute_audio_hash as _rust_hash
+            return _rust_hash(file_path)
+        except Exception:
+            pass
     try:
         path = Path(file_path)
         file_size = path.stat().st_size
-        offset = file_size // 4  # Start at 25% to skip metadata headers
-
+        offset = file_size // 4
         md5 = hashlib.md5()
         with open(file_path, "rb") as f:
             f.seek(offset)
@@ -111,7 +119,16 @@ SKIP_DIRS = {"duplicates", ".tune", ".Spotlight-V100", ".Trashes", "@eaDir", "#r
 
 
 def _list_audio_files(dir_path: Path) -> list[Path]:
-    """List audio files in a directory tree (blocking, runs in thread)."""
+    """List audio files in a directory tree (blocking, runs in thread).
+
+    Uses Rust walkdir when available (Phase 4) for faster traversal.
+    """
+    if _USE_RUST_SCANNER:
+        try:
+            from tune_server.library.rust_scanner import list_audio_files as _rust_list
+            return [Path(p) for p in _rust_list([str(dir_path)])]
+        except Exception:
+            pass
     try:
         return [
             f for f in dir_path.rglob("*")
