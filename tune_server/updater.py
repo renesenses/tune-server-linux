@@ -634,6 +634,11 @@ exit /b 0
                         shutil.rmtree(dst)
                     shutil.copytree(str(item), str(dst))
                 else:
+                    # On Linux, overwriting a running executable raises
+                    # ETXTBSY. Unlink first so the old inode stays open by
+                    # the running process while the new file gets the path.
+                    if dst.exists():
+                        dst.unlink()
                     shutil.copy2(str(item), str(dst))
 
             # Cleanup temp
