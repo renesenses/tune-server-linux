@@ -415,6 +415,32 @@ curl localhost:8888/api/v1/devices
 
 # List local audio output devices (USB DACs, soundcards)
 curl localhost:8888/api/v1/devices/audio
+
+# Trigger a fresh SSDP/mDNS scan
+curl -X POST localhost:8888/api/v1/devices/scan
+```
+
+#### Manually adding a DLNA device
+
+Some DLNA renderers do not respond to SSDP multicast discovery (firewall rules,
+firmware limitations, isolated VLANs). You can register them directly by
+providing their UPnP device description URL:
+
+```bash
+curl -X POST localhost:8888/api/v1/devices/add \
+  -H 'Content-Type: application/json' \
+  -d '{"description_url": "http://10.1.1.31:49152/description.xml"}'
+```
+
+The device description URL is typically `http://<device-ip>:<port>/description.xml`
+— check your renderer's manual or network scanner. Tune Server will fetch the
+description, add the device to the available list, and persist it in the database
+so it is automatically restored on the next server restart.
+
+To remove a manually-added device:
+
+```bash
+curl -X DELETE localhost:8888/api/v1/devices/<device-id>
 ```
 
 ### Zones

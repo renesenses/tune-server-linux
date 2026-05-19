@@ -204,6 +204,8 @@ _DSD_CAPABLE_PATTERNS = [
     "mcintosh",   # McIntosh network streamers
     "accuphase",  # Accuphase DP/DC series
     "ps audio",   # PS Audio DirectStream
+    "hiby",       # HiBy Music firmware (SMSL SD-9, various HiBy streamers)
+    "smsl",       # SMSL streamers/DACs running HiBy
 ]
 
 

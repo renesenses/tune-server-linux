@@ -371,6 +371,36 @@ class TuneServer:
         self._discovery_manager = DiscoveryManager(self._event_bus)
         await self._discovery_manager.start()
 
+        # Restore manually-added DLNA devices that were persisted in output_devices.
+        # Awaited directly (not fire-and-forget) so devices are available before
+        # zone_manager.initialize() runs — prevents zones from landing in _pending_zones.
+        if self._discovery_manager.ssdp:
+            try:
+                import json as _json
+                rows = await self._db.fetchall(
+                    "SELECT uid, capabilities FROM output_devices "
+                    "WHERE type='dlna' AND capabilities LIKE '%manually_added%' AND is_available=1"
+                )
+                restore_tasks = []
+                for row in rows:
+                    try:
+                        caps = _json.loads(row[1] or "{}")
+                        url = caps.get("description_url") or row[0]
+                        if url and url.startswith("http"):
+                            restore_tasks.append(
+                                self._discovery_manager.ssdp.add_by_url(url)
+                            )
+                            logger.info("static_dlna_device_restoring", url=url)
+                    except Exception:
+                        logger.debug("static_dlna_device_restore_skipped", row=row[0])
+                if restore_tasks:
+                    results = await asyncio.gather(*restore_tasks, return_exceptions=True)
+                    for r in results:
+                        if isinstance(r, Exception):
+                            logger.debug("static_dlna_device_restore_failed", error=str(r))
+            except Exception:
+                logger.debug("static_dlna_devices_load_failed", exc_info=True)
+
         # OpenHome event listener — shared receiver for UPnP NOTIFY callbacks
         try:
             from tune_server.outputs.oh_events import OpenHomeEventListener

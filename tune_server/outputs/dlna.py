@@ -139,6 +139,12 @@ class DlnaOutput(OutputTarget):
         self._is_sonos = "sonos" in (device_manufacturer or "").lower() or "sonos" in device_name.lower()
         if self._is_sonos:
             logger.info("sonos_device_detected", device=device_name, model=device_model, ip=device_ip)
+        # HiBy detection: firmware requires a fresh SetAVTransportURI+Play to enter
+        # DSD mode — gapless via SetNextAVTransportURI bypasses this and the DSD
+        # indicator disappears (and audio may silently fall back to PCM).
+        self._is_hiby = "hiby" in (device_manufacturer or "").lower() or "hiby" in device_name.lower()
+        if self._is_hiby:
+            logger.info("hiby_device_detected", device=device_name, manufacturer=device_manufacturer)
         # Slow renderer detection: match name/model/manufacturer against patterns
         self._is_slow_renderer = self._detect_slow_renderer(
             device_name, device_model, device_manufacturer,
@@ -393,6 +399,30 @@ class DlnaOutput(OutputTarget):
 
                 dmr = self._device
                 title = track.title or "Unknown"
+
+                # HiBy firmware quirk: DSD mode is only activated when the
+                # device is in NO_MEDIA_PRESENT state.  After the first track
+                # the device is STOPPED, not NO_MEDIA_PRESENT.  Force a
+                # transport clear (empty SetAVTransportURI) before the real
+                # DSD URI so the firmware re-enters DSD mode on every track.
+                if self._is_hiby and _had_active_stream:
+                    _empty_didl = (
+                        '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
+                        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+                        'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"></DIDL-Lite>'
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            dmr.async_set_transport_uri("", "", meta_data=_empty_didl),
+                            timeout=5,
+                        )
+                    except Exception:
+                        pass  # namespace quirk or unsupported — continue anyway
+                    # Give the firmware time to fully exit the previous
+                    # transport state before accepting the new DSD URI.
+                    await asyncio.sleep(0.8)
+                    logger.info("dlna_hiby_dsd_transport_clear", device=self.name)
+
                 await self._set_and_play(dmr, stream_url, title, metadata)
                 self._start_watchdog(stream_url, title, metadata)
 
@@ -471,10 +501,25 @@ class DlnaOutput(OutputTarget):
                     logger.debug("dlna_retry_stop_failed", device=self.name)
 
             # SetAVTransportURI
-            await asyncio.wait_for(
-                dmr.async_set_transport_uri(stream_url, title, meta_data=metadata),
-                timeout=10,
-            )
+            # Some firmware (HiBy/SMSL) returns the response with a wrong XML
+            # namespace (serviceId instead of service type). async_upnp_client
+            # raises UpnpError("Invalid response: …") even though the command
+            # was accepted. Detect this by checking the response body contains
+            # the expected element name and treat it as success.
+            try:
+                await asyncio.wait_for(
+                    dmr.async_set_transport_uri(stream_url, title, meta_data=metadata),
+                    timeout=10,
+                )
+            except Exception as _e:
+                if "SetAVTransportURIResponse" in str(_e):
+                    logger.debug(
+                        "dlna_namespace_quirk_set_uri",
+                        device=self.name,
+                        error=str(_e)[:120],
+                    )
+                else:
+                    raise
             t_uri = time.monotonic()
 
             # Wait for the HTTP streamer session to be ready (renderer fetches the stream)
@@ -508,8 +553,18 @@ class DlnaOutput(OutputTarget):
             if play_delay_ms > 0:
                 await asyncio.sleep(play_delay_ms / 1000.0)
 
-            # Play
-            await asyncio.wait_for(dmr.async_play(), timeout=10)
+            # Play — same namespace-quirk tolerance as SetAVTransportURI
+            try:
+                await asyncio.wait_for(dmr.async_play(), timeout=10)
+            except Exception as _e:
+                if "PlayResponse" in str(_e):
+                    logger.debug(
+                        "dlna_namespace_quirk_play",
+                        device=self.name,
+                        error=str(_e)[:120],
+                    )
+                else:
+                    raise
             t_play = time.monotonic()
 
             logger.info(
@@ -636,6 +691,24 @@ class DlnaOutput(OutputTarget):
         except Exception:
             logger.debug("dlna_watchdog_error", device=self.name, exc_info=True)
 
+    async def _set_next_uri(self, url: str, title: str, metadata: str) -> None:
+        """Call async_set_next_transport_uri, tolerating the HiBy/SMSL namespace quirk.
+
+        Some firmware (HiBy MediaRender on SMSL SD-9, etc.) returns
+        SetNextAVTransportURIResponse with the wrong XML namespace prefix.
+        async_upnp_client raises UpnpError even though the command was accepted.
+        """
+        try:
+            await self._device.async_set_next_transport_uri(url, title, meta_data=metadata)
+        except Exception as _e:
+            if "SetNextAVTransportURIResponse" in str(_e):
+                logger.debug(
+                    "dlna_namespace_quirk_set_next_uri",
+                    device=self.name, error=str(_e)[:120],
+                )
+            else:
+                raise
+
     async def _dmr_call(self, method: str, *args, **kwargs) -> bool:
         """Call DMR method with timeout."""
         func = getattr(self._device, method)
@@ -647,7 +720,19 @@ class DlnaOutput(OutputTarget):
             logger.warning("dlna_timeout", method=method, device=self.name)
             self._track_event(EventKind.DISCONNECTION)
             return False
-        except Exception:
+        except Exception as _e:
+            # HiBy/SMSL firmware returns SOAP responses with wrong XML namespace.
+            # The response body is valid (command accepted) but async_upnp_client
+            # raises UpnpError("Invalid response: …"). Detect by checking for the
+            # expected *Response element name in the error string.
+            _es = str(_e)
+            if "Invalid response:" in _es and "Response" in _es and "<" in _es:
+                logger.debug(
+                    "dlna_namespace_quirk",
+                    method=method, device=self.name, error=_es[:120],
+                )
+                self._available = True
+                return True
             logger.warning("dlna_call_error", method=method, device=self.name)
             self._track_event(EventKind.INTERRUPTION)
             return False
@@ -676,6 +761,9 @@ class DlnaOutput(OutputTarget):
         if self._stream_id:
             self._streamer.remove_session(self._stream_id)
             self._stream_id = None
+        # Always mark available after an explicit stop — clears any "stuck" state
+        # left by a failed start() so the zone can be reused without a server restart.
+        self._available = True
 
     async def seek(self, position_ms: int) -> bool:
         """Native DLNA seek via Seek(REL_TIME). Works when renderer supports it."""
@@ -766,6 +854,15 @@ class DlnaOutput(OutputTarget):
         direct URLs, native DSD, local file passthrough, and transcoded streams.
         """
         try:
+            # HiBy firmware quirk: gapless via SetNextAVTransportURI doesn't
+            # reinitialize DSD mode — the DSD indicator disappears and audio
+            # may silently fall back to PCM.  Force a Stop+Play handover so
+            # every DSD track gets a clean SetAVTransportURI+Play.
+            if self._is_hiby and stream_info.format == AudioFormat.DSD:
+                logger.debug("dlna_hiby_dsd_gapless_skip", device=self.name,
+                             track=track.title, reason="hiby_dsd_mode_reset")
+                return False
+
             # Direct URL for next track too if applicable
             if self.supports_direct_url(track):
                 url = track.file_path
@@ -775,7 +872,7 @@ class DlnaOutput(OutputTarget):
                     url = await self._resolve_redirects(url)
                 mime = mime_type_for_format(AudioFormat(track.format))
                 metadata = _build_didl_lite(track, url, mime)
-                await self._device.async_set_next_transport_uri(url, track.title or "Unknown", meta_data=metadata)
+                await self._set_next_uri(url, track.title or "Unknown", metadata)
                 logger.info("dlna_next_track_set_direct", device=self.name, track=track.title)
                 return True
 
@@ -792,7 +889,7 @@ class DlnaOutput(OutputTarget):
                 dsd_ext = "dff" if track.file_path.lower().endswith(".dff") else "dsf"
                 stream_url = stream_url.rsplit(".", 1)[0] + f".{dsd_ext}"
                 metadata = _build_didl_lite(track, stream_url, mime)
-                await self._device.async_set_next_transport_uri(stream_url, track.title or "Unknown", meta_data=metadata)
+                await self._set_next_uri(stream_url, track.title or "Unknown", metadata)
                 logger.info("dlna_next_track_set_native_dsd", device=self.name, track=track.title)
                 return True
 
@@ -803,8 +900,7 @@ class DlnaOutput(OutputTarget):
                 stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
                 metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info)
 
-                await self._device.async_set_next_transport_uri(
-                    stream_url, track.title or "Unknown", meta_data=metadata)
+                await self._set_next_uri(stream_url, track.title or "Unknown", metadata)
 
                 asyncio.create_task(
                     self._feed_gapless_session(stream_id, gapless_handler))
@@ -821,7 +917,7 @@ class DlnaOutput(OutputTarget):
             stream_url = self._streamer.get_stream_url(stream_id, self._server_ip)
             metadata = _build_didl_lite(track, stream_url, mime, stream_info=stream_info)
 
-            await self._device.async_set_next_transport_uri(stream_url, track.title or "Unknown", meta_data=metadata)
+            await self._set_next_uri(stream_url, track.title or "Unknown", metadata)
             logger.info(
                 "dlna_next_track_set", device=self.name, track=track.title,
                 stream_url=stream_url, local_file=is_local_file,

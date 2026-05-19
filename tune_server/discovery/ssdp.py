@@ -834,6 +834,126 @@ class SsdpDiscovery:
             logger.debug("ssdp_local_ip_detection_failed", error=str(e))
             return None
 
+    async def add_by_url(self, description_url: str) -> DiscoveredDevice | None:
+        """Manually register a DLNA renderer by its UPnP description URL.
+
+        Useful for devices on different subnets or devices whose SSDP
+        implementation does not respond to multicast M-SEARCH (e.g. some
+        HiBy-based streamers like the SMSL SD-9).
+
+        Returns the registered DiscoveredDevice, or None if unreachable.
+        """
+        from urllib.parse import urlparse as _up
+
+        try:
+            from async_upnp_client.aiohttp import AiohttpRequester
+            from async_upnp_client.client_factory import UpnpFactory
+            from async_upnp_client.profiles.dlna import DmrDevice
+        except ImportError:
+            logger.warning("add_by_url_upnp_unavailable")
+            return None
+
+        if not self._requester:
+            self._requester = AiohttpRequester()
+            self._factory = UpnpFactory(self._requester)
+            self._factory_non_strict = UpnpFactory(self._requester, non_strict=True)
+
+        dev_id = description_url  # use the URL as stable ID when no USN known yet
+
+        # Try strict XML parse, then non-strict
+        device = None
+        try:
+            device = await self._factory.async_create_device(description_url)
+        except Exception:
+            try:
+                device = await self._factory_non_strict.async_create_device(description_url)
+            except Exception as exc:
+                logger.info("add_by_url_xml_failed", url=description_url, error=str(exc))
+
+        if device is not None:
+            # Use the UDN as stable device ID if available
+            udn = getattr(device, "udn", None) or ""
+            if udn:
+                dev_id = udn
+
+            async with self._lock:
+                if dev_id in self._devices and self._devices[dev_id].available:
+                    return self._devices[dev_id]
+
+            dmr = DmrDevice(device, event_handler=None)
+            name = device.friendly_name or "Unknown DLNA"
+            parsed = _up(device.device_url or description_url)
+
+            sink_protocols: list[str] = []
+            try:
+                if dmr.has_get_protocol_info:
+                    await dmr.async_get_protocol_info()
+                    sink_protocols = dmr.sink_protocol_info or []
+            except Exception:
+                pass
+
+            from tune_server.audio.formats import (
+                detect_max_channels_from_device_info,
+                detect_max_channels_from_sink_protocols,
+            )
+            proto_ch = detect_max_channels_from_sink_protocols(sink_protocols)
+            device_ch = detect_max_channels_from_device_info(name, device.model_name or "")
+            max_channels = max(proto_ch, device_ch or 2)
+
+            disc_device = DiscoveredDevice(
+                id=dev_id,
+                name=name,
+                type=OutputType.DLNA,
+                host=parsed.hostname or "",
+                port=parsed.port or 0,
+                available=True,
+                capabilities={
+                    "dlna": True,
+                    "manufacturer": device.manufacturer or "",
+                    "model": device.model_name or "",
+                    "sink_protocols": sink_protocols,
+                    "device_name": device.friendly_name or "",
+                    "max_channels": max_channels,
+                    "manually_added": True,
+                },
+            )
+            self._known_locations[dev_id] = description_url
+            async with self._lock:
+                is_new = dev_id not in self._devices
+                was_lost = dev_id in self._devices and not self._devices[dev_id].available
+                self._devices[dev_id] = disc_device
+                self._dmr_devices[dev_id] = dmr
+
+            if is_new or was_lost:
+                await self._event_bus.emit(Event(
+                    type=EventType.DEVICE_DISCOVERED,
+                    data=disc_device.model_dump(),
+                    source="ssdp",
+                ))
+            logger.info(
+                "dlna_device_added_by_url",
+                name=name, url=description_url, id=dev_id,
+            )
+            return disc_device
+
+        # XML parse failed — try MinimalDmrDevice
+        parsed_loc = _up(description_url)
+        port = parsed_loc.port or 80
+        fallback_name = parsed_loc.hostname or "Unknown DLNA"
+
+        # Check if already registered via previous add
+        async with self._lock:
+            if dev_id in self._devices and self._devices[dev_id].available:
+                return self._devices[dev_id]
+
+        if await self._try_minimal_dmr(dev_id, description_url, fallback_name):
+            self._known_locations[dev_id] = description_url
+            async with self._lock:
+                return self._devices.get(dev_id)
+
+        logger.warning("add_by_url_failed", url=description_url)
+        return None
+
     async def _unicast_probe(self, dev_id: str) -> bool:
         """Attempt a direct HTTP GET to a device's last known description URL.
 

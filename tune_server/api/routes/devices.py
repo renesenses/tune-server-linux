@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import structlog
 from fastapi import APIRouter, HTTPException
@@ -21,6 +22,10 @@ router = APIRouter(prefix="/devices", tags=["devices"])
 
 # In-memory pairing sessions: device_id -> pyatv pairing object
 _pairing_sessions: dict[str, object] = {}
+
+
+class AddDeviceRequest(BaseModel):
+    description_url: str = Field(..., description="UPnP device description XML URL, e.g. http://10.1.1.31:49152/description.xml")
 
 
 class PairPinRequest(BaseModel):
@@ -131,6 +136,50 @@ async def scan_devices():
     return await deps.discovery_manager.rescan()
 
 
+@router.post("/add", response_model=DiscoveredDevice)
+async def add_device_by_url(req: AddDeviceRequest):
+    """Manually register a DLNA renderer by its UPnP description URL.
+
+    Use this for devices that do not respond to SSDP multicast discovery
+    (e.g. HiBy-based streamers like the SMSL SD-9) or devices on a
+    different subnet.  Example body:
+
+        {"description_url": "http://10.1.1.31:49152/description.xml"}
+    """
+    if not deps.discovery_manager or not deps.discovery_manager.ssdp:
+        raise HTTPException(status_code=503, detail="SSDP discovery not available")
+    device = await deps.discovery_manager.ssdp.add_by_url(req.description_url)
+    if not device:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach or parse device at {req.description_url}",
+        )
+    # Persist so the device survives server restarts
+    if deps.db:
+        caps = dict(device.capabilities or {})
+        caps["description_url"] = req.description_url
+        caps["manually_added"] = True
+        try:
+            await deps.db.execute(
+                """
+                INSERT INTO output_devices (uid, name, type, ip_address, port, capabilities, is_available)
+                VALUES (?, ?, 'dlna', ?, ?, ?, 1)
+                ON CONFLICT(uid) DO UPDATE SET
+                    name=excluded.name,
+                    ip_address=excluded.ip_address,
+                    port=excluded.port,
+                    capabilities=excluded.capabilities,
+                    is_available=1,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (device.id, device.name, device.host, device.port, json.dumps(caps)),
+            )
+            await deps.db.connection.commit()
+        except Exception:
+            logger.warning("manual_device_persist_failed", url=req.description_url)
+    return device
+
+
 @router.post("/clear")
 async def clear_devices():
     """Remove all discovered devices from the list."""
@@ -192,6 +241,8 @@ async def delete_device(device_id: str):
         if device_id in deps.discovery_manager.ssdp._devices:
             del deps.discovery_manager.ssdp._devices[device_id]
             deps.discovery_manager.ssdp._dmr_devices.pop(device_id, None)
+            # Also remove from known_locations so unicast probing stops
+            deps.discovery_manager.ssdp._known_locations.pop(device_id, None)
             removed = True
     if deps.discovery_manager.mdns:
         if device_id in deps.discovery_manager.mdns._devices:
@@ -200,6 +251,16 @@ async def delete_device(device_id: str):
             removed = True
     if not removed:
         raise HTTPException(status_code=404, detail="Device not found")
+    # Remove from persistent storage if it was manually added
+    if deps.db:
+        try:
+            await deps.db.execute(
+                "DELETE FROM output_devices WHERE uid=? AND capabilities LIKE '%manually_added%'",
+                (device_id,),
+            )
+            await deps.db.connection.commit()
+        except Exception:
+            logger.debug("manual_device_delete_db_failed", device_id=device_id)
     return {"deleted": device_id}
 
 
