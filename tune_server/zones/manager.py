@@ -136,6 +136,11 @@ class ZoneManager:
                     if saved_volume is not None and saved_volume != 0.5:
                         await zone.player.set_volume(saved_volume)
 
+                    # Restore normalization setting
+                    if row.get("normalization_enabled"):
+                        zone.player._normalization_enabled = True
+                        zone.player._normalization_target = row.get("normalization_target_lufs", -14.0) or -14.0
+
                     # Restore persisted queue
                     await zone.restore_queue()
 

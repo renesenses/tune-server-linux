@@ -786,12 +786,18 @@ async def set_crossfade(zone_id: int, body: dict = {}):
 
 @router.post("/normalization")
 async def set_normalization(zone_id: int, body: dict = {}):
-    """Enable/disable volume normalization."""
+    """Enable/disable volume normalization (persisted per zone)."""
     zone = _get_zone(zone_id)
     enabled = body.get("enabled", True)
     target_lufs = body.get("target_lufs", -14.0)
     zone.player._normalization_enabled = enabled
     zone.player._normalization_target = target_lufs
+    if deps.zone_repo:
+        await deps.zone_repo.update(
+            zone_id,
+            normalization_enabled=1 if enabled else 0,
+            normalization_target_lufs=target_lufs,
+        )
     return {"normalization_enabled": enabled, "target_lufs": target_lufs}
 
 

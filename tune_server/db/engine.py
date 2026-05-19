@@ -209,6 +209,8 @@ class SQLiteDatabase:
             "ALTER TABLE user_profiles ADD COLUMN is_admin INTEGER DEFAULT 0",
             "ALTER TABLE user_profiles ADD COLUMN eq_settings TEXT",
             "ALTER TABLE user_profiles ADD COLUMN quality_preference TEXT",
+            "ALTER TABLE zones ADD COLUMN normalization_enabled INTEGER DEFAULT 0",
+            "ALTER TABLE zones ADD COLUMN normalization_target_lufs REAL DEFAULT -14.0",
         ]
         for sql in migrations:
             try:
