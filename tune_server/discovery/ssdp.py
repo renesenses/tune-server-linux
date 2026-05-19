@@ -357,6 +357,13 @@ class SsdpDiscovery:
                                 logger.debug("ssdp_skip_chromecast", name=name)
                                 return
 
+                            # Skip renderers hosted on this machine (same IP)
+                            device_host = parsed.hostname or ""
+                            local_ip = self._get_local_ip()
+                            if device_host and local_ip and device_host in (local_ip, "127.0.0.1", "localhost"):
+                                logger.debug("ssdp_skip_local_renderer", name=name, host=device_host)
+                                return
+
                             # Resolve Sonos room name for friendlier display
                             if "sonos" in manufacturer or "sonos" in (device.model_name or "").lower():
                                 sonos_name = await self._resolve_sonos_name(
