@@ -967,6 +967,17 @@ class Player:
 
                 # -2 = renderer reports STOPPED
                 if output_pos == -2 and not is_radio:
+                    # Ignore STOPPED while renderer is still pulling audio
+                    if (self._output
+                            and hasattr(self._output, 'has_active_stream')
+                            and self._output.has_active_stream()):
+                        logger.debug("dlna_stopped_ignored_stream_active",
+                                     zone_id=self._zone_id,
+                                     pos_ms=cumulative_pos_ms,
+                                     track=track.title)
+                        stopped_count = 0
+                        continue
+
                     # Ignore early STOPPED (renderer still buffering)
                     if cumulative_pos_ms < min_play_ms:
                         logger.debug("dlna_stopped_ignored_early",

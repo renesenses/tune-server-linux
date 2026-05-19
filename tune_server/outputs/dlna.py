@@ -259,6 +259,15 @@ class DlnaOutput(OutputTarget):
     def has_pending_stream(self) -> bool:
         return self._stream_id is not None or self._last_uri is not None
 
+    def has_active_stream(self) -> bool:
+        """True if the HTTP streamer session still has a renderer connected."""
+        if not self._stream_id:
+            return False
+        session = self._streamer.get_session(self._stream_id)
+        if not session:
+            return False
+        return bool(session._active_responses) and session.active
+
     def supports_direct_url(self, track: Track) -> bool:
         if not track or not track.file_path:
             return False
