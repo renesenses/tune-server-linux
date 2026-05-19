@@ -45,12 +45,16 @@ async def list_tracks(
     offset: int = Query(0, ge=0),
     page: int | None = Query(None, ge=1, description="Page number (opt-in pagination)"),
     per_page: int | None = Query(None, ge=1, le=500, description="Items per page"),
+    multichannel: bool = Query(False, description="Filter to multichannel tracks (>2 channels)"),
 ):
     if page is not None:
         pp = per_page or 100
         effective_offset = (page - 1) * pp
         items = await deps.track_repo.list(limit=pp, offset=effective_offset)
         total = await deps.track_repo.count()
+        if multichannel:
+            items = [t for t in items if (t.get("channels") or t.channels if hasattr(t, "channels") else 2) > 2]
+            total = len(items)
         return {
             "tracks": items,
             "total": total,
@@ -58,7 +62,10 @@ async def list_tracks(
             "per_page": pp,
             "total_pages": math.ceil(total / pp) if pp else 1,
         }
-    return await deps.track_repo.list(limit=limit, offset=offset)
+    tracks = await deps.track_repo.list(limit=limit, offset=offset)
+    if multichannel:
+        tracks = [t for t in tracks if (getattr(t, "channels", 2) or 2) > 2]
+    return tracks
 
 
 @router.get("/tracks/count")
