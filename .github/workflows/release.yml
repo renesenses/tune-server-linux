@@ -1097,19 +1097,58 @@ jobs:
           done
           echo "Warning: asset sizes on GitHub still differ from local artifacts after 10 attempts — proceeding anyway"
 
-      - name: Update mozaiklabs.fr download page
+      - name: Publish to mozaiklabs.fr (VPS)
         if: success()
         env:
-          # New simple shared-secret webhook (App\Http\Controllers\ReleaseWebhookController).
-          # Replaces the old HMAC GitHub-style endpoint that was silently failing.
-          # Set TUNE_RELEASE_WEBHOOK_SECRET in repo secrets, mirrored in the
-          # mozaiklabs container env (TUNE_RELEASE_WEBHOOK_SECRET).
-          WEBHOOK_SECRET: ${{ secrets.MOZAIKLABS_WEBHOOK_SECRET }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
           VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
-          curl -sf -X POST "https://mozaiklabs.fr/api/webhooks/tune-release" \
-            -H "Content-Type: application/json" \
-            -H "X-Tune-Webhook-Secret: ${WEBHOOK_SECRET}" \
-            -d "{\"version\":\"${VERSION}\"}" \
-            && echo "mozaiklabs.fr deploy job dispatched for v${VERSION}" \
-            || echo "Warning: mozaiklabs.fr webhook failed (non-blocking) — check repo secret + container env."
+          if [ -z "${VPS_SSH_KEY}" ]; then
+            echo "Warning: VPS_SSH_KEY secret not set — skipping VPS publish"
+            exit 0
+          fi
+
+          # Set up SSH key
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${VPS_SSH_KEY}" > ~/.ssh/vps_key && chmod 600 ~/.ssh/vps_key
+          VPS="root@156.67.31.98"
+          SSH="ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no"
+
+          # Download release assets from GitHub
+          TMPDIR="/tmp/release-${VERSION}"
+          mkdir -p "${TMPDIR}"
+          gh release download "v${VERSION}" --dir "${TMPDIR}" --skip-existing 2>/dev/null || true
+
+          # Upload to VPS
+          ${SSH} ${VPS} "mkdir -p /storage/releases/${VERSION}"
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no "${TMPDIR}"/* ${VPS}:/storage/releases/${VERSION}/
+
+          # Build asset JSON and update DB
+          ASSETS_JSON=$(python3 -c "
+          import os, json
+          d = '${TMPDIR}'
+          assets = {'linux': [], 'macos': [], 'windows': []}
+          for f in sorted(os.listdir(d)):
+              if f.endswith('.sha256'):
+                  continue
+              size = os.path.getsize(os.path.join(d, f))
+              url = f'/storage/releases/${VERSION}/{f}'
+              entry = {'name': f, 'url': url, 'size': size}
+              if 'linux' in f:
+                  assets['linux'].append(entry)
+              elif 'macos' in f:
+                  assets['macos'].append(entry)
+              elif 'windows' in f:
+                  assets['windows'].append(entry)
+          print(json.dumps(assets))
+          ")
+
+          ESCAPED=$(echo "${ASSETS_JSON}" | sed "s/'/\\\\'/g")
+          ${SSH} ${VPS} "docker exec mozaiklabs-app-1 php artisan tinker --execute=\"\
+            \\\DB::table('forum_releases')->updateOrInsert(\
+              ['version' => '${VERSION}'],\
+              ['name' => 'v${VERSION}', 'slug' => 'tune-v-0' . str_replace('.','',substr('${VERSION}',2)), 'description' => 'Release v${VERSION}', 'released_at' => now(), 'is_active' => true, 'order' => 999, 'updated_at' => now(), 'download_assets' => '${ESCAPED}']\
+            ); echo 'DB updated for v${VERSION}';\""
+
+          rm -rf "${TMPDIR}" ~/.ssh/vps_key
+          echo "✅ v${VERSION} published to mozaiklabs.fr/download"
