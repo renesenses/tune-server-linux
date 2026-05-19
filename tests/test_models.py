@@ -75,7 +75,7 @@ class TestEnums:
         assert {s.value for s in PlaybackState} == states
 
     def test_output_type_enum(self):
-        types = {"local", "dlna", "airplay", "chromecast"}
+        types = {"local", "dlna", "airplay", "chromecast", "openhome", "squeezebox", "bluos"}
         assert {t.value for t in OutputType} == types
 
     def test_repeat_mode_enum(self):

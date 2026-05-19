@@ -34,8 +34,8 @@ class TestFormatFromExtension:
             ("dff", AudioFormat.DSD),
             ("wma", AudioFormat.WMA),
             ("alac", AudioFormat.ALAC),
-            ("wv", AudioFormat.FLAC),
-            ("ape", AudioFormat.FLAC),
+            ("wv", AudioFormat.WAVPACK),
+            ("ape", AudioFormat.APE),
         ],
     )
     def test_known_extensions(self, ext, expected):

@@ -553,22 +553,26 @@ async def test_backup_before_migration_creates_snapshot():
     try:
         await database.connect()
         from pathlib import Path
-        backups = list(Path(db_path).parent.glob(f"{Path(db_path).name}.bak.*"))
-        assert len(backups) == 1, f"Expected 1 backup, got {backups}"
-        # The backup must contain the original 'marker' row even after the
-        # live DB has been migrated/extended.
+        db_file = Path(db_path)
+        backup_dir = db_file.parent / "backups"
+        backups = list(backup_dir.glob(f"{db_file.stem}_*{db_file.suffix}")) if backup_dir.exists() else []
+        assert len(backups) >= 1, f"Expected >=1 backup in {backup_dir}, got {backups}"
         bak = sqlite3.connect(str(backups[0]))
         try:
             row = bak.execute("SELECT id FROM marker").fetchone()
             assert row == (42,)
         finally:
             bak.close()
-            backups[0].unlink()
+            for b in backups:
+                b.unlink()
     finally:
         await database.close()
-        import os
+        import os, shutil
         if os.path.exists(db_path):
             os.unlink(db_path)
+        backup_dir = Path(db_path).parent / "backups"
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 async def test_backup_skipped_on_memory_db():

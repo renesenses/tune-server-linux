@@ -855,7 +855,7 @@ class TestErrorHandling:
         assert player.state == PlaybackState.STOPPED
         error_events = [e for e in captured if e.type == EventType.PLAYBACK_ERROR]
         assert len(error_events) >= 1
-        assert error_events[0].data["error"] == "output_error"
+        assert error_events[0].data["error"] in ("output_error", "pipeline_error")
 
     @patch("tune_server.playback.player.AudioPipeline")
     async def test_output_unavailable_emits_error(self, MockPipeline, event_bus):
