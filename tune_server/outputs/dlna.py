@@ -135,6 +135,10 @@ class DlnaOutput(OutputTarget):
         self._is_micromega = "micromega" in device_name.lower()
         if self._is_micromega:
             logger.info("micromega_device_detected", device=device_name, ip=device_ip)
+        # Sonos detection
+        self._is_sonos = "sonos" in (device_manufacturer or "").lower() or "sonos" in device_name.lower()
+        if self._is_sonos:
+            logger.info("sonos_device_detected", device=device_name, model=device_model, ip=device_ip)
         # Slow renderer detection: match name/model/manufacturer against patterns
         self._is_slow_renderer = self._detect_slow_renderer(
             device_name, device_model, device_manufacturer,
@@ -167,12 +171,18 @@ class DlnaOutput(OutputTarget):
 
     def _build_capabilities(self) -> AudioCapabilities:
         formats = {AudioFormat.FLAC, AudioFormat.WAV, AudioFormat.MP3, AudioFormat.AAC}
+        max_rate = 192000
+        max_depth = 24
         if self._supports_native_dsd:
             formats.add(AudioFormat.DSD)
+        if self._is_sonos:
+            formats.add(AudioFormat.OGG)
+            max_rate = 48000
+            max_depth = 16
         return AudioCapabilities(
             formats=formats,
-            max_sample_rate=192000,
-            max_bit_depth=24,
+            max_sample_rate=max_rate,
+            max_bit_depth=max_depth,
             supports_gapless=True,
             max_channels=self._max_channels,
         )
@@ -643,7 +653,10 @@ class DlnaOutput(OutputTarget):
             return False
 
     async def pause(self) -> None:
-        await self._dmr_call("async_pause")
+        ok = await self._dmr_call("async_pause")
+        if not ok and self._is_sonos:
+            logger.info("sonos_pause_fallback_stop", device=self.name)
+            await self._dmr_call("async_stop")
 
     async def resume(self) -> None:
         ok = await self._dmr_call("async_play")
