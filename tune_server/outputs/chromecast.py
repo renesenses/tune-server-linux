@@ -67,6 +67,10 @@ class ChromecastOutput(OutputTarget):
     def is_direct_url(self) -> bool:
         return self._direct_url
 
+    @property
+    def has_pending_stream(self) -> bool:
+        return self._stream_id is not None or self._last_content_id is not None
+
     def supports_direct_url(self, track: Track) -> bool:
         if not track or not track.file_path:
             return False
