@@ -1114,19 +1114,23 @@ jobs:
           VPS="root@156.67.31.98"
           SSH="ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no"
 
-          # Download release assets from GitHub
-          TMPDIR="/tmp/release-${VERSION}"
-          mkdir -p "${TMPDIR}"
-          gh release download "v${VERSION}" --dir "${TMPDIR}" --skip-existing 2>/dev/null || true
+          # Use artifacts already downloaded by the "Download all artifacts" step
+          ARTDIR="artifacts"
+          if [ ! -d "${ARTDIR}" ] || [ -z "$(ls -A ${ARTDIR})" ]; then
+            echo "Warning: no artifacts found in ${ARTDIR} — skipping VPS publish"
+            exit 0
+          fi
+          echo "Found $(ls ${ARTDIR} | wc -l) artifacts"
+          ls -lh "${ARTDIR}/"
 
           # Upload to VPS
           ${SSH} ${VPS} "mkdir -p /storage/releases/${VERSION}"
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no "${TMPDIR}"/* ${VPS}:/storage/releases/${VERSION}/
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no ${ARTDIR}/tune-server-* ${VPS}:/storage/releases/${VERSION}/
 
           # Build asset JSON and update DB
           ASSETS_JSON=$(python3 -c "
           import os, json
-          d = '${TMPDIR}'
+          d = '${ARTDIR}'
           assets = {'linux': [], 'macos': [], 'windows': []}
           for f in sorted(os.listdir(d)):
               if f.endswith('.sha256'):
@@ -1150,5 +1154,5 @@ jobs:
               ['name' => 'v${VERSION}', 'slug' => 'tune-v-0' . str_replace('.','',substr('${VERSION}',2)), 'description' => 'Release v${VERSION}', 'released_at' => now(), 'is_active' => true, 'order' => 999, 'updated_at' => now(), 'download_assets' => '${ESCAPED}']\
             ); echo 'DB updated for v${VERSION}';\""
 
-          rm -rf "${TMPDIR}" ~/.ssh/vps_key
+          rm -f ~/.ssh/vps_key
           echo "✅ v${VERSION} published to mozaiklabs.fr/download"
