@@ -270,6 +270,15 @@ class Settings(BaseSettings):
     log_format: str = "console"  # console or json
 
 
+def _coerce_env_music_dirs() -> None:
+    """Accept TUNE_MUSIC_DIRS=/path as shorthand for '["/path"]'."""
+    import os
+    raw = os.environ.get("TUNE_MUSIC_DIRS", "")
+    if raw and not raw.lstrip().startswith("["):
+        import json
+        os.environ["TUNE_MUSIC_DIRS"] = json.dumps([raw])
+
+_coerce_env_music_dirs()
 settings = Settings()
 
 

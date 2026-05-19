@@ -2,12 +2,20 @@
 
 Fetches the plugin catalog from mozaiklabs.fr, cross-references with
 locally installed plugins, and manages installation via pip subprocess.
+
+On frozen builds (PyInstaller), pip is unavailable — plugins are installed
+by downloading wheels from PyPI and extracting them into a local plugins/
+directory that is added to sys.path at startup.
 """
 from __future__ import annotations
 
 import asyncio
 import platform
+import shutil
 import sys
+import zipfile
+from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -20,6 +28,25 @@ logger = structlog.get_logger()
 CATALOG_URL = "https://mozaiklabs.fr/api/v1/plugins"
 TRACK_URL = "https://mozaiklabs.fr/api/v1/plugins/{name}/track-install"
 CACHE_TTL = 300
+
+_IS_FROZEN = getattr(sys, "frozen", False)
+
+
+def _plugins_dir() -> Path:
+    """User-plugins directory next to the frozen executable."""
+    if _IS_FROZEN:
+        return Path(sys.executable).resolve().parent / "plugins"
+    return Path.cwd() / "plugins"
+
+
+def ensure_plugins_on_path() -> None:
+    """Add the user-plugins directory to sys.path (called once at startup)."""
+    d = _plugins_dir()
+    if d.is_dir():
+        s = str(d)
+        if s not in sys.path:
+            sys.path.insert(0, s)
+            logger.info("plugins_dir_on_path", path=s)
 
 
 class PluginStoreManager:
@@ -115,7 +142,7 @@ class PluginStoreManager:
         return True
 
     async def install(self, name: str) -> dict[str, Any]:
-        """Install a plugin via pip."""
+        """Install a plugin via pip (or wheel extraction on frozen builds)."""
         catalog = await self.fetch_catalog()
         plugin = next((p for p in catalog if p.get("name") == name), None)
         if not plugin:
@@ -124,11 +151,16 @@ class PluginStoreManager:
         install_source = plugin.get("install_source", name)
 
         async with self._install_lock:
+            if _IS_FROZEN:
+                return await self._wheel_install(install_source, name)
             return await self._pip_action("install", install_source, name)
 
     async def uninstall(self, name: str) -> dict[str, Any]:
-        """Uninstall a plugin via pip."""
+        """Uninstall a plugin via pip (or remove from plugins/ on frozen builds)."""
         async with self._install_lock:
+            if _IS_FROZEN:
+                return await self._wheel_uninstall(name)
+
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "pip", "uninstall", "-y", name,
                 stdout=asyncio.subprocess.PIPE,
@@ -147,13 +179,96 @@ class PluginStoreManager:
             }
 
     async def update(self, name: str) -> dict[str, Any]:
-        """Update a plugin via pip."""
+        """Update a plugin via pip (or re-download wheel on frozen builds)."""
         catalog = await self.fetch_catalog()
         plugin = next((p for p in catalog if p.get("name") == name), None)
         install_source = plugin.get("install_source", name) if plugin else name
 
         async with self._install_lock:
+            if _IS_FROZEN:
+                await self._wheel_uninstall(name)
+                return await self._wheel_install(install_source, name, event="update")
             return await self._pip_action("install", f"{install_source} --upgrade", name, event="update")
+
+    # ------------------------------------------------------------------
+    # Frozen build: wheel-based install (no pip required)
+    # ------------------------------------------------------------------
+
+    async def _wheel_install(self, install_source: str, plugin_name: str, event: str = "install") -> dict[str, Any]:
+        """Download a wheel from PyPI and extract it into plugins/."""
+        import aiohttp
+
+        pkg_name = install_source.split("[")[0].split("=")[0].split(">")[0].split("<")[0].strip()
+        pypi_url = f"https://pypi.org/pypi/{pkg_name}/json"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(pypi_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status != 200:
+                        return {"success": False, "error": f"Package '{pkg_name}' not found on PyPI (HTTP {resp.status})"}
+                    data = await resp.json()
+
+            urls = data.get("urls", [])
+            whl = next((u for u in urls if u["filename"].endswith(".whl")
+                        and ("py3" in u["filename"] or "none" in u["filename"])), None)
+            if not whl:
+                whl = next((u for u in urls if u["filename"].endswith(".whl")), None)
+            if not whl:
+                return {"success": False, "error": f"No wheel found for '{pkg_name}' on PyPI"}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(whl["url"], timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    if resp.status != 200:
+                        return {"success": False, "error": f"Failed to download wheel (HTTP {resp.status})"}
+                    wheel_bytes = await resp.read()
+
+            dest = _plugins_dir()
+            dest.mkdir(parents=True, exist_ok=True)
+
+            with zipfile.ZipFile(BytesIO(wheel_bytes)) as zf:
+                zf.extractall(dest)
+
+            ensure_plugins_on_path()
+
+            asyncio.create_task(self._track_event(plugin_name, event))
+            logger.info("plugin_wheel_installed", plugin=plugin_name, dest=str(dest))
+
+            return {
+                "success": True,
+                "message": f"Installed {pkg_name} to {dest}",
+                "restart_required": True,
+            }
+        except Exception as exc:
+            logger.exception("plugin_wheel_install_error", plugin=plugin_name)
+            return {"success": False, "error": str(exc)}
+
+    async def _wheel_uninstall(self, name: str) -> dict[str, Any]:
+        """Remove a wheel-installed plugin from plugins/."""
+        dest = _plugins_dir()
+        if not dest.is_dir():
+            return {"success": False, "error": "No plugins directory"}
+
+        pkg_prefix = name.replace("-", "_")
+        removed = False
+        for item in dest.iterdir():
+            if item.name.startswith(pkg_prefix):
+                if item.is_dir():
+                    shutil.rmtree(item)
+                    removed = True
+                elif item.is_file():
+                    item.unlink()
+                    removed = True
+
+        if removed:
+            asyncio.create_task(self._track_event(name, "uninstall"))
+            logger.info("plugin_wheel_uninstalled", plugin=name)
+            return {"success": True, "message": f"Removed {name}", "restart_required": True}
+
+        return {"success": False, "error": f"Plugin '{name}' not found in {dest}"}
+
+    # ------------------------------------------------------------------
+    # pip-based install (source/venv installs)
+    # ------------------------------------------------------------------
 
     async def _pip_action(
         self, action: str, target: str, plugin_name: str, event: str = "install"
@@ -208,6 +323,10 @@ async def auto_install_plugins(plugins_csv: str) -> None:
     Called once at startup before plugin discovery. Packages already
     installed are skipped by pip (fast no-op).
     """
+    if _IS_FROZEN:
+        logger.info("auto_install_skipped_frozen")
+        return
+
     packages = [p.strip() for p in plugins_csv.split(",") if p.strip()]
     if not packages:
         return
