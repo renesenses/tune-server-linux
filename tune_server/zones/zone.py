@@ -45,6 +45,8 @@ class ZoneInstance:
         self._online: bool = True
         self._stereo_pair_id: str | None = None
         self._stereo_channel: str | None = None
+        self._surround_group_id: str | None = None
+        self._surround_channel: str | None = None
 
     @property
     def zone_id(self) -> int:
@@ -113,12 +115,42 @@ class ZoneInstance:
     @stereo_channel.setter
     def stereo_channel(self, value: str | None) -> None:
         self._stereo_channel = value
-        # Update the player's channel filter based on stereo channel
         if value == "left":
             self._player.set_channel_filter("pan=mono|c0=FL")
         elif value == "right":
             self._player.set_channel_filter("pan=mono|c0=FR")
         else:
+            self._player.set_channel_filter(None)
+
+    @property
+    def surround_group_id(self) -> str | None:
+        return self._surround_group_id
+
+    @surround_group_id.setter
+    def surround_group_id(self, value: str | None) -> None:
+        self._surround_group_id = value
+
+    @property
+    def surround_channel(self) -> str | None:
+        return self._surround_channel
+
+    _SURROUND_CHANNEL_FILTERS: dict[str, str] = {
+        "FL": "pan=mono|c0=FL",
+        "FR": "pan=mono|c0=FR",
+        "FC": "pan=mono|c0=FC",
+        "LFE": "pan=mono|c0=LFE,lowpass=f=120",
+        "BL": "pan=mono|c0=BL",
+        "BR": "pan=mono|c0=BR",
+        "SL": "pan=mono|c0=SL",
+        "SR": "pan=mono|c0=SR",
+    }
+
+    @surround_channel.setter
+    def surround_channel(self, value: str | None) -> None:
+        self._surround_channel = value
+        if value and value in self._SURROUND_CHANNEL_FILTERS:
+            self._player.set_channel_filter(self._SURROUND_CHANNEL_FILTERS[value])
+        elif not value:
             self._player.set_channel_filter(None)
 
     @property
@@ -156,6 +188,8 @@ class ZoneInstance:
             online=self._online,
             stereo_pair_id=self._stereo_pair_id,
             stereo_channel=self._stereo_channel,
+            surround_group_id=self._surround_group_id,
+            surround_channel=self._surround_channel,
             audiophile_mode=self._player.audiophile_mode,
         )
 

@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS zones (
     sync_delay_ms INTEGER DEFAULT 0,
     stereo_pair_id TEXT,
     stereo_channel TEXT,
+    surround_group_id TEXT,
+    surround_channel TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

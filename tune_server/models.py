@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -176,6 +176,8 @@ class Zone(BaseModel):
     signal_path: SignalPath | None = None
     stereo_pair_id: str | None = None
     stereo_channel: str | None = None  # "left" or "right"
+    surround_group_id: str | None = None
+    surround_channel: str | None = None  # ChannelAssignment value
     audiophile_mode: bool = False
 
 
@@ -410,6 +412,29 @@ class StereoPairResponse(BaseModel):
     stereo_pair_id: str
     left_zone_id: int
     right_zone_id: int
+
+
+class ChannelAssignment(StrEnum):
+    FL = "FL"
+    FR = "FR"
+    FC = "FC"
+    LFE = "LFE"
+    BL = "BL"
+    BR = "BR"
+    SL = "SL"
+    SR = "SR"
+
+
+class SurroundGroupRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    channel_map: dict[str, str]  # {device_id: ChannelAssignment value}
+
+
+class SurroundGroupResponse(BaseModel):
+    surround_group_id: str
+    name: str
+    layout: str  # "5.1", "7.1", "quad", "stereo"
+    zones: list[dict]  # [{zone_id, channel, device_id}]
 
 
 class VolumeRequest(BaseModel):
