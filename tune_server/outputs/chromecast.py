@@ -12,7 +12,7 @@ from typing import Any, Optional
 import structlog
 
 from tune_server.audio.formats import AudioCapabilities, AudioFormat, CHROMECAST_CAPABILITIES
-from tune_server.models import AudioStreamInfo, Track
+from tune_server.models import AudioStreamInfo, Source, Track
 from tune_server.outputs.base import OutputTarget
 
 logger = structlog.get_logger()
@@ -149,11 +149,15 @@ class ChromecastOutput(OutputTarget):
         if track and track.duration_ms:
             media_info["duration"] = track.duration_ms / 1000.0
 
+        is_radio = track and hasattr(track, 'source') and track.source == Source.RADIO
+        stream_type = "LIVE" if is_radio else "BUFFERED"
+
         try:
             await self._cast_call(
                 mc.play_media, url, content_type,
                 title=title, thumb=thumb, metadata=metadata,
                 media_info=media_info if media_info else None,
+                stream_type=stream_type,
             )
             await self._cast_call(mc.block_until_active, timeout=15)
             self._last_content_id = url
