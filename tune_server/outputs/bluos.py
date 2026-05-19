@@ -69,6 +69,10 @@ class BluosOutput(OutputTarget):
     def is_direct_url(self) -> bool:
         return self._direct_url
 
+    @property
+    def has_pending_stream(self) -> bool:
+        return self._stream_id is not None
+
     def supports_direct_url(self, track: Track) -> bool:
         # Always route through the HTTP streamer so ICY metadata headers
         # (title, artist, cover) are served.  BluOS /Play has no metadata

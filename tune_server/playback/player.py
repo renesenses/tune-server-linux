@@ -849,10 +849,20 @@ class Player:
 
             # Auto-advance to next track (or monitor renderer if it's still playing)
             if self._state == PlaybackState.PLAYING:
-                # Check if renderer is still playing (pipeline broke but renderer buffered)
-                # -2 means renderer stopped, don't switch to monitor
                 renderer_pos = await self._output.get_position_ms() if self._output else -1
-                if renderer_pos > 0 and renderer_pos != -2 and self._queue.current:
+                # Pull-based outputs (BluOS) buffer data for the renderer to
+                # fetch via HTTP.  The renderer may not have started yet when
+                # the pipeline finishes pushing, so position can be 0/-1/-2.
+                # Always switch to the monitor when a stream session is active.
+                has_pending = (
+                    self._output
+                    and getattr(self._output, "has_pending_stream", False)
+                )
+                if has_pending and self._queue.current:
+                    logger.info("switching_to_renderer_monitor",
+                                zone_id=self._zone_id, reason="pending_stream")
+                    await self._direct_url_monitor(self._queue.current)
+                elif renderer_pos > 0 and renderer_pos != -2 and self._queue.current:
                     logger.info("switching_to_renderer_monitor", zone_id=self._zone_id)
                     await self._direct_url_monitor(self._queue.current)
                 else:
