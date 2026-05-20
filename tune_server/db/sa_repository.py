@@ -1294,7 +1294,7 @@ class SATrackRepo:
         )
 
     async def deduplicate(self) -> int:
-        """Remove duplicate tracks (same audio_hash), keeping the lowest id.
+        """Remove duplicate tracks (same audio_hash AND file_size), keeping the lowest id.
 
         Re-targets playlist_tracks and play_queue references before deleting.
         Uses raw SQL for the complex subqueries.
@@ -1307,18 +1307,21 @@ class SATrackRepo:
                        WHERE audio_hash = (
                            SELECT audio_hash FROM tracks WHERE id = playlist_tracks.track_id
                        )
+                         AND file_size = (
+                           SELECT file_size FROM tracks WHERE id = playlist_tracks.track_id
+                       )
                          AND audio_hash IS NOT NULL
                          AND album_id IS NOT NULL
                   )
                 WHERE track_id IN (
                     SELECT t.id FROM tracks t
                     JOIN (
-                        SELECT audio_hash
+                        SELECT audio_hash, file_size
                           FROM tracks
                          WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                         GROUP BY audio_hash
+                         GROUP BY audio_hash, file_size
                         HAVING COUNT(*) > 1
-                    ) d ON t.audio_hash = d.audio_hash
+                    ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size
                 )""",
         )
         # 2. Same for play_queue.
@@ -1329,18 +1332,21 @@ class SATrackRepo:
                        WHERE audio_hash = (
                            SELECT audio_hash FROM tracks WHERE id = play_queue.track_id
                        )
+                         AND file_size = (
+                           SELECT file_size FROM tracks WHERE id = play_queue.track_id
+                       )
                          AND audio_hash IS NOT NULL
                          AND album_id IS NOT NULL
                   )
                 WHERE track_id IN (
                     SELECT t.id FROM tracks t
                     JOIN (
-                        SELECT audio_hash
+                        SELECT audio_hash, file_size
                           FROM tracks
                          WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                         GROUP BY audio_hash
+                         GROUP BY audio_hash, file_size
                         HAVING COUNT(*) > 1
-                    ) d ON t.audio_hash = d.audio_hash
+                    ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size
                 )""",
         )
         # 3. Delete the non-canonical duplicates.
@@ -1348,26 +1354,26 @@ class SATrackRepo:
             """DELETE FROM tracks WHERE id NOT IN (
                 SELECT MIN(id) FROM tracks
                 WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                GROUP BY audio_hash
+                GROUP BY audio_hash, file_size
             ) AND id IN (
                 SELECT t.id FROM tracks t
                 JOIN (
-                    SELECT audio_hash
+                    SELECT audio_hash, file_size
                     FROM tracks WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                    GROUP BY audio_hash
+                    GROUP BY audio_hash, file_size
                     HAVING COUNT(*) > 1
-                ) d ON t.audio_hash = d.audio_hash
+                ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size
             )""",
         )
         return cursor.rowcount
 
     async def list_recent_duplicates(self, limit: int = 50) -> list[dict]:
         rows = await self._db.fetchall(
-            """SELECT audio_hash, COUNT(*) as cnt,
+            """SELECT audio_hash, file_size, COUNT(*) as cnt,
                       GROUP_CONCAT(file_path, ' | ') as paths
                FROM tracks
                WHERE audio_hash IS NOT NULL AND album_id IS NOT NULL
-               GROUP BY audio_hash
+               GROUP BY audio_hash, file_size
                HAVING COUNT(*) > 1
                LIMIT ?""",
             (limit,),
