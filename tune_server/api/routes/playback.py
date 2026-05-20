@@ -60,6 +60,41 @@ def _get_zone(zone_id: int):
     return zone
 
 
+async def enrich_zone_now_playing(zone_model: Zone) -> Zone:
+    """Add credits and lyrics_available to a Zone model (lazy enrichment).
+
+    Only fetches data when a track is currently playing/paused.
+    Returns the same model with additional fields populated.
+    """
+    track = zone_model.current_track
+    if not track or not track.id:
+        return zone_model
+
+    # Credits — fetch from track_credits table
+    credits = None
+    if deps.credit_repo:
+        try:
+            credits = await deps.credit_repo.list_by_track(track.id)
+        except Exception:
+            logger.debug("enrich_zone_credits_error", track_id=track.id)
+
+    # Lyrics available — quick DB check (avoid reading file tags here)
+    lyrics_available = False
+    if deps.db:
+        try:
+            row = await deps.db.fetchone(
+                "SELECT lyrics FROM tracks WHERE id = ? AND lyrics IS NOT NULL AND lyrics != ''",
+                (track.id,),
+            )
+            lyrics_available = row is not None
+        except Exception:
+            logger.debug("enrich_zone_lyrics_error", track_id=track.id)
+
+    zone_model.credits = credits if credits else None
+    zone_model.lyrics_available = lyrics_available
+    return zone_model
+
+
 async def _resolve_tracks(request: PlayRequest) -> list:
     """Resolve a PlayRequest to a list of Track objects."""
     tracks = []
@@ -804,7 +839,8 @@ async def set_normalization(zone_id: int, body: dict = {}):
 @router.get("/status", response_model=Zone)
 async def get_status(zone_id: int):
     zone = _get_zone(zone_id)
-    return zone.to_model()
+    model = zone.to_model()
+    return await enrich_zone_now_playing(model)
 
 
 # --- Alarm Clock ---
@@ -922,7 +958,32 @@ async def now_listening():
         if zone.player.state.value in ("playing", "paused"):
             track = zone.current_track
             if track:
-                result.append({
+                # Fetch credits lazily
+                credits = None
+                if track.id and deps.credit_repo:
+                    try:
+                        credits_list = await deps.credit_repo.list_by_track(track.id)
+                        if credits_list:
+                            credits = [
+                                {"artist_name": c.artist_name, "role": c.role, "instrument": c.instrument}
+                                for c in credits_list
+                            ]
+                    except Exception:
+                        pass
+
+                # Check lyrics availability
+                lyrics_available = False
+                if track.id and deps.db:
+                    try:
+                        row = await deps.db.fetchone(
+                            "SELECT lyrics FROM tracks WHERE id = ? AND lyrics IS NOT NULL AND lyrics != ''",
+                            (track.id,),
+                        )
+                        lyrics_available = row is not None
+                    except Exception:
+                        pass
+
+                entry = {
                     "zone_id": zone.zone_id,
                     "zone_name": zone.name,
                     "state": zone.player.state.value,
@@ -935,7 +996,16 @@ async def now_listening():
                     },
                     "position_ms": zone.player.position_ms,
                     "volume": zone.player.volume,
-                })
+                    "credits": credits,
+                    "lyrics_available": lyrics_available,
+                }
+
+                # Include signal path if available
+                sp = zone.player.signal_path
+                if sp:
+                    entry["signal_path"] = sp.model_dump()
+
+                result.append(entry)
 
     return result
 

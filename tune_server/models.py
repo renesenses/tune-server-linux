@@ -179,6 +179,8 @@ class Zone(BaseModel):
     surround_group_id: str | None = None
     surround_channel: str | None = None  # ChannelAssignment value
     audiophile_mode: bool = False
+    credits: list[TrackCredit] | None = None
+    lyrics_available: bool | None = None
 
 
 class ZoneGroupModel(BaseModel):
