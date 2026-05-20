@@ -236,6 +236,14 @@ async fn main() {
         .route("/library/search", get(search_library))
         .route("/library/stats", get(library_stats))
         .route("/library/scan", post(trigger_scan))
+        .route("/library/browse/roots", get(browse_roots))
+        .route("/library/browse/dir", get(browse_dir))
+        // System config
+        .route("/system/music-dirs", get(get_music_dirs))
+        .route("/system/music-dirs", post(add_music_dir))
+        .route("/system/music-dirs", delete(remove_music_dir))
+        .route("/system/scan", post(trigger_scan))
+        .route("/system/scan/status", get(scan_status))
         // Playback
         .route("/playback/play", post(playback_play))
         .route("/playback/pause", post(playback_pause))
@@ -938,6 +946,89 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<AppState>) {
     }
 
     info!("ws_client_disconnected");
+}
+
+// ---------------------------------------------------------------------------
+// Music dirs / onboarding routes
+// ---------------------------------------------------------------------------
+
+async fn get_music_dirs(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "music_dirs": s.music_dirs }))
+}
+
+async fn add_music_dir(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let path = body.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let mut dirs = s.music_dirs.clone();
+    if !path.is_empty() && !dirs.contains(&path.to_string()) {
+        dirs.push(path.to_string());
+    }
+    Json(serde_json::json!({ "music_dirs": dirs }))
+}
+
+async fn remove_music_dir(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let path = body.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let dirs: Vec<&String> = s.music_dirs.iter().filter(|d| d.as_str() != path).collect();
+    Json(serde_json::json!({ "music_dirs": dirs }))
+}
+
+async fn browse_roots(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let roots: Vec<serde_json::Value> = s.music_dirs.iter().map(|d| {
+        let p = std::path::Path::new(d);
+        serde_json::json!({
+            "path": d,
+            "name": p.file_name().and_then(|n| n.to_str()).unwrap_or(d),
+            "exists": p.is_dir(),
+        })
+    }).collect();
+    Json(serde_json::json!({ "roots": roots }))
+}
+
+#[derive(Deserialize)]
+struct BrowseParams {
+    path: String,
+}
+
+async fn browse_dir(Query(p): Query<BrowseParams>) -> Json<serde_json::Value> {
+    let dir = std::path::Path::new(&p.path);
+    if !dir.is_dir() {
+        return Json(serde_json::json!({ "path": p.path, "exists": false, "entries": [] }));
+    }
+    let mut entries = Vec::new();
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !name.starts_with('.') {
+                        entries.push(serde_json::json!({
+                            "name": name,
+                            "path": entry.path().to_string_lossy(),
+                            "is_dir": true,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    entries.sort_by(|a, b| {
+        a.get("name").and_then(|v| v.as_str()).unwrap_or("")
+            .cmp(b.get("name").and_then(|v| v.as_str()).unwrap_or(""))
+    });
+    Json(serde_json::json!({ "path": p.path, "exists": true, "entries": entries }))
+}
+
+async fn scan_status(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let tracks = TrackRepo::new(s.db.clone()).count().unwrap_or(0);
+    Json(serde_json::json!({
+        "scanning": false,
+        "tracks": tracks,
+    }))
 }
 
 // ---------------------------------------------------------------------------
