@@ -248,7 +248,7 @@ class ArtistRepo:
                    WHERE fts.rowid IS NOT NULL
                       OR fold_accents(a.name) LIKE ?
                    LIMIT ?""",
-                (sanitize_fts_query(query) + "*", like_folded, limit),
+                (sanitize_fts_query(fold_accents(query)) + "*", like_folded, limit),
             )
         return [_row_to_artist(r) for r in rows]
 
@@ -649,7 +649,7 @@ class AlbumRepo:
                       OR CAST(al.year AS TEXT) = ?
                       OR fold_accents(al.label) LIKE ?
                    LIMIT ?""",
-                (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, like_folded, query.strip(), like_folded, limit),
+                (sanitize_fts_query(fold_accents(query)) + "*", like_folded, like_folded, like_folded, like_folded, query.strip(), like_folded, limit),
             )
         return [_row_to_album(r) for r in rows]
 
@@ -738,6 +738,7 @@ class TrackRepo:
         """Return up to *limit* tracks matching *query* in random order."""
         folded = fold_accents(query)
         like_folded = f"%{folded}%"
+        fts_query = sanitize_fts_query(fold_accents(query)) + "*"
         rows = await self._db.fetchall(
             f"""SELECT DISTINCT t.*, al.title as album_title, ar.name as artist_name,
                        al.cover_path as cover_path
@@ -755,7 +756,7 @@ class TrackRepo:
                                WHERE fold_accents(tc.artist_name) LIKE ?
                                   OR tc.instrument LIKE ?)
                 ORDER BY RANDOM() LIMIT ?""",
-            (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
+            (fts_query, like_folded, like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
         )
         return [_row_to_track(r) for r in rows]
 
@@ -1020,7 +1021,7 @@ class TrackRepo:
                                    WHERE fold_accents(tc.artist_name) LIKE ?
                                       OR tc.instrument LIKE ?)
                     LIMIT ?""",
-                (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
+                (sanitize_fts_query(fold_accents(query)) + "*", like_folded, like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
             )
         return [_row_to_track(r) for r in rows]
 
