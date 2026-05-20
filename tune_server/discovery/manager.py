@@ -51,10 +51,9 @@ class DiscoveryManager:
         if _USE_RUST:
             if settings.ssdp_enabled:
                 self._rust_ssdp = RustSsdpBackend(event_bus)
-            # Rust mDNS disabled: mdns-sd panics when called outside its own
-            # tokio runtime context (PyO3 bridge uses a separate runtime).
-            # SSDP Rust + mDNS Python is a safe hybrid until this is fixed.
-            logger.info("discovery_engine", engine="rust+python", ssdp="rust", mdns="python")
+            if settings.mdns_enabled:
+                self._rust_mdns = RustMdnsBackend(event_bus)
+            logger.info("discovery_engine", engine="rust", ssdp="rust" if self._rust_ssdp else "python", mdns="rust" if self._rust_mdns else "python")
         else:
             logger.info("discovery_engine", engine="python")
 
