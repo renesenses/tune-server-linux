@@ -1160,23 +1160,34 @@ class Player:
 
             if self._renderer_has_next:
                 self._renderer_has_next = False
-                self._position_ms = 0
-                self._position_start_time = time.monotonic()
-                source_format = AudioFormat(next_track.format) if next_track.format else AudioFormat.FLAC
-                stream_info = AudioStreamInfo(
-                    format=source_format,
-                    sample_rate=next_track.sample_rate or 44100,
-                    bit_depth=next_track.bit_depth or 16,
-                    channels=next_track.channels or 2,
-                )
-                self._signal_path = self._build_signal_path(next_track, stream_info, passthrough_type="direct_url")
-                self._playback_task = asyncio.create_task(self._direct_url_monitor(next_track))
-                await self._preload_next()
-                # DLNA crossfade: fade volume back up after track transition
-                if self._crossfade_original_volume is not None:
-                    asyncio.create_task(self._finish_dlna_crossfade())
-                logger.info("gapless_soft_advance", track=next_track.title)
-                return
+                renderer_ok = True
+                if self._output:
+                    try:
+                        pos = await self._output.get_position_ms()
+                        if pos == -2:
+                            renderer_ok = False
+                            logger.warning("gapless_soft_advance_renderer_stopped",
+                                           zone_id=self._zone_id, track=next_track.title)
+                    except Exception:
+                        pass
+                if renderer_ok:
+                    self._position_ms = 0
+                    self._position_start_time = time.monotonic()
+                    source_format = AudioFormat(next_track.format) if next_track.format else AudioFormat.FLAC
+                    stream_info = AudioStreamInfo(
+                        format=source_format,
+                        sample_rate=next_track.sample_rate or 44100,
+                        bit_depth=next_track.bit_depth or 16,
+                        channels=next_track.channels or 2,
+                    )
+                    self._signal_path = self._build_signal_path(next_track, stream_info, passthrough_type="direct_url")
+                    self._playback_task = asyncio.create_task(self._direct_url_monitor(next_track))
+                    await self._preload_next()
+                    if self._crossfade_original_volume is not None:
+                        asyncio.create_task(self._finish_dlna_crossfade())
+                    logger.info("gapless_soft_advance", track=next_track.title)
+                    return
+                logger.info("gapless_fallback_hard_start", zone_id=self._zone_id, track=next_track.title)
 
             # Non-gapless DLNA advance: also fade in if crossfade was active
             if self._crossfade_original_volume is not None:

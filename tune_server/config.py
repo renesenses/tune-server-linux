@@ -291,6 +291,18 @@ def _coerce_env_music_dirs() -> None:
 _coerce_env_music_dirs()
 settings = Settings()
 
+def _log_env_files_loaded() -> None:
+    """Log which .env files were found at startup."""
+    import structlog
+    _logger = structlog.get_logger()
+    for candidate in _env_file_candidates():
+        if Path(candidate).is_file():
+            _logger.info("env_file_loaded", path=candidate)
+    _logger.info("config_effective", quality_split=settings.quality_split,
+                 db_engine=settings.db_engine, music_dirs=settings.music_dirs)
+
+_log_env_files_loaded()
+
 
 def persist_env_var(key: str, value: str, env_file: str = ".env") -> None:
     """Update or add a key=value in the .env file."""

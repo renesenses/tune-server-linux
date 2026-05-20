@@ -287,6 +287,19 @@ class PluginStoreManager:
         stdout, stderr = await proc.communicate()
 
         success = proc.returncode == 0
+
+        if not success and b"Permission denied" in stderr:
+            logger.info("plugin_pip_retry_user", plugin=plugin_name)
+            user_args = [sys.executable, "-m", "pip", action, "--user"]
+            user_args.extend(target.split())
+            proc = await asyncio.create_subprocess_exec(
+                *user_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            success = proc.returncode == 0
+
         if success:
             asyncio.create_task(self._track_event(plugin_name, event))
             logger.info("plugin_pip_success", plugin=plugin_name, action=action)
