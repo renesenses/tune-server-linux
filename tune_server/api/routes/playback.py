@@ -1070,7 +1070,7 @@ async def shuffle_all_library(
 
     # Pick tracks according to the context filter
     if search_query:
-        tracks = await deps.track_repo.search_random(search_query, limit=5000)
+        tracks = await deps.track_repo.search(search_query, limit=5000)
     elif album_id is not None:
         tracks = await deps.track_repo.list_by_album(album_id)
         random.shuffle(tracks)
