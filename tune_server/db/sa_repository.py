@@ -188,7 +188,7 @@ class SAArtistRepo:
         if principal_only:
             stmt = stmt.where(self._principal_only_clause())
         rows = await self._db.sa_fetchall(
-            stmt.order_by(artists.c.sort_name, artists.c.name)
+            stmt.order_by(sa.func.lower(sa.func.coalesce(artists.c.sort_name, artists.c.name)), artists.c.name)
                 .limit(limit).offset(offset)
         )
         return [_row_to_artist(r) for r in rows]
@@ -226,7 +226,7 @@ class SAArtistRepo:
             where = sa.and_(where, self._principal_only_clause())
         rows = await self._db.sa_fetchall(
             sa.select(artists).where(where)
-            .order_by(artists.c.sort_name, artists.c.name)
+            .order_by(sa.func.lower(sa.func.coalesce(artists.c.sort_name, artists.c.name)), artists.c.name)
             .limit(limit).offset(offset)
         )
         return [_row_to_artist(r) for r in rows]
