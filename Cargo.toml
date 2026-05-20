@@ -1,5 +1,5 @@
 [workspace]
-members = ["rust/tune-core", "rust/tune-pyo3"]
+members = ["rust/tune-core", "rust/tune-pyo3", "rust/tune-server"]
 resolver = "2"
 
 [workspace.package]

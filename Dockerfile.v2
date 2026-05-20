@@ -1,0 +1,56 @@
+# Tune Server v2 — Rust standalone binary
+# Multi-stage build: compile on native arch, package in minimal runtime
+
+# ---- builder: compile Rust binary ----
+FROM rust:1.87-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libasound2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Cache dependencies first
+COPY Cargo.toml Cargo.lock ./
+COPY rust/ rust/
+RUN mkdir -p rust/tune-pyo3/src && echo "" > rust/tune-pyo3/src/lib.rs
+RUN cargo build --release -p tune-server 2>/dev/null || true
+
+# Build the real binary
+COPY rust/ rust/
+RUN cargo build --release -p tune-server
+
+# ---- runtime: minimal image ----
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libasound2 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Binary from builder
+COPY --from=builder /build/target/release/tune-server /app/tune-server
+
+# Web client (pre-built Svelte SPA)
+COPY web/ /app/web/
+
+# Volumes
+VOLUME /music /data
+
+# Configuration (all overridable via TUNE_ env vars)
+ENV TUNE_MUSIC_DIRS='["/music"]' \
+    TUNE_DB_PATH=/data/tune_v2.db \
+    TUNE_ARTWORK_CACHE=/data/artwork_cache \
+    TUNE_WEB_DIR=/app/web \
+    TUNE_API_PORT=9888 \
+    TUNE_STREAM_PORT=9080 \
+    TUNE_LOG=info
+
+# v2 uses port 9888 (v1 uses 8888) for cohabitation
+EXPOSE 9888 9080
+
+CMD ["/app/tune-server"]
