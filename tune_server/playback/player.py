@@ -16,8 +16,10 @@ from tune_server.audio.pipeline import AudioPipeline, create_pipeline
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.models import AudioFormat, AudioStreamInfo, PlaybackState, SignalPath, SignalPathStep, Source, Track
 from tune_server.outputs.base import OutputTarget
+from tune_server.playback.crossfade import CrossfadeHandler
 from tune_server.playback.gapless import GaplessHandler
 from tune_server.playback.queue import PlayQueue
+from tune_server.playback.radio_handler import RadioMetadataHandler
 
 StreamUrlResolver = Callable[[Track], Coroutine[Any, Any, Optional[str]]]
 QueuePersistCallback = Callable[[list[Track], int], Coroutine[Any, Any, None]]
@@ -70,18 +72,14 @@ class Player:
         self._gapless: GaplessHandler | None = None
         self._queue_persist_cb: QueuePersistCallback | None = None
         self._volume_change_cb: Callable | None = None
-        self._icy_poller_task: asyncio.Task | None = None
-        self._radio_poller = None
+        self._radio = RadioMetadataHandler(self)
         self._skip_in_progress = False
         self._lock = asyncio.Lock()
         self._signal_path: "SignalPath | None" = None
         self._renderer_has_next = False
         self._channel_filter: str | None = None
-        # Crossfade
-        self._crossfade_enabled = settings.crossfade_enabled
-        self._crossfade_duration = settings.crossfade_duration
-        self._crossfade_task: asyncio.Task | None = None
-        self._crossfade_original_volume: float | None = None  # to restore after fade
+        # Crossfade (delegated to CrossfadeHandler)
+        self._crossfade = CrossfadeHandler(self)
         # Volume normalization
         self._normalization_enabled = False
         self._normalization_target = -14.0
@@ -135,6 +133,53 @@ class Player:
     @property
     def quality_preference(self) -> str:
         return self._quality_preference
+
+    # -- Backward-compatible accessors for crossfade/radio handler fields ---
+    # External code (routes, tests) accesses these directly on Player.
+
+    @property
+    def _crossfade_enabled(self) -> bool:
+        return self._crossfade.enabled
+
+    @_crossfade_enabled.setter
+    def _crossfade_enabled(self, value: bool) -> None:
+        self._crossfade.enabled = value
+
+    @property
+    def _crossfade_duration(self) -> float:
+        return self._crossfade.duration
+
+    @_crossfade_duration.setter
+    def _crossfade_duration(self, value: float) -> None:
+        self._crossfade.duration = value
+
+    @property
+    def _crossfade_task(self) -> asyncio.Task | None:
+        return self._crossfade.task
+
+    @property
+    def _crossfade_original_volume(self) -> float | None:
+        return self._crossfade.original_volume
+
+    @_crossfade_original_volume.setter
+    def _crossfade_original_volume(self, value: float | None) -> None:
+        self._crossfade.original_volume = value
+
+    @property
+    def _icy_poller_task(self) -> asyncio.Task | None:
+        return self._radio._icy_poller_task
+
+    @_icy_poller_task.setter
+    def _icy_poller_task(self, value: asyncio.Task | None) -> None:
+        self._radio._icy_poller_task = value
+
+    @property
+    def _radio_poller(self):
+        return self._radio.radio_poller
+
+    @_radio_poller.setter
+    def _radio_poller(self, value) -> None:
+        self._radio._radio_poller = value
 
     def set_quality_preference(self, quality: str) -> None:
         if quality not in ("max", "hires", "cd", "low"):
@@ -278,140 +323,20 @@ class Player:
         return self._output.__class__.__name__ == "DlnaOutput"
 
     async def _check_crossfade(self):
-        """Check if we should start crossfading to the next track.
-
-        For local output: applies FFmpeg fade-out filter.
-        For DLNA output: uses volume ramp (fade-out current, queue next,
-        fade-in when next track starts).
-        """
-        if self._audiophile_mode:
-            return
-        if not self._crossfade_enabled or self._crossfade_duration <= 0:
-            return
-        track = self.current_track
-        if not track or not track.duration_ms:
-            return
-
-        # Don't crossfade radio
-        if track.source == Source.RADIO:
-            return
-
-        remaining_ms = track.duration_ms - self.position_ms
-        threshold_ms = int(self._crossfade_duration * 1000)
-
-        if remaining_ms <= threshold_ms and remaining_ms > threshold_ms - 500:
-            if self._is_dlna_output():
-                await self._start_dlna_crossfade()
-            elif self._pipeline:
-                # Local output: apply FFmpeg fade-out filter
-                fade_filter = f"afade=t=out:st=0:d={self._crossfade_duration}"
-                self._channel_filter = fade_filter
+        """Delegate to CrossfadeHandler."""
+        await self._crossfade.check()
 
     async def _start_dlna_crossfade(self) -> None:
-        """Initiate DLNA crossfade: queue next track + volume fade-out.
-
-        The approach:
-        1. Ensure next track is queued via SetNextAVTransportURI
-        2. Fade volume down over crossfade_duration seconds
-        3. When _advance_track detects the next track started,
-           _finish_dlna_crossfade fades volume back up
-        """
-        if self._crossfade_task and not self._crossfade_task.done():
-            return  # already fading
-
-        if not self._output:
-            return
-
-        output = self._output
-        # Read current volume from renderer (or use cached)
-        current_vol = await output.get_volume() if hasattr(output, 'get_volume') else None
-        if current_vol is None:
-            current_vol = self._volume
-
-        self._crossfade_original_volume = current_vol
-
-        # Ensure next track is queued for gapless transition
-        if not self._renderer_has_next:
-            await self._preload_next()
-
-        # Start async fade-out task
-        self._crossfade_task = asyncio.create_task(
-            self._dlna_fade_out(output, current_vol)
-        )
-
-    async def _dlna_fade_out(self, output, from_vol: float) -> None:
-        """Fade DLNA volume down to 0 over crossfade_duration."""
-        try:
-            ok = await output.fade_volume(
-                from_vol=from_vol,
-                to_vol=0.0,
-                duration=self._crossfade_duration,
-            )
-            if not ok:
-                logger.info(
-                    "dlna_crossfade_skipped",
-                    zone_id=self._zone_id,
-                    reason="volume_control_not_supported",
-                )
-                self._crossfade_original_volume = None
-        except asyncio.CancelledError:
-            logger.debug("dlna_fade_out_cancelled", zone_id=self._zone_id)
-        except Exception:
-            logger.exception("dlna_fade_out_error", zone_id=self._zone_id)
-            self._crossfade_original_volume = None
+        """Delegate to CrossfadeHandler."""
+        await self._crossfade.start_dlna()
 
     async def _finish_dlna_crossfade(self) -> None:
-        """Fade DLNA volume back up after track transition.
-
-        Called from _advance_track when the next track starts playing
-        and a crossfade was in progress.
-        """
-        if self._crossfade_original_volume is None:
-            return
-
-        if not self._output or not hasattr(self._output, 'fade_volume'):
-            self._crossfade_original_volume = None
-            return
-
-        target_vol = self._crossfade_original_volume
-        self._crossfade_original_volume = None
-
-        try:
-            await self._output.fade_volume(
-                from_vol=0.0,
-                to_vol=target_vol,
-                duration=self._crossfade_duration,
-            )
-            logger.info(
-                "dlna_crossfade_complete",
-                zone_id=self._zone_id,
-                restored_volume=round(target_vol, 2),
-            )
-        except Exception:
-            # Best-effort: if fade-in fails, force-set original volume
-            logger.warning("dlna_fade_in_error", zone_id=self._zone_id)
-            try:
-                await self._output.set_volume(target_vol)
-            except Exception:
-                pass
+        """Delegate to CrossfadeHandler."""
+        await self._crossfade.finish_dlna()
 
     async def _cancel_crossfade(self) -> None:
-        """Cancel any in-progress crossfade and restore volume."""
-        if self._crossfade_task and not self._crossfade_task.done():
-            self._crossfade_task.cancel()
-            try:
-                await self._crossfade_task
-            except asyncio.CancelledError:
-                pass
-            self._crossfade_task = None
-
-        # Restore volume if it was modified by crossfade
-        if self._crossfade_original_volume is not None and self._output:
-            try:
-                await self._output.set_volume(self._crossfade_original_volume)
-            except Exception:
-                pass
-            self._crossfade_original_volume = None
+        """Delegate to CrossfadeHandler."""
+        await self._crossfade.cancel()
 
     async def _persist_queue(self) -> None:
         """Persist current queue state if callback is set."""
@@ -578,11 +503,7 @@ class Player:
             # (the pipeline is bypassed so FFmpeg ICY parsing doesn't run)
             if track.source == Source.RADIO and track.file_path:
                 icy_cb = self._make_icy_callback(track)
-                from tune_server.streaming.radio_metadata import RadioMetadataPoller
-                self._radio_poller = RadioMetadataPoller(
-                    self._event_bus, self._zone_id, track_callback=icy_cb,
-                )
-                self._radio_poller.start(track.file_path)
+                self._radio.start_radio_poller(track, icy_cb)
 
             # Preload next track for gapless (SetNextAVTransportURI)
             await self._preload_next()
@@ -672,19 +593,7 @@ class Player:
         # Radio metadata fallback: if ICY metadata hasn't arrived after 5s,
         # start the RadioFrance API poller as a backup source.
         if track.source == Source.RADIO and track.file_path and not self._radio_poller and icy_cb:
-            _fallback_cb = icy_cb
-            async def _radio_metadata_fallback():
-                await asyncio.sleep(5)
-                if self._state != PlaybackState.PLAYING:
-                    return
-                if not getattr(_fallback_cb, '_received', False):
-                    from tune_server.streaming.radio_metadata import RadioMetadataPoller
-                    self._radio_poller = RadioMetadataPoller(
-                        self._event_bus, self._zone_id, track_callback=_fallback_cb,
-                    )
-                    self._radio_poller.start(track.file_path)
-                    logger.info("radio_metadata_fallback_started", zone_id=self._zone_id)
-            asyncio.create_task(_radio_metadata_fallback())
+            self._radio.schedule_radio_fallback(track, icy_cb)
 
         # Preload next track for gapless transition
         await self._preload_next()
@@ -1533,111 +1442,19 @@ class Player:
         )
 
     def _make_icy_callback(self, track: Track):
-        """Create a callback that updates the current track with ICY metadata."""
-        zone_id = self._zone_id
-        event_bus = self._event_bus
-        station_name = track.title  # original station name
-        station_cover = track.cover_path  # original station logo (fallback)
-
-        def on_icy_metadata(meta: dict[str, str]) -> None:
-            on_icy_metadata._received = True
-            current = self._queue.current
-            if not current or current.source != Source.RADIO:
-                return
-
-            icy_title = meta.get("title", "")
-            icy_artist = meta.get("artist", "")
-
-            if not icy_title and not icy_artist:
-                return
-
-            # Update the track metadata in-place
-            if icy_artist:
-                current.artist_name = icy_artist
-                current.title = icy_title or station_name
-            else:
-                # No separator found — put raw title in album_title
-                current.title = icy_title
-                current.artist_name = station_name
-
-            current.album_title = station_name  # keep station name accessible
-
-            # Update cover: use RadioFrance cover if available, else station logo
-            cover_url = meta.get("cover_url")
-            current.cover_path = cover_url or station_cover
-
-            logger.info("icy_metadata_update", station=station_name, title=icy_title, artist=icy_artist)
-
-            # Emit event so WebSocket clients can update
-            event_bus.emit_nowait(Event(
-                type=EventType.PLAYBACK_METADATA,
-                data={
-                    "zone_id": zone_id,
-                    "title": current.title,
-                    "artist_name": current.artist_name,
-                    "album_title": current.album_title,
-                    "cover_path": cover_url_for_client(current.cover_path),
-                    "source": "radio",
-                },
-                source="player",
-            ))
-
-        return on_icy_metadata
+        """Delegate to RadioMetadataHandler."""
+        return self._radio.make_icy_callback(track)
 
     async def _poll_icy_metadata(self, stream_url: str, callback) -> None:
-        """Poll ICY metadata from a radio stream URL independently of the audio pipeline."""
-        import aiohttp
-        try:
-            headers = {"Icy-MetaData": "1", "User-Agent": "TuneServer/1.0"}
-            timeout = aiohttp.ClientTimeout(total=0)  # no timeout for radio
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(stream_url, headers=headers) as resp:
-                    metaint = int(resp.headers.get("icy-metaint", "0"))
-                    if metaint == 0:
-                        return  # no ICY support
-
-                    audio_bytes = 0
-                    async for chunk in resp.content.iter_any():
-                        if self._state not in (PlaybackState.PLAYING, PlaybackState.PAUSED):
-                            break
-
-                        # Skip audio data, just track byte count for metadata boundaries
-                        audio_bytes += len(chunk)
-                        while audio_bytes >= metaint:
-                            # We've passed a metadata boundary — read next metadata block
-                            audio_bytes -= metaint
-                            # Read the metadata length byte
-                            meta_len_data = await resp.content.readexactly(1)
-                            meta_len = meta_len_data[0] * 16
-                            if meta_len > 0:
-                                meta_data = await resp.content.readexactly(meta_len)
-                                meta_str = meta_data.decode("utf-8", errors="ignore").rstrip("\x00")
-                                # Parse StreamTitle='Artist - Title';
-                                for part in meta_str.split(";"):
-                                    part = part.strip()
-                                    if part.lower().startswith("streamtitle="):
-                                        title = part.split("=", 1)[1].strip("'\"")
-                                        if title:
-                                            artist, track_title = "", title
-                                            if " - " in title:
-                                                artist, track_title = title.split(" - ", 1)
-                                            callback({"title": track_title.strip(), "artist": artist.strip()})
-        except asyncio.CancelledError:
-            logger.debug("icy_poller_cancelled", zone_id=self._zone_id)
-        except Exception:
-            logger.debug("icy_poller_stopped", zone_id=self._zone_id)
+        """Delegate to RadioMetadataHandler."""
+        await self._radio.poll_icy_metadata(stream_url, callback)
 
     async def _stop_pipeline(self) -> None:
         self._renderer_has_next = False
         # Cancel any in-progress crossfade and restore volume
         await self._cancel_crossfade()
         # Stop ICY/radio metadata pollers
-        if self._icy_poller_task:
-            self._icy_poller_task.cancel()
-            self._icy_poller_task = None
-        if self._radio_poller:
-            self._radio_poller.stop()
-            self._radio_poller = None
+        self._radio.stop()
 
         if self._gapless:
             await self._gapless.cancel()
