@@ -95,7 +95,7 @@ class EventType(str, Enum):
 @dataclass
 class Event:
     type: EventType | str
-    data: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] | Any = field(default_factory=dict)
     source: str = ""
 
 
@@ -140,6 +140,11 @@ class EventBus:
         return list(self._recent_events)
 
     async def emit(self, event: Event) -> None:
+        # Support typed dataclass payloads (event_types.py) — convert to dict
+        # so downstream consumers (WebSocket JSON serialization) keep working.
+        if hasattr(event.data, "to_dict"):
+            event = Event(type=event.type, data=event.data.to_dict(), source=event.source)
+
         if event.type in _BUFFERED_TYPES:
             self._recent_events.append(event)
 
