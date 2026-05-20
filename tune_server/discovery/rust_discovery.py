@@ -31,7 +31,8 @@ except ImportError:
 
 
 def rust_discovery_available() -> bool:
-    engine = os.environ.get("TUNE_DISCOVERY_ENGINE", "auto")
+    from tune_server.config import settings
+    engine = settings.discovery_engine
     return _RUST_AVAILABLE and engine != "python"
 
 

@@ -1550,9 +1550,15 @@ async def diagnostics(errors_limit: int = Query(50, le=200)):
         import tune_native
         rust_engines["available"] = True
         rust_engines["version"] = tune_native.version()
-        rust_engines["metadata_engine"] = os.environ.get("TUNE_METADATA_ENGINE", "rust")
-        rust_engines["pipeline_engine"] = os.environ.get("TUNE_PIPELINE_ENGINE", "auto")
-        rust_engines["discovery_engine"] = os.environ.get("TUNE_DISCOVERY_ENGINE", "auto")
+        rust_engines["scanner_engine"] = settings.scanner_engine
+        rust_engines["discovery_engine"] = settings.discovery_engine
+        rust_engines["metadata_engine"] = settings.metadata_engine
+        from tune_server.library.rust_scanner import rust_scanner_available
+        from tune_server.discovery.rust_discovery import rust_discovery_available
+        from tune_server.library.metadata_reader import _use_rust_engine
+        rust_engines["scanner_active"] = rust_scanner_available()
+        rust_engines["discovery_active"] = rust_discovery_available()
+        rust_engines["metadata_active"] = _use_rust_engine()
     except ImportError:
         pass
     diag["rust_engines"] = rust_engines

@@ -238,6 +238,22 @@ class TuneServer:
                 hint = "Install with: sudo apt install ffmpeg (or brew install ffmpeg on macOS)"
             logger.error("ffmpeg_not_found", hint=hint, configured_path=settings.ffmpeg_path)
 
+        # Rust native acceleration status
+        try:
+            import tune_native
+            from tune_server.library.rust_scanner import rust_scanner_available
+            from tune_server.discovery.rust_discovery import rust_discovery_available
+            from tune_server.library.metadata_reader import _use_rust_engine
+            logger.info(
+                "rust_native_engines",
+                version=tune_native.version(),
+                scanner=rust_scanner_available(),
+                discovery=rust_discovery_available(),
+                metadata=_use_rust_engine(),
+            )
+        except ImportError:
+            logger.info("rust_native_engines", available=False)
+
         # Database — use SQLAlchemy Core engine (database-independent)
         self._db = create_database(settings, use_sa=True)
         await self._db.connect()

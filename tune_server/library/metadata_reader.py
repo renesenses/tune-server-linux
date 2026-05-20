@@ -317,9 +317,8 @@ def _parse_year(val) -> Optional[int]:
 def _use_rust_engine() -> bool:
     if not _RUST_AVAILABLE:
         return False
-    import os
-    engine = os.environ.get("TUNE_METADATA_ENGINE", "rust")
-    return engine != "python"
+    from tune_server.config import settings
+    return settings.metadata_engine != "python"
 
 
 def read_metadata(file_path: str) -> Optional[TrackMetadata]:

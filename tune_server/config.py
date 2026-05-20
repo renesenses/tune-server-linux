@@ -52,6 +52,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Rust native acceleration (tune_native via PyO3)
+    # "auto" = use Rust if available, "rust" = require Rust, "python" = force Python
+    scanner_engine: str = "auto"
+    discovery_engine: str = "auto"
+    metadata_engine: str = "auto"
+
     # Library
     music_dirs: list[str] = Field(default_factory=lambda: [str(Path.home() / "Music")])
     scan_on_startup: bool = True

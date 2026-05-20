@@ -15,13 +15,11 @@ from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork
 from tune_server.library.enrichment import normalize_genre
 from tune_server.library.metadata_reader import SUPPORTED_EXTENSIONS, read_metadata
-from tune_server.library.rust_scanner import rust_scanner_available
+from tune_server.library.rust_scanner import rust_scanner_available as _rust_scanner_available
 from tune_server.config import settings
 from tune_server.models import Track, TrackCredit
 
 logger = structlog.get_logger()
-
-_USE_RUST_SCANNER = rust_scanner_available()
 
 
 AUDIO_HASH_SAMPLE_SIZE = 64 * 1024  # 64KB sample for audio hash
@@ -111,7 +109,7 @@ def compute_audio_hash(file_path: str) -> str | None:
     Skips metadata (typically at start/end) by reading from 25% into the file.
     Uses Rust implementation when available (Phase 4).
     """
-    if _USE_RUST_SCANNER:
+    if _rust_scanner_available():
         try:
             from tune_server.library.rust_scanner import compute_audio_hash as _rust_hash
             return _rust_hash(file_path)
@@ -141,10 +139,14 @@ def _list_audio_files(dir_path: Path) -> list[Path]:
 
     Uses Rust walkdir when available (Phase 4) for faster traversal.
     """
-    if _USE_RUST_SCANNER:
+    if _rust_scanner_available():
         try:
             from tune_server.library.rust_scanner import list_audio_files as _rust_list
-            return [Path(p) for p in _rust_list([str(dir_path)])]
+            return [
+                Path(p) for p in _rust_list([str(dir_path)])
+                if not Path(p).name.startswith("._")
+                and not (SKIP_DIRS & set(Path(p).parts))
+            ]
         except Exception:
             pass
 
