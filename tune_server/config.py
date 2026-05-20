@@ -16,11 +16,12 @@ def _detect_base_dir() -> Path:
 
 
 def _env_file_candidates() -> list[str]:
-    """Build ordered list of .env paths: exe dir, %LOCALAPPDATA%/Tune, CWD."""
+    """Build ordered list of .env paths: exe dir, %APPDATA%/TuneServer, CWD."""
     candidates = [str(_detect_base_dir() / ".env")]
     if sys.platform == "win32":
-        local = Path.home() / "AppData" / "Local" / "Tune" / ".env"
-        candidates.append(str(local))
+        import os
+        appdata = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+        candidates.append(str(Path(appdata) / "TuneServer" / ".env"))
     candidates.append(".env")
     return candidates
 

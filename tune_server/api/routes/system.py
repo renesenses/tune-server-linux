@@ -1205,6 +1205,7 @@ async def cleanup_server():
 async def get_logs(lines: int = 100):
     """Get recent server logs."""
     import subprocess
+    import sys as _sys
     try:
         result = subprocess.run(
             ["journalctl", "-u", "tune-server", "--no-pager", "-n", str(lines)],
@@ -1213,14 +1214,25 @@ async def get_logs(lines: int = 100):
         return {"logs": result.stdout, "lines": lines}
     except FileNotFoundError:
         pass
-    for candidate in [
+    candidates = []
+    # Windows: log lives in the data dir (%APPDATA%/TuneServer/) or next to the exe
+    if _sys.platform == "win32":
+        import os
+        appdata = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+        candidates.append(Path(appdata) / "TuneServer" / "tune-server.log")
+        if getattr(_sys, "frozen", False):
+            candidates.append(Path(_sys.executable).resolve().parent / "tune-server.log")
+    candidates.extend([
+        Path.home() / "Library" / "Logs" / "Tune Server" / "tune-server.log",
         Path.home() / "Library" / "Logs" / "Tune Server.log",
         Path("/tmp/tune-server.log"),
         Path("/var/log/tune-server.log"),
         Path("/usr/local/var/log/tune-server.log"),
-    ]:
+    ])
+    candidates.append(Path.cwd() / "tune-server.log")
+    for candidate in candidates:
         if candidate.exists():
-            text = candidate.read_text()
+            text = candidate.read_text(encoding="utf-8", errors="replace")
             log_lines = text.strip().split("\n")
             return {"logs": "\n".join(log_lines[-lines:]), "lines": len(log_lines[-lines:])}
     return {"logs": "", "lines": 0}

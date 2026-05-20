@@ -75,7 +75,7 @@ set ATTEMPT=1
 
 echo Demarrage de Tune Server...
 echo L'interface web s'ouvrira sur http://localhost:8888
-echo Logs : %cd%\tune-server.log
+echo Logs : %APPDATA%\TuneServer\tune-server.log
 echo.
 echo   Si vos enceintes DLNA ne sont pas detectees, verifiez que
 echo   le pare-feu Windows autorise tune-server.exe (reseau prive).
@@ -131,10 +131,12 @@ goto :RUN_LOOP
 :GIVE_UP
 echo.
 echo Tune Server has crashed !MAX_ATTEMPTS! times in a row. Watchdog stopping.
-if exist "tune-server.log" (
-    echo Last 40 lines of tune-server.log:
+set "LOG_PATH=%APPDATA%\TuneServer\tune-server.log"
+if not exist "!LOG_PATH!" set "LOG_PATH=tune-server.log"
+if exist "!LOG_PATH!" (
+    echo Last 40 lines of !LOG_PATH!:
     echo ------------------------------------------------------------
-    powershell -NoProfile -Command "Get-Content -Path 'tune-server.log' -Tail 40 -ErrorAction SilentlyContinue"
+    powershell -NoProfile -Command "Get-Content -Path '!LOG_PATH!' -Tail 40 -ErrorAction SilentlyContinue"
     echo ------------------------------------------------------------
 ) else (
     echo No log file was written ^(server may have failed before logging init^).

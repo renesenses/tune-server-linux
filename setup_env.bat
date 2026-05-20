@@ -12,6 +12,6 @@ if not exist ".env.example" (
     exit /b 1
 )
 
-copy ".env.example" ".env" >/dev/null
+copy ".env.example" ".env" >nul
 echo Created .env from template.
 echo Edit .env to configure your Tidal, Qobuz, Deezer credentials and music directories.

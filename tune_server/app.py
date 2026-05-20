@@ -117,9 +117,16 @@ def _resolve_log_path() -> "Path | None":
         # convention anyway.
         if sys.platform == "darwin" and ".app/Contents/" in str(exe_dir):
             candidates.append(Path.home() / "Library" / "Logs" / "Tune Server" / "tune-server.log")
+        elif sys.platform == "win32":
+            # Windows: _ensure_data_dir() already set CWD to %APPDATA%/TuneServer/.
+            # Log there so all user data (db, .env, logs) lives in one place.
+            # Fall back to exe dir if the data dir is not writable.
+            import os
+            appdata = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+            candidates.append(Path(appdata) / "TuneServer" / "tune-server.log")
+            candidates.append(exe_dir / "tune-server.log")
         else:
-            # PyInstaller bundle (Windows .exe / Linux binary): log next
-            # to the running binary.
+            # PyInstaller bundle (Linux binary): log next to the running binary.
             candidates.append(exe_dir / "tune-server.log")
     candidates.append(Path.home() / ".tune" / "tune-server.log")
     candidates.append(Path("tune-server.log"))
