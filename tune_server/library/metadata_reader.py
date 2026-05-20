@@ -87,11 +87,13 @@ def _get_first(tags: dict, keys: list[str], default: str = "") -> str:
 
 
 def _parse_int(value: str, default: int = 0) -> int:
+    s = str(value).strip()
+    if not s:
+        return default
     try:
-        # Handle "3/12" style track numbers
-        return int(str(value).split("/")[0])
+        return int(s.split("/")[0])
     except (ValueError, TypeError, IndexError) as e:
-        logger.debug("metadata_parse_int_failed", value=str(value)[:50], error=str(e))
+        logger.debug("metadata_parse_int_failed", value=s[:50], error=str(e))
         return default
 
 
