@@ -17,7 +17,12 @@ from tune_server.outputs.base import OutputTarget
 
 logger = structlog.get_logger()
 
-GAPLESS_PRELOAD_SECS = 20
+def _preload_secs() -> int:
+    try:
+        from tune_server.config import settings
+        return settings.chromecast_preload_secs
+    except Exception:
+        return 30
 
 _CAST_DIRECT_FORMATS = {AudioFormat.FLAC, AudioFormat.MP3, AudioFormat.AAC, AudioFormat.OGG, AudioFormat.WAV}
 
@@ -300,7 +305,7 @@ class ChromecastOutput(OutputTarget):
                     "media": media,
                     "autoplay": True,
                     "startTime": 0,
-                    "preloadTime": GAPLESS_PRELOAD_SECS,
+                    "preloadTime": _preload_secs(),
                 }],
                 "type": "QUEUE_INSERT",
             }
@@ -309,7 +314,7 @@ class ChromecastOutput(OutputTarget):
                 mc.send_message, msg, inc_session_id=True,
             )
             logger.info("chromecast_next_queued", device=self._name, track=title,
-                        url=url[:80], preload_secs=GAPLESS_PRELOAD_SECS)
+                        url=url[:80], preload_secs=_preload_secs())
             return True
         except Exception:
             logger.exception("chromecast_queue_next_failed", device=self._name,

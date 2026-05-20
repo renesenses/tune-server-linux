@@ -131,6 +131,10 @@ class Settings(BaseSettings):
     surround_bass_management: bool = True  # Redirect bass from all channels to LFE
     surround_crossover_hz: int = 120  # Bass crossover frequency for LFE redirect
 
+    # Chromecast
+    chromecast_preload_secs: int = 30  # seconds before track end to QUEUE_INSERT next track
+    chromecast_live_stream: bool = False  # experimental: concatenate tracks into a single live stream
+
     # Crossfade
     crossfade_enabled: bool = False
     crossfade_duration: float = 3.0  # seconds
