@@ -44,7 +44,7 @@ struct AppState {
     ssdp: Arc<Mutex<SsdpScanner>>,
     outputs: Arc<Mutex<OutputRegistry>>,
     services: Arc<Mutex<ServiceRegistry>>,
-    music_dirs: Vec<String>,
+    music_dirs: std::sync::RwLock<Vec<String>>,
     web_dir: Option<PathBuf>,
 }
 
@@ -61,8 +61,15 @@ async fn main() {
 
     let music_dirs = std::env::var("TUNE_MUSIC_DIRS")
         .map(|s| {
-            serde_json::from_str::<Vec<String>>(&s)
-                .unwrap_or_else(|_| vec![s.trim_matches('"').to_string()])
+            tracing::debug!(raw = %s, "parsing TUNE_MUSIC_DIRS");
+            serde_json::from_str::<Vec<String>>(&s).unwrap_or_else(|_| {
+                let cleaned = s.trim_matches(|c: char| c == '"' || c == '\'' || c == '[' || c == ']');
+                cleaned
+                    .split(',')
+                    .map(|p| p.trim().trim_matches(|c: char| c == '"' || c == '\'').to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
         })
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME")
@@ -99,7 +106,18 @@ async fn main() {
 
     let db = SqliteDb::open(&db_path).expect("failed to open database");
     db.init_schema().expect("failed to initialize schema");
+    tune_core::db::migrations::run_migrations(&db).expect("failed to run migrations");
     info!("database_ready");
+
+    // Load music_dirs from settings DB (overrides env var if present)
+    let music_dirs = {
+        let repo = tune_core::db::settings_repo::SettingsRepo::new(db.clone());
+        if let Ok(Some(stored)) = repo.get("music_dirs") {
+            serde_json::from_str::<Vec<String>>(&stored).unwrap_or(music_dirs)
+        } else {
+            music_dirs
+        }
+    };
 
     let streamer = Arc::new(AudioStreamer::new(stream_port));
     let playback = Arc::new(PlaybackManager::new());
@@ -214,7 +232,7 @@ async fn main() {
         ssdp,
         outputs,
         services,
-        music_dirs,
+        music_dirs: std::sync::RwLock::new(music_dirs),
         web_dir: web_dir.clone(),
     });
 
@@ -334,7 +352,7 @@ async fn system_info(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> 
         "version": VERSION,
         "engine": "rust",
         "local_ip": local_ip,
-        "music_dirs": s.music_dirs,
+        "music_dirs": *s.music_dirs.read().unwrap(),
         "web_dir": s.web_dir.as_ref().map(|p| p.display().to_string()),
     }))
 }
@@ -510,7 +528,7 @@ async fn library_stats(State(s): State<Arc<AppState>>) -> Json<serde_json::Value
 
 async fn trigger_scan(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let db = s.db.clone();
-    let dirs = s.music_dirs.clone();
+    let dirs = s.music_dirs.read().unwrap().clone();
     tokio::spawn(async move {
         let _ = tokio::task::spawn_blocking(move || {
             tune_core::scanner::scan_and_import(&db, &dirs)
@@ -1017,7 +1035,8 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<AppState>) {
 // ---------------------------------------------------------------------------
 
 async fn get_music_dirs(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "music_dirs": s.music_dirs }))
+    let dirs = s.music_dirs.read().unwrap().clone();
+    Json(serde_json::json!({ "music_dirs": dirs }))
 }
 
 async fn add_music_dir(
@@ -1025,10 +1044,15 @@ async fn add_music_dir(
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let path = body.get("path").and_then(|v| v.as_str()).unwrap_or("");
-    let mut dirs = s.music_dirs.clone();
-    if !path.is_empty() && !dirs.contains(&path.to_string()) {
-        dirs.push(path.to_string());
-    }
+    let dirs = {
+        let mut guard = s.music_dirs.write().unwrap();
+        if !path.is_empty() && !guard.contains(&path.to_string()) {
+            guard.push(path.to_string());
+        }
+        guard.clone()
+    };
+    let repo = tune_core::db::settings_repo::SettingsRepo::new(s.db.clone());
+    let _ = repo.set("music_dirs", &serde_json::to_string(&dirs).unwrap_or_default());
     Json(serde_json::json!({ "music_dirs": dirs }))
 }
 
@@ -1037,12 +1061,18 @@ async fn remove_music_dir(
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let path = body.get("path").and_then(|v| v.as_str()).unwrap_or("");
-    let dirs: Vec<&String> = s.music_dirs.iter().filter(|d| d.as_str() != path).collect();
+    let dirs = {
+        let mut guard = s.music_dirs.write().unwrap();
+        guard.retain(|d| d.as_str() != path);
+        guard.clone()
+    };
+    let repo = tune_core::db::settings_repo::SettingsRepo::new(s.db.clone());
+    let _ = repo.set("music_dirs", &serde_json::to_string(&dirs).unwrap_or_default());
     Json(serde_json::json!({ "music_dirs": dirs }))
 }
 
 async fn browse_roots(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let roots: Vec<serde_json::Value> = s.music_dirs.iter().map(|d| {
+    let roots: Vec<serde_json::Value> = s.music_dirs.read().unwrap().iter().map(|d| {
         let p = std::path::Path::new(d);
         serde_json::json!({
             "path": d,
