@@ -2,6 +2,116 @@
 
 All notable changes to Tune Server.
 
+## v0.7.125 — 2026-05-20
+
+### Added
+- **Smart Playlists editing** — modify smart playlist rules without deleting/recreating.
+- **NowPlaying responsive cover** — larger artwork on TV/big screens (520px at 1400px+, 640px at 1800px+).
+- **Live scan progress** — real-time file count via WebSocket during library scan.
+- **MusicBrainz progress via WebSocket** — enrichment progress pushed in real-time (replaces polling).
+
+### Fixed
+- **DLNA gapless skip** — verify renderer is still active before soft advance; fallback to hard start if renderer stopped.
+- **Docker plugin install** — retry with `--user` flag on permission denied (ZimaOS/Docker).
+- **Streaming carousel scroll** — visible thin scrollbar on Tidal/Qobuz favorites (was hidden).
+
+### Improved
+- **.env diagnostic log** — logs which .env files are loaded at startup + effective config values.
+
+---
+
+## v0.7.124 — 2026-05-19
+
+### Fixed
+- **SSDP filter too aggressive** — broke Squeezebox (LMS) discovery on non-standard ports.
+- **Squeezebox config** — added `squeezebox_enabled` to system API.
+
+---
+
+## v0.7.123 — 2026-05-19
+
+### Fixed
+- **Chromecast radio** — streams use LIVE type (no duration, no progress bar).
+- **DLNA gapless** — disable SetNextAVTransportURI for slow renderers (Shanling, Atoll).
+
+---
+
+## v0.7.122 — 2026-05-19
+
+### Fixed
+- **DLNA duplicate zones** — reconnecting renderer (Shanling) reuses existing zone instead of creating a duplicate.
+- **False STOPPED during playback** — ignore STOPPED event when HTTP stream is still active.
+
+---
+
+## v0.7.121 — 2026-05-19
+
+### Fixed
+- **Chromecast stops after 1st track** — added `has_pending_stream` guard for queue continuation.
+
+---
+
+## v0.7.120 — 2026-05-19
+
+### Fixed
+- **PostgreSQL ON CONFLICT** — SQLite INSERT OR IGNORE/REPLACE correctly translated to ON CONFLICT.
+- **UUID as device name** — friendly name displayed immediately on discovery.
+- **Nest Hub reconnection** — automatic retry on Chromecast Nest Hub connection loss.
+
+---
+
+## v0.7.119 — 2026-05-19
+
+### Added
+- **NowPlaying redesign** — quality badge outside cover, larger artwork.
+- **Play All / Shuffle** — buttons added to search results.
+
+### Fixed
+- **Chromecast gapless** — QUEUE_INSERT with preloadTime for seamless transitions.
+- **SSDP local filter** — only discover devices on the local network.
+
+---
+
+## v0.7.118 — 2026-05-19
+
+### Added
+- **Progressive loading** — first 100 albums appear instantly.
+- **Dynamic changelog** — What's New dialog fetches notes from API.
+- **CSS responsive mobile** — library layout at 480px breakpoint.
+
+### Fixed
+- **Windows .env** — search exe dir, %LOCALAPPDATA%/Tune, and CWD.
+- **DLNA last track** — skip on last track in queue corrected.
+- **BluOS queue** — jump to last track instead of next fixed.
+- **Normalisation per zone** — persisted in database per zone.
+- **Album year-split** — silent re-merge of split albums corrected.
+- **MUSIC_DIRS** — string coercion for single-directory configs.
+- **Frozen plugins** — install corrected when registry is frozen.
+- **Local output** — crash on creation fixed.
+
+---
+
+## v0.7.117 — 2026-05-19
+
+### Added
+- **Forum multilingual** — posts auto-translated to 8 languages via Claude Haiku.
+- **Cross-view search** — search from Home carried to Search view.
+
+---
+
+## v0.7.116 — 2026-05-19
+
+### Added
+- **Accent-insensitive search** — "carlao" finds "carlão", custom SQLite fold_accents UDF.
+- **Docker ARM64** — multi-arch build (amd64 + arm64).
+- **Tidal favorites** — albums, artists and tracks.
+
+### Fixed
+- **Genres preserved** — Hard Rock, Progressive Rock, etc. no longer collapsed to parent.
+- **PostgreSQL search** — DISTINCT removed for asyncpg compatibility.
+
+---
+
 ## v0.7.115 — 2026-05-19
 
 ### Added
