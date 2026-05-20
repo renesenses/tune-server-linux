@@ -2,11 +2,13 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Json;
 use axum::routing::{delete, get, post};
 use axum::Router;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -261,7 +263,9 @@ async fn main() {
         // History
         .route("/history/recent", get(recent_history))
         // Artwork
-        .route("/library/artwork/{filename}", get(serve_artwork));
+        .route("/library/artwork/{filename}", get(serve_artwork))
+        // WebSocket
+        .route("/ws", get(ws_handler));
 
     let stream_sessions = streamer.sessions_state();
 
@@ -871,6 +875,69 @@ async fn serve_artwork(Path(filename): Path<String>) -> Result<axum::response::R
         .header(header::CACHE_CONTROL, "public, max-age=86400")
         .body(Body::from(data))
         .unwrap())
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket handler
+// ---------------------------------------------------------------------------
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
+}
+
+async fn handle_ws_connection(socket: WebSocket, state: Arc<AppState>) {
+    let (mut sender, mut receiver) = socket.split();
+    let mut event_rx = state.playback.subscribe();
+
+    info!("ws_client_connected");
+
+    loop {
+        tokio::select! {
+            // Forward playback events to the WebSocket client
+            event = event_rx.recv() => {
+                match event {
+                    Ok(ev) => {
+                        let mut data = ev.data.clone();
+                        if let Some(obj) = data.as_object_mut() {
+                            obj.insert("zone_id".to_string(), serde_json::json!(ev.zone_id));
+                        }
+                        let msg = serde_json::json!({
+                            "type": format!("playback.{}", ev.event),
+                            "data": data,
+                        });
+                        if sender.send(Message::Text(msg.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "ws_client_lagged");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+            // Handle incoming messages from the client (or detect disconnect)
+            msg = receiver.next() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(data))) => {
+                        if sender.send(Message::Pong(data)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(_)) => {} // Ignore other messages
+                    Some(Err(_)) => break,
+                }
+            }
+        }
+    }
+
+    info!("ws_client_disconnected");
 }
 
 // ---------------------------------------------------------------------------

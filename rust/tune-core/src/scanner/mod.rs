@@ -3,6 +3,10 @@ pub mod quality;
 pub mod walker;
 pub mod watcher;
 
+use std::collections::HashSet;
+use std::path::Path;
+
+use crate::artwork;
 use crate::db::album_repo::AlbumRepo;
 use crate::db::artist_repo::ArtistRepo;
 use crate::db::sqlite::SqliteDb;
@@ -19,7 +23,14 @@ pub fn scan_and_import(db: &SqliteDb, music_dirs: &[String]) -> Result<ScanStats
     let album_repo = AlbumRepo::new(db.clone());
     let track_repo = TrackRepo::new(db.clone());
 
+    let cache_dir = std::env::var("TUNE_ARTWORK_CACHE")
+        .unwrap_or_else(|_| "artwork_cache".into());
+    let cache_path = Path::new(&cache_dir);
+
     let mut imported = 0;
+    let mut covers_extracted = 0;
+    let mut albums_with_cover: HashSet<i64> = HashSet::new();
+
     for f in &files {
         let meta = match &f.metadata {
             Some(m) => m,
@@ -43,7 +54,8 @@ pub fn scan_and_import(db: &SqliteDb, music_dirs: &[String]) -> Result<ScanStats
             .get_or_create(album_title, artist_id, meta.year.map(|y| y as i32))
             .map_err(|e| format!("album create error: {e}"))?;
 
-        // Extract composer from credits if available
+        let album_id = album.id.unwrap_or(0);
+
         let composer = meta.credits.iter()
             .find(|c| c.role == "composer")
             .map(|c| c.name.clone());
@@ -81,11 +93,27 @@ pub fn scan_and_import(db: &SqliteDb, music_dirs: &[String]) -> Result<ScanStats
         if track_repo.create(&track).is_ok() {
             imported += 1;
         }
+
+        if album_id > 0 && !albums_with_cover.contains(&album_id) {
+            let audio_path = Path::new(&f.path);
+            if let Some(hash) = artwork::get_or_extract(audio_path, cache_path) {
+                let cover_value = format!("{hash}.jpg");
+                if album_repo.update_cover_path(album_id, &cover_value).is_ok() {
+                    albums_with_cover.insert(album_id);
+                    covers_extracted += 1;
+                }
+            }
+        }
     }
 
     let _ = album_repo.delete_orphans();
 
-    info!(scanned = stats.total_files, imported, "scan_and_import_complete");
+    info!(
+        scanned = stats.total_files,
+        imported,
+        covers = covers_extracted,
+        "scan_and_import_complete"
+    );
 
     Ok(stats)
 }
