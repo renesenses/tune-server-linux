@@ -240,6 +240,26 @@ class MetadataEnricher:
         self._task: asyncio.Task | None = None
         self._running = False
 
+    async def _get_discogs_token(self) -> str:
+        """Return Discogs token: .env first, then DB (Services UI) fallback."""
+        from tune_server.config import settings as _s
+        if _s.discogs_token:
+            return _s.discogs_token
+        try:
+            import json as _json
+            row = await self._db.fetchone(
+                "SELECT token_data FROM streaming_auth WHERE service = ?",
+                ("discogs",),
+            )
+            if row and row["token_data"]:
+                data = _json.loads(row["token_data"])
+                token = data.get("token", "")
+                if token:
+                    return token
+        except Exception:
+            pass
+        return ""
+
     async def start(self) -> None:
         self._running = True
         self._task = asyncio.create_task(self._enrich_loop())
@@ -318,9 +338,10 @@ class MetadataEnricher:
                         continue
 
                 # Step 2: Fall back to Discogs (rate-limited)
-                if _s.discogs_token:
+                _discogs_tok = await self._get_discogs_token()
+                if _discogs_tok:
                     img_path = await _fetch_discogs_artist_image(
-                        artist.name, _s.discogs_token, _s.artwork_cache_dir
+                        artist.name, _discogs_tok, _s.artwork_cache_dir
                     )
                     if img_path:
                         artist.image_path = img_path
@@ -455,9 +476,10 @@ class MetadataEnricher:
                             continue
 
                     # Step 2: Fall back to Discogs (rate-limited)
-                    if _s.discogs_token:
+                    _discogs_tok2 = await self._get_discogs_token()
+                    if _discogs_tok2:
                         img_path = await _fetch_discogs_artist_image(
-                            artist.name, _s.discogs_token, _s.artwork_cache_dir
+                            artist.name, _discogs_tok2, _s.artwork_cache_dir
                         )
                         if img_path:
                             artist.image_path = img_path

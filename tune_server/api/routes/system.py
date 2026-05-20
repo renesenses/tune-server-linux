@@ -44,6 +44,9 @@ async def health():
 
 @router.get("/config", response_model=SystemConfigResponse)
 async def get_config():
+    from tune_server.api.routes.services import get_discogs_token
+
+    discogs_token = await get_discogs_token()
     return SystemConfigResponse(
         music_dirs=settings.music_dirs,
         api_port=settings.api_port,
@@ -79,7 +82,7 @@ async def get_config():
         surround_bass_management=settings.surround_bass_management,
         surround_crossover_hz=settings.surround_crossover_hz,
         metadata_readonly=settings.metadata_readonly,
-        discogs_token_set=bool(settings.discogs_token),
+        discogs_token_set=bool(discogs_token),
         enrich_on_scan=settings.enrich_on_scan,
     )
 
