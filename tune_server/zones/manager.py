@@ -6,7 +6,7 @@ import uuid
 import structlog
 
 from tune_server.db.engine import Database
-from tune_server.db.repository import PlayQueueRepo, ZoneRepo
+from tune_server.db.sa_repository import PlayQueueRepo, ZoneRepo
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.models import OutputType, PlaybackState
 from tune_server.outputs.base import OutputTarget

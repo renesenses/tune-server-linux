@@ -8,7 +8,7 @@ import aiohttp
 import structlog
 
 from tune_server.db.engine import Database
-from tune_server.db.repository import AlbumRepo, ArtistRepo
+from tune_server.db.sa_repository import AlbumRepo, ArtistRepo
 
 logger = structlog.get_logger()
 

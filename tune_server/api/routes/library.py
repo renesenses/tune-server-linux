@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 
 from tune_server.api.deps import deps
 from tune_server.config import settings
-from tune_server.db.repository import full_text_search
+from tune_server.db.compat import full_text_search
 from tune_server.event_bus import Event, EventType
 from tune_server.library.artwork import copy_cover_to_album_folder, fetch_cover_from_musicbrainz, get_album_artwork, save_artwork
 from tune_server.library.metadata_reader import write_tags
@@ -1436,14 +1436,14 @@ async def get_similar_albums(album_id: int, limit: int = Query(10, le=30)):
 
 @router.get("/smart-playlists")
 async def list_smart_playlists():
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     return await repo.list()
 
 
 @router.post("/smart-playlists")
 async def create_smart_playlist(body: dict):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     import json
     sp_id = await repo.create(
@@ -1460,7 +1460,7 @@ async def create_smart_playlist(body: dict):
 
 @router.get("/smart-playlists/{sp_id}")
 async def get_smart_playlist(sp_id: int):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     sp = await repo.get(sp_id)
     if not sp:
@@ -1470,7 +1470,7 @@ async def get_smart_playlist(sp_id: int):
 
 @router.put("/smart-playlists/{sp_id}")
 async def update_smart_playlist(sp_id: int, body: dict):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     import json
     updates = {}
@@ -1485,7 +1485,7 @@ async def update_smart_playlist(sp_id: int, body: dict):
 
 @router.delete("/smart-playlists/{sp_id}")
 async def delete_smart_playlist(sp_id: int):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     await repo.delete(sp_id)
     return {"deleted": sp_id}
@@ -1493,7 +1493,7 @@ async def delete_smart_playlist(sp_id: int):
 
 @router.get("/smart-playlists/{sp_id}/tracks")
 async def get_smart_playlist_tracks(sp_id: int):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     return await repo.resolve_tracks(sp_id)
 

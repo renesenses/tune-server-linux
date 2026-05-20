@@ -245,12 +245,34 @@ class SAArtistRepo:
         )
         return result.lastrowid
 
-    async def get_or_create(self, name: str) -> Artist:
+    async def get_by_musicbrainz_id(self, mbid: str) -> Artist | None:
+        row = await self._db.sa_fetchone(
+            sa.select(artists).where(artists.c.musicbrainz_id == mbid)
+        )
+        return _row_to_artist(row) if row else None
+
+    async def get_or_create(self, name: str, musicbrainz_id: str | None = None,
+                            sort_name: str | None = None) -> Artist:
+        if musicbrainz_id:
+            existing = await self.get_by_musicbrainz_id(musicbrainz_id)
+            if existing:
+                if sort_name and existing.sort_name != sort_name:
+                    existing.sort_name = sort_name
+                    await self.update(existing)
+                return existing
         existing = await self.get_by_name(name)
         if existing:
+            if musicbrainz_id and not existing.musicbrainz_id:
+                existing.musicbrainz_id = musicbrainz_id
+                await self.update(existing)
+            if sort_name and existing.sort_name != sort_name:
+                existing.sort_name = sort_name
+                await self.update(existing)
             return existing
-        artist_id = await self.create(Artist(name=name, sort_name=name))
-        return Artist(id=artist_id, name=name, sort_name=name)
+        effective_sort = sort_name or name
+        artist = Artist(name=name, sort_name=effective_sort, musicbrainz_id=musicbrainz_id)
+        artist_id = await self.create(artist)
+        return Artist(id=artist_id, name=name, sort_name=effective_sort, musicbrainz_id=musicbrainz_id)
 
     async def update(self, artist: Artist) -> None:
         await self._db.sa_execute(
@@ -297,7 +319,7 @@ class SAArtistRepo:
         stmt = (
             sa.select(artists)
             .where(sa.or_(where_clause, accent_fallback))
-            .order_by(rank_clause.desc())
+            .order_by(sa.desc(rank_clause))
             .limit(limit)
             .params(fts_query=fts_query, like_folded=like_folded)
         )
@@ -489,6 +511,136 @@ class SAAlbumRepo:
                     updated_at=sa.func.now(),
                 )
             )
+
+    async def get_or_create(self, title: str, artist_id: int, **kwargs) -> Album:
+        """Compat with legacy AlbumRepo.get_or_create."""
+        mb_release_id = kwargs.get("musicbrainz_release_id")
+        if mb_release_id:
+            row = await self._db.sa_fetchone(
+                self._album_select().where(albums.c.musicbrainz_release_id == mb_release_id)
+            )
+            if row:
+                return _row_to_album(row)
+        year = kwargs.get("year")
+        stmt = self._album_select().where(
+            sa.and_(albums.c.title == title, albums.c.artist_id == artist_id)
+        )
+        if year:
+            row = await self._db.sa_fetchone(stmt.where(albums.c.year == year))
+            if row:
+                existing = _row_to_album(row)
+                if mb_release_id and existing.musicbrainz_release_id and existing.musicbrainz_release_id != mb_release_id:
+                    pass  # Don't reuse
+                else:
+                    if mb_release_id and not existing.musicbrainz_release_id:
+                        await self.update_musicbrainz_ids(existing.id, mb_release_id, kwargs.get("musicbrainz_release_group_id"))
+                    return existing
+        row = await self._db.sa_fetchone(stmt)
+        if row:
+            existing = _row_to_album(row)
+            if mb_release_id and existing.musicbrainz_release_id and existing.musicbrainz_release_id != mb_release_id:
+                pass  # Don't reuse
+            elif year and existing.year and existing.year != year:
+                pass  # Don't reuse
+            else:
+                if mb_release_id and not existing.musicbrainz_release_id:
+                    await self.update_musicbrainz_ids(existing.id, mb_release_id, kwargs.get("musicbrainz_release_group_id"))
+                return existing
+        album = Album(title=title, artist_id=artist_id, **kwargs)
+        album_id = await self.create(album)
+        album.id = album_id
+        return album
+
+    async def update_track_count(self, album_id: int) -> None:
+        """Recompute track_count from the tracks table."""
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(tracks).where(tracks.c.album_id == album_id)
+        )
+        cnt = row[0] if row else 0
+        await self._db.sa_execute(
+            albums.update().where(albums.c.id == album_id).values(track_count=cnt)
+        )
+
+    async def get_by_title(self, title: str, year: int | None = None) -> Album | None:
+        if year:
+            row = await self._db.sa_fetchone(
+                self._album_select().where(
+                    sa.and_(albums.c.title == title, albums.c.year == year)
+                ).limit(1)
+            )
+            if row:
+                return _row_to_album(row)
+        row = await self._db.sa_fetchone(
+            self._album_select().where(albums.c.title == title).limit(1)
+        )
+        return _row_to_album(row) if row else None
+
+    async def get_by_title_and_artist(self, title: str, artist_id: int,
+                                       year: int | None = None) -> Optional[Album]:
+        if year:
+            row = await self._db.sa_fetchone(
+                self._album_select().where(
+                    sa.and_(albums.c.title == title, albums.c.artist_id == artist_id,
+                            albums.c.year == year)
+                )
+            )
+            if row:
+                return _row_to_album(row)
+        row = await self._db.sa_fetchone(
+            self._album_select().where(
+                sa.and_(albums.c.title == title, albums.c.artist_id == artist_id)
+            )
+        )
+        return _row_to_album(row) if row else None
+
+    async def get_by_musicbrainz_release_id(self, release_id: str) -> Album | None:
+        row = await self._db.sa_fetchone(
+            self._album_select().where(albums.c.musicbrainz_release_id == release_id)
+        )
+        return _row_to_album(row) if row else None
+
+    async def get_dominant_sample_rate(self, album_id: int) -> int | None:
+        """Return the most common sample_rate among an album's tracks."""
+        row = await self._db.sa_fetchone(
+            sa.select(tracks.c.sample_rate)
+            .where(sa.and_(tracks.c.album_id == album_id,
+                           tracks.c.sample_rate.isnot(None)))
+            .group_by(tracks.c.sample_rate)
+            .order_by(sa.func.count().desc())
+            .limit(1)
+        )
+        return row[0] if row else None
+
+    async def refresh_quality(self, album_id: int) -> None:
+        """Recompute and store format/sample_rate/bit_depth from tracks."""
+        sr_row = await self._db.sa_fetchone(
+            sa.select(sa.func.max(tracks.c.sample_rate), sa.func.max(tracks.c.bit_depth))
+            .where(tracks.c.album_id == album_id)
+        )
+        fmt_row = await self._db.sa_fetchone(
+            sa.select(tracks.c.format)
+            .where(sa.and_(tracks.c.album_id == album_id, tracks.c.format.isnot(None)))
+            .group_by(tracks.c.format)
+            .order_by(sa.func.count().desc())
+            .limit(1)
+        )
+        sr = sr_row[0] if sr_row else None
+        bd = sr_row[1] if sr_row else None
+        fmt = fmt_row[0] if fmt_row else None
+        await self._db.sa_execute(
+            albums.update().where(albums.c.id == album_id).values(
+                sample_rate=sr, bit_depth=bd, format=fmt,
+            )
+        )
+
+    async def delete_orphans(self) -> int:
+        """Delete albums that have no tracks."""
+        # Subquery: album IDs that have at least one track
+        has_tracks = sa.select(tracks.c.album_id).where(tracks.c.album_id.isnot(None)).distinct()
+        result = await self._db.sa_execute(
+            albums.delete().where(~albums.c.id.in_(has_tracks))
+        )
+        return result.rowcount
 
     async def delete(self, album_id: int) -> None:
         await self._db.sa_execute(
@@ -1060,6 +1212,168 @@ class SATrackRepo:
         )
         return result.rowcount
 
+    # Legacy-compat aliases and missing methods
+    async def get_all_paths(self) -> set[str]:
+        """Alias for all_paths() — legacy repo compat."""
+        return await self.all_paths()
+
+    async def delete_by_path(self, file_path: str) -> None:
+        """Delete a single track by file_path."""
+        await self._db.sa_execute(
+            tracks.delete().where(tracks.c.file_path == file_path)
+        )
+
+    async def get_by_source(self, source: str, source_id: str) -> Optional[Track]:
+        row = await self._db.sa_fetchone(
+            self._track_select().where(
+                sa.and_(tracks.c.source == source, tracks.c.source_id == source_id)
+            )
+        )
+        return _row_to_track(row) if row else None
+
+    async def get_by_sources(self, items: list[tuple[str, str]]) -> dict[tuple[str, str], Track]:
+        """Batch lookup tracks by (source, source_id) pairs."""
+        if not items:
+            return {}
+        conditions = [
+            sa.and_(tracks.c.source == src, tracks.c.source_id == sid)
+            for src, sid in items
+        ]
+        rows = await self._db.sa_fetchall(
+            self._track_select().where(sa.or_(*conditions))
+        )
+        result: dict[tuple[str, str], Track] = {}
+        for r in rows:
+            t = _row_to_track(r)
+            result[(t.source, t.source_id)] = t
+        return result
+
+    async def get_mtime(self, file_path: str) -> Optional[float]:
+        row = await self._db.sa_fetchone(
+            sa.select(tracks.c.file_mtime).where(tracks.c.file_path == file_path)
+        )
+        return row[0] if row else None
+
+    async def update_mtime(self, file_path: str, mtime: float) -> None:
+        await self._db.sa_execute(
+            tracks.update().where(tracks.c.file_path == file_path).values(file_mtime=mtime)
+        )
+
+    async def get_file_size(self, file_path: str) -> int | None:
+        row = await self._db.sa_fetchone(
+            sa.select(tracks.c.file_size).where(tracks.c.file_path == file_path)
+        )
+        return row[0] if row else None
+
+    async def update_file_size(self, file_path: str, file_size: int) -> None:
+        await self._db.sa_execute(
+            tracks.update().where(tracks.c.file_path == file_path).values(file_size=file_size)
+        )
+
+    async def update_mtime_and_size(self, file_path: str, mtime: float, file_size: int) -> None:
+        await self._db.sa_execute(
+            tracks.update().where(tracks.c.file_path == file_path).values(
+                file_mtime=mtime, file_size=file_size,
+            )
+        )
+
+    async def update_audio_hash(self, file_path: str, audio_hash: str) -> None:
+        await self._db.sa_execute(
+            tracks.update().where(tracks.c.file_path == file_path).values(audio_hash=audio_hash)
+        )
+
+    async def find_by_audio_hash(self, audio_hash: str) -> Optional[Track]:
+        row = await self._db.sa_fetchone(
+            self._track_select().where(tracks.c.audio_hash == audio_hash).limit(1)
+        )
+        return _row_to_track(row) if row else None
+
+    async def update_loudness(self, track_id: int, lufs: float) -> None:
+        await self._db.sa_execute(
+            tracks.update().where(tracks.c.id == track_id).values(loudness_lufs=lufs)
+        )
+
+    async def deduplicate(self) -> int:
+        """Remove duplicate tracks (same audio_hash), keeping the lowest id.
+
+        Re-targets playlist_tracks and play_queue references before deleting.
+        Uses raw SQL for the complex subqueries.
+        """
+        # 1. Re-target playlist_tracks at the canonical (min-id) row.
+        await self._db.execute(
+            """UPDATE playlist_tracks
+                  SET track_id = (
+                      SELECT MIN(id) FROM tracks
+                       WHERE audio_hash = (
+                           SELECT audio_hash FROM tracks WHERE id = playlist_tracks.track_id
+                       )
+                         AND audio_hash IS NOT NULL
+                         AND album_id IS NOT NULL
+                  )
+                WHERE track_id IN (
+                    SELECT t.id FROM tracks t
+                    JOIN (
+                        SELECT audio_hash
+                          FROM tracks
+                         WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
+                         GROUP BY audio_hash
+                        HAVING COUNT(*) > 1
+                    ) d ON t.audio_hash = d.audio_hash
+                )""",
+        )
+        # 2. Same for play_queue.
+        await self._db.execute(
+            """UPDATE play_queue
+                  SET track_id = (
+                      SELECT MIN(id) FROM tracks
+                       WHERE audio_hash = (
+                           SELECT audio_hash FROM tracks WHERE id = play_queue.track_id
+                       )
+                         AND audio_hash IS NOT NULL
+                         AND album_id IS NOT NULL
+                  )
+                WHERE track_id IN (
+                    SELECT t.id FROM tracks t
+                    JOIN (
+                        SELECT audio_hash
+                          FROM tracks
+                         WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
+                         GROUP BY audio_hash
+                        HAVING COUNT(*) > 1
+                    ) d ON t.audio_hash = d.audio_hash
+                )""",
+        )
+        # 3. Delete the non-canonical duplicates.
+        cursor = await self._db.execute(
+            """DELETE FROM tracks WHERE id NOT IN (
+                SELECT MIN(id) FROM tracks
+                WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
+                GROUP BY audio_hash
+            ) AND id IN (
+                SELECT t.id FROM tracks t
+                JOIN (
+                    SELECT audio_hash
+                    FROM tracks WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
+                    GROUP BY audio_hash
+                    HAVING COUNT(*) > 1
+                ) d ON t.audio_hash = d.audio_hash
+            )""",
+        )
+        return cursor.rowcount
+
+    async def list_recent_duplicates(self, limit: int = 50) -> list[dict]:
+        rows = await self._db.fetchall(
+            """SELECT audio_hash, COUNT(*) as cnt,
+                      GROUP_CONCAT(file_path, ' | ') as paths
+               FROM tracks
+               WHERE audio_hash IS NOT NULL AND album_id IS NOT NULL
+               GROUP BY audio_hash
+               HAVING COUNT(*) > 1
+               LIMIT ?""",
+            (limit,),
+        )
+        return [dict(r) for r in rows]
+
 
 # ===================================================================
 # ZoneRepo — SA Core
@@ -1081,9 +1395,19 @@ class SAZoneRepo:
         )
         return [dict(r) for r in rows]
 
-    async def create(self, **kwargs) -> int:
+    async def create(self, name: str | None = None,
+                     output_type: str | None = None,
+                     output_device_id: str | None = None,
+                     **kwargs) -> int:
+        values = dict(kwargs)
+        if name is not None:
+            values["name"] = name
+        if output_type is not None:
+            values["output_type"] = output_type
+        if output_device_id is not None:
+            values["output_device_id"] = output_device_id
         result = await self._db.sa_execute(
-            zones.insert().values(**kwargs)
+            zones.insert().values(**values)
         )
         return result.lastrowid
 
@@ -1135,6 +1459,20 @@ class SAPlaylistRepo:
             playlists.insert().values(name=name, description=description)
         )
         return result.lastrowid
+
+    async def update(self, playlist_id: int, name: Optional[str] = None,
+                     description: Optional[str] = None) -> None:
+        values = {}
+        if name is not None:
+            values["name"] = name
+        if description is not None:
+            values["description"] = description
+        if not values:
+            return
+        values["updated_at"] = sa.func.now()
+        await self._db.sa_execute(
+            playlists.update().where(playlists.c.id == playlist_id).values(**values)
+        )
 
     async def delete(self, playlist_id: int) -> None:
         await self._db.sa_execute(
@@ -1780,3 +2118,20 @@ async def sa_full_text_search(db: SADatabase, query: str, limit: int = 50) -> Se
         albums=found_albums[:limit],
         artists=found_artists,
     )
+
+
+# ---------------------------------------------------------------------------
+# Short-name aliases — allows `from tune_server.db.sa_repository import AlbumRepo`
+# so callers don't need to know whether they're using the SA or legacy version.
+# ---------------------------------------------------------------------------
+
+ArtistRepo = SAArtistRepo
+AlbumRepo = SAAlbumRepo
+TrackRepo = SATrackRepo
+ZoneRepo = SAZoneRepo
+PlaylistRepo = SAPlaylistRepo
+PlayQueueRepo = SAPlayQueueRepo
+RadioStationRepo = SARadioStationRepo
+RadioFavoriteRepo = SARadioFavoriteRepo
+PartyVoteRepo = SAPartyVoteRepo
+AlbumRatingRepo = SAAlbumRatingRepo

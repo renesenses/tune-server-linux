@@ -11,14 +11,14 @@ from tune_server.api.deps import deps
 from tune_server.api.main import create_api_app, setup_websocket_manager, wrap_for_serving
 from tune_server.config import settings
 from tune_server.db.factory import create_database
-from tune_server.db.repository import (
+from tune_server.db.compat import TrackCreditRepo
+from tune_server.db.sa_repository import (
     AlbumRepo,
     ArtistRepo,
     PlaylistRepo,
     PlayQueueRepo,
     RadioFavoriteRepo,
     RadioStationRepo,
-    TrackCreditRepo,
     TrackRepo,
     ZoneRepo,
 )
@@ -486,7 +486,7 @@ class TuneServer:
         deps.zone_repo = repos["zone_repo"]
         deps.radio_repo = repos["radio_repo"]
         deps.credit_repo = repos["credit_repo"]
-        from tune_server.db.repository import PlaybackHistoryRepo
+        from tune_server.db.compat import PlaybackHistoryRepo
         history_repo = PlaybackHistoryRepo(self._db)
         deps.history_repo = history_repo
         self._setup_playback_history(history_repo)
@@ -523,7 +523,7 @@ class TuneServer:
             logger.exception("smart_collections_seed_failed")
 
         try:
-            from tune_server.db.repository import (
+            from tune_server.db.compat import (
                 SmartPlaylistRepo, seed_default_smart_playlists,
             )
             inserted = await seed_default_smart_playlists(SmartPlaylistRepo(self._db))
@@ -1310,7 +1310,7 @@ class TuneServer:
         over *fade_in* seconds.
         """
         from tune_server.alarms import fade_in_volume
-        from tune_server.db.repository import _row_to_track
+        from tune_server.db.compat import _row_to_track
         from tune_server.models import Source, Track
 
         zone = self._zone_manager.get_zone(zone_id) if zone_id else None
