@@ -366,13 +366,30 @@ struct PaginationParams {
     query: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct AlbumListParams {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    sort: Option<String>,
+    order: Option<String>,
+    quality: Option<String>,
+    format: Option<String>,
+}
+
 async fn list_albums(
     State(s): State<Arc<AppState>>,
-    Query(p): Query<PaginationParams>,
+    Query(p): Query<AlbumListParams>,
 ) -> Json<Vec<serde_json::Value>> {
     let repo = AlbumRepo::new(s.db.clone());
     let albums = repo
-        .list(p.limit.unwrap_or(100), p.offset.unwrap_or(0))
+        .list_sorted(
+            p.limit.unwrap_or(100),
+            p.offset.unwrap_or(0),
+            p.sort.as_deref().unwrap_or("title"),
+            p.order.as_deref().unwrap_or("asc"),
+            p.quality.as_deref(),
+            p.format.as_deref(),
+        )
         .unwrap_or_default();
     Json(albums.into_iter().map(|a| a.to_json()).collect())
 }
@@ -511,6 +528,8 @@ async fn trigger_scan(State(s): State<Arc<AppState>>) -> Json<serde_json::Value>
 struct PlayBody {
     zone_id: i64,
     track_id: Option<i64>,
+    track_ids: Option<Vec<i64>>,
+    position: Option<usize>,
     output_device_id: Option<String>,
     source: Option<String>,
     source_id: Option<String>,
@@ -520,9 +539,54 @@ async fn playback_play(
     State(s): State<Arc<AppState>>,
     Json(body): Json<PlayBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // If track_ids provided, set up the queue and play from position
+    if let Some(ref ids) = body.track_ids {
+        if !ids.is_empty() {
+            let queue_repo = PlayQueueRepo::new(s.db.clone());
+            let _ = queue_repo.set_queue(body.zone_id, ids);
+            let pos = body.position.unwrap_or(0);
+            let play_id = ids.get(pos).or_else(|| ids.first()).copied();
+            if let Some(tid) = play_id {
+                let _ = queue_repo.set_current(body.zone_id, tid);
+
+                let zone = ZoneRepo::new(s.db.clone()).get(body.zone_id).ok().flatten();
+                let device_id = zone.and_then(|z| z.output_device_id);
+
+                let req = PlayRequest {
+                    zone_id: body.zone_id,
+                    output_device_id: device_id,
+                    track_id: Some(tid),
+                    source: Some("local".into()),
+                    source_id: None,
+                    title: None,
+                    artist_name: None,
+                    album_title: None,
+                    cover_url: None,
+                    duration_ms: None,
+                };
+                match s.orchestrator.play(req).await {
+                    Ok(result) => return Ok(Json(serde_json::json!({
+                        "stream_url": result.stream_url,
+                        "output_sent": result.output_sent,
+                        "source": result.source,
+                        "queue_length": ids.len(),
+                    }))),
+                    Err(e) => {
+                        warn!(error = %e, "playback_play_queue_error");
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                }
+            }
+        }
+    }
+
+    // Single track play
+    let zone = ZoneRepo::new(s.db.clone()).get(body.zone_id).ok().flatten();
+    let device_id = body.output_device_id.or_else(|| zone.and_then(|z| z.output_device_id));
+
     let req = PlayRequest {
         zone_id: body.zone_id,
-        output_device_id: body.output_device_id,
+        output_device_id: device_id,
         track_id: body.track_id,
         source: body.source,
         source_id: body.source_id,
