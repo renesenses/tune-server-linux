@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from tune_server.alarms import AlarmScheduler
     from tune_server.db.engine import Database
-    from tune_server.db.repository import AlbumRatingRepo, AlbumRepo, ArtistRepo, PartyVoteRepo, PlaybackHistoryRepo, PlaylistRepo, PlayQueueRepo, RadioFavoriteRepo, RadioStationRepo, TrackCreditRepo, TrackRepo, ZoneRepo
+    from tune_server.db.compat import PlaybackHistoryRepo, TrackCreditRepo
+    from tune_server.db.sa_repository import AlbumRatingRepo, AlbumRepo, ArtistRepo, PartyVoteRepo, PlaylistRepo, PlayQueueRepo, RadioFavoriteRepo, RadioStationRepo, TrackRepo, ZoneRepo
     from tune_server.discovery.manager import DiscoveryManager
     from tune_server.event_bus import EventBus
     from tune_server.library.enrichment import MetadataEnricher

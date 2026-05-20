@@ -14,7 +14,7 @@ import pytest
 from tune_server.audio.buffer import AsyncRingBuffer
 from tune_server.audio.formats import AudioCapabilities, LOCAL_CAPABILITIES
 from tune_server.db.engine import Database
-from tune_server.db.repository import PlayQueueRepo, TrackRepo, ZoneRepo
+from tune_server.db.sa_repository import PlayQueueRepo, TrackRepo, ZoneRepo
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.models import (
     AudioFormat,
@@ -711,9 +711,9 @@ class TestMigrations:
 
     async def test_migration_idempotent(self, db):
         """Running migrations multiple times should not error."""
-        # The migration already ran during db fixture setup.
+        # The migration already ran during db fixture setup (connect()).
         # Running again should be a no-op.
-        await db._run_migrations()
+        await db._run_column_migrations()
         # No exception means success
 
 

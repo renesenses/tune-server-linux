@@ -8,7 +8,7 @@ import re
 
 import httpx
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from tune_server.api.deps import deps
 from tune_server.event_bus import Event, EventType
@@ -527,9 +527,22 @@ async def _get_playlist_tracks_and_name(
         return tracks, name
 
 
-@router.post("/transfer", response_model=PlaylistTransferResponse)
-async def transfer_playlist(body: PlaylistTransferRequest):
-    """Transfer a playlist from one service to another with track matching."""
+@router.post("/transfer", response_model=PlaylistTransferResponse, deprecated=True)
+async def transfer_playlist(body: PlaylistTransferRequest, response: Response):
+    """Transfer a playlist from one service to another with track matching.
+
+    .. deprecated::
+        Use POST /api/v1/playlist-manager/transfer instead. This endpoint
+        will be removed after 2026-09-01.
+    """
+    logger.warning(
+        "Deprecated endpoint called: POST /api/v1/playlists/transfer — "
+        "use POST /api/v1/playlist-manager/transfer instead"
+    )
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = "2026-09-01"
+    response.headers["Link"] = '</api/v1/playlist-manager/transfer>; rel="successor-version"'
+
     # 1. Get source tracks
     source_tracks, source_name = await _get_playlist_tracks_and_name(
         body.source_service, body.source_playlist_id

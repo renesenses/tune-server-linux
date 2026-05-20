@@ -32,7 +32,8 @@ except ImportError:
 
 
 def rust_scanner_available() -> bool:
-    engine = os.environ.get("TUNE_SCANNER_ENGINE", "auto")
+    from tune_server.config import settings
+    engine = settings.scanner_engine
     return _RUST_SCANNER_AVAILABLE and engine != "python"
 
 

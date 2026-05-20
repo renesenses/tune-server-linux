@@ -36,6 +36,18 @@ def test_detect_format_m4a():
     assert _detect_format(Path("x.m4a")) == "aac"
 
 
+def test_detect_format_wavpack():
+    assert _detect_format(Path("x.wv")) == "wv"
+
+
+def test_detect_format_ape():
+    assert _detect_format(Path("x.ape")) == "ape"
+
+
+def test_detect_format_dst():
+    assert _detect_format(Path("x.dst")) == "dsd"
+
+
 def test_detect_format_unknown():
     assert _detect_format(Path("x.xyz")) == "xyz"
 
@@ -145,3 +157,66 @@ def test_read_metadata_exception(mock_mutagen_file):
     mock_mutagen_file.side_effect = Exception("read error")
     result = read_metadata("/music/test.flac")
     assert result is None
+
+
+@patch("tune_server.library.metadata_reader.MutagenFile")
+def test_read_metadata_wavpack(mock_mutagen_file):
+    from mutagen.wavpack import WavPack
+
+    audio = MagicMock(spec=WavPack)
+    audio.tags = {
+        "title": ["WavPack Track"],
+        "artist": ["WavPack Artist"],
+        "album": ["WavPack Album"],
+        "tracknumber": ["1"],
+        "discnumber": ["1"],
+        "date": ["2024"],
+        "genre": ["Jazz"],
+        "Cover Art (Front)": b"\x00binary_cover_data",
+    }
+    audio.info = MagicMock()
+    audio.info.sample_rate = 96000
+    audio.info.bits_per_sample = 24
+    audio.info.length = 300.0
+    audio.info.channels = 2
+    mock_mutagen_file.return_value = audio
+
+    result = read_metadata("/music/test.wv")
+    assert result is not None
+    assert result.title == "WavPack Track"
+    assert result.artist == "WavPack Artist"
+    assert result.format == "wv"
+    assert result.sample_rate == 96000
+    assert result.bit_depth == 24
+    assert result.has_cover is True
+
+
+@patch("tune_server.library.metadata_reader.MutagenFile")
+def test_read_metadata_ape(mock_mutagen_file):
+    from mutagen.monkeysaudio import MonkeysAudio
+
+    audio = MagicMock(spec=MonkeysAudio)
+    audio.tags = {
+        "title": ["APE Track"],
+        "artist": ["APE Artist"],
+        "album": ["APE Album"],
+        "tracknumber": ["2"],
+        "discnumber": ["1"],
+        "date": ["2023"],
+        "genre": ["Classical"],
+    }
+    audio.info = MagicMock()
+    audio.info.sample_rate = 44100
+    audio.info.bits_per_sample = 16
+    audio.info.length = 180.0
+    audio.info.channels = 2
+    mock_mutagen_file.return_value = audio
+
+    result = read_metadata("/music/test.ape")
+    assert result is not None
+    assert result.title == "APE Track"
+    assert result.artist == "APE Artist"
+    assert result.format == "ape"
+    assert result.sample_rate == 44100
+    assert result.bit_depth == 16
+    assert result.has_cover is False  # no Cover Art (Front) key

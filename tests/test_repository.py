@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from tune_server.db.repository import (
+from tune_server.db.compat import full_text_search
+from tune_server.db.sa_repository import (
     AlbumRepo,
     ArtistRepo,
     PlayQueueRepo,
     TrackRepo,
     ZoneRepo,
-    full_text_search,
 )
 from tune_server.models import Album, Artist, AudioFormat, Source, Track
 

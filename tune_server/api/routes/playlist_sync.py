@@ -10,6 +10,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from tune_server.api.deps import deps
@@ -137,13 +138,25 @@ async def export_playlist(body: ExportRequest):
     return ExportResponse(**result)
 
 
-@router.post("/transfer", response_model=TransferResponse)
-async def transfer_playlist(body: TransferRequest):
+@router.post("/transfer", response_model=TransferResponse, deprecated=True)
+async def transfer_playlist(body: TransferRequest, response: Response):
     """Transfer a playlist between two streaming services.
+
+    .. deprecated::
+        Use POST /api/v1/playlist-manager/transfer instead. This endpoint
+        will be removed after 2026-09-01.
 
     The transfer runs in the background. Use the returned transfer_id
     to poll for progress via GET /playlist-sync/transfer/{id}/status.
     """
+    logger.warning(
+        "Deprecated endpoint called: POST /api/v1/playlist-sync/transfer — "
+        "use POST /api/v1/playlist-manager/transfer instead"
+    )
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = "2026-09-01"
+    response.headers["Link"] = '</api/v1/playlist-manager/transfer>; rel="successor-version"'
+
     orch = PlaylistOrchestrator(deps)
     try:
         progress = await orch.transfer_playlist(

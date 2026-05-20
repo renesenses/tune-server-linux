@@ -134,6 +134,8 @@ async def enrich_track_endpoint(track_id: int):
     album_row = await deps.db.fetchone("SELECT title FROM albums WHERE id = ?", (row["album_id"],)) if row.get("album_id") else None
 
     from tune_server.config import settings
+    from tune_server.api.routes.services import get_discogs_token
+
     result = await enrich_track(
         track_id=track_id,
         title=row["title"],
@@ -141,7 +143,7 @@ async def enrich_track_endpoint(track_id: int):
         album=album_row["title"] if album_row else "",
         db=deps.db,
         lastfm_key=getattr(settings, "lastfm_api_key", ""),
-        discogs_token=getattr(settings, "discogs_token", ""),
+        discogs_token=await get_discogs_token(),
         cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
     )
     return result
@@ -155,12 +157,14 @@ async def enrich_album_endpoint(album_id: int):
         raise HTTPException(status_code=404, detail="Album not found")
 
     from tune_server.config import settings
+    from tune_server.api.routes.services import get_discogs_token as _gdt
+
     result = await enrich_album(
         album_id=album_id,
         title=row["title"],
         artist=row.get("artist_name") or "",
         db=deps.db,
-        discogs_token=getattr(settings, "discogs_token", ""),
+        discogs_token=await _gdt(),
         cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
     )
     return result
@@ -219,6 +223,7 @@ async def start_auto_fix():
     """Start a background auto-fix scan of the library."""
     from tune_server.metadata_manager.auto_fix import get_auto_fix_engine
     from tune_server.config import settings
+    from tune_server.api.routes.services import get_discogs_token as _gdt2
 
     engine = get_auto_fix_engine()
     if engine.status["status"] == "running":
@@ -228,7 +233,7 @@ async def start_auto_fix():
         db=deps.db,
         event_bus=deps.event_bus,
         lastfm_key=getattr(settings, "lastfm_api_key", ""),
-        discogs_token=getattr(settings, "discogs_token", ""),
+        discogs_token=await _gdt2(),
         cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
     )
     return {"ok": True, "status": "started"}

@@ -7,7 +7,8 @@ import asyncio
 import aiohttp
 import structlog
 
-from tune_server.db.repository import TrackCreditRepo, TrackRepo, AlbumRepo
+from tune_server.db.compat import TrackCreditRepo
+from tune_server.db.sa_repository import AlbumRepo, TrackRepo
 
 logger = structlog.get_logger()
 
@@ -322,7 +323,7 @@ async def enrich_credits_instruments(
         track_ids = None
 
     # Get all credits without instruments
-    from tune_server.db.repository import Database
+    from tune_server.db.engine import Database
     db = credit_repo._db
     if track_ids:
         placeholders = ",".join("?" * len(track_ids))

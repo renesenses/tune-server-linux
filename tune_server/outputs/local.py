@@ -181,7 +181,11 @@ class LocalOutput(OutputTarget):
                     extra_settings=extra_settings,
                 )
             except sd.PortAudioError:
-                dev_info = sd.query_devices(device if device is not None else sd.default.device[1])
+                try:
+                    dev_info = sd.query_devices(device if device is not None else sd.default.device[1])
+                except sd.PortAudioError:
+                    logger.error("local_output_no_device", device=device)
+                    raise
                 default_rate = int(dev_info.get("default_samplerate", 48000))
                 # Try progressively lower rates from the source rate down to
                 # find the highest rate the device actually supports. This

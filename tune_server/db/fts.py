@@ -44,13 +44,16 @@ class SQLiteFTS:
         "artists": "name",
     }
 
-    async def _ensure_diacritics_tokenizer(self, conn: AsyncConnection) -> None:
+    async def _ensure_diacritics_tokenizer(self, conn: AsyncConnection) -> bool:
         """Recreate FTS5 tables if they lack remove_diacritics 2.
 
         Databases created before the tokenizer option was added have FTS5
         tables that do exact character matching.  We detect this by checking
         the CREATE SQL and rebuild when necessary.
+
+        Returns True if any table was migrated (triggers a forced rebuild).
         """
+        migrated = False
         for table, column in self._FTS_TABLES.items():
             fts_name = f"{table}_fts"
             try:
@@ -77,13 +80,51 @@ class SQLiteFTS:
                     f"DROP TABLE IF EXISTS {fts_name}",
                 ]:
                     await conn.execute(sa.text(stmt))
+                migrated = True
             except Exception as exc:
                 logger.warning("fts_diacritics_check_error", table=fts_name, error=str(exc))
+        return migrated
+
+    async def _one_time_diacritics_rebuild(
+        self, conn: AsyncConnection, *, force: bool = False
+    ) -> None:
+        """Rebuild FTS indexes once so accent-insensitive search works on
+        databases where the tokenizer was already correct but the content
+        was never re-tokenized (e.g. upgraded from an older version).
+        """
+        marker = "_fts_diacritics_rebuilt"
+        try:
+            await conn.execute(sa.text(
+                f"CREATE TABLE IF NOT EXISTS {marker} (done INTEGER)"
+            ))
+            row = await conn.execute(sa.text(f"SELECT 1 FROM {marker}"))
+            already_done = row.fetchone() is not None
+        except Exception:
+            already_done = False
+
+        if already_done and not force:
+            return
+
+        for table, column in self._FTS_TABLES.items():
+            fts_name = f"{table}_fts"
+            try:
+                logger.info("fts_diacritics_rebuild", table=fts_name)
+                await conn.execute(sa.text(
+                    f"INSERT INTO {fts_name}({fts_name}) VALUES ('rebuild')"
+                ))
+            except Exception as exc:
+                logger.warning("fts_diacritics_rebuild_error", table=fts_name, error=str(exc))
+
+        try:
+            if not already_done:
+                await conn.execute(sa.text(f"INSERT INTO {marker} (done) VALUES (1)"))
+        except Exception:
+            pass
 
     async def setup(self, conn: AsyncConnection) -> None:
         """Create FTS5 virtual tables and sync triggers."""
         # Ensure existing FTS tables have remove_diacritics 2 tokenizer
-        await self._ensure_diacritics_tokenizer(conn)
+        migrated = await self._ensure_diacritics_tokenizer(conn)
 
         for table, column in self._FTS_TABLES.items():
             fts_name = f"{table}_fts"
@@ -126,6 +167,10 @@ class SQLiteFTS:
                     ))
             except Exception as exc:
                 logger.warning("fts_rebuild_error", table=fts_name, error=str(exc))
+
+        # One-time rebuild: existing databases may have FTS tables created with
+        # remove_diacritics 2 but indexed content that was never re-tokenized.
+        await self._one_time_diacritics_rebuild(conn, force=migrated)
 
         logger.info("fts_initialized", engine="sqlite", tables=list(self._FTS_TABLES.keys()))
 

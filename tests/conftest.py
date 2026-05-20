@@ -1,14 +1,26 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, PropertyMock
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 import pytest
 
 from tune_server.audio.formats import LOCAL_CAPABILITIES, AudioCapabilities
-from tune_server.db.engine import Database
-from tune_server.db.repository import AlbumRepo, ArtistRepo, PlaylistRepo, PlayQueueRepo, TrackRepo, ZoneRepo
+from tune_server.db.sa_engine import SADatabase
+from tune_server.db.sa_repository import AlbumRepo, ArtistRepo, PlaylistRepo, PlayQueueRepo, TrackRepo, ZoneRepo
 from tune_server.event_bus import EventBus
 from tune_server.models import Album, Artist, AudioFormat, OutputType, Source, Track
+
+
+# ---------------------------------------------------------------------------
+# Force Python engines in tests (Rust native changes behavior with test fixtures)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _disable_rust_engines():
+    with patch("tune_server.library.rust_scanner._RUST_SCANNER_AVAILABLE", False), \
+         patch("tune_server.discovery.rust_discovery._RUST_AVAILABLE", False), \
+         patch("tune_server.library.metadata_reader._RUST_AVAILABLE", False):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -17,7 +29,7 @@ from tune_server.models import Album, Artist, AudioFormat, OutputType, Source, T
 
 @pytest.fixture
 async def db():
-    database = Database(":memory:")
+    database = SADatabase(engine_name="sqlite", db_path=":memory:")
     await database.connect()
     yield database
     await database.close()

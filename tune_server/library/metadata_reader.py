@@ -87,11 +87,13 @@ def _get_first(tags: dict, keys: list[str], default: str = "") -> str:
 
 
 def _parse_int(value: str, default: int = 0) -> int:
+    s = str(value).strip()
+    if not s:
+        return default
     try:
-        # Handle "3/12" style track numbers
-        return int(str(value).split("/")[0])
+        return int(s.split("/")[0])
     except (ValueError, TypeError, IndexError) as e:
-        logger.debug("metadata_parse_int_failed", value=str(value)[:50], error=str(e))
+        logger.debug("metadata_parse_int_failed", value=s[:50], error=str(e))
         return default
 
 
@@ -317,9 +319,8 @@ def _parse_year(val) -> Optional[int]:
 def _use_rust_engine() -> bool:
     if not _RUST_AVAILABLE:
         return False
-    import os
-    engine = os.environ.get("TUNE_METADATA_ENGINE", "rust")
-    return engine != "python"
+    from tune_server.config import settings
+    return settings.metadata_engine != "python"
 
 
 def read_metadata(file_path: str) -> Optional[TrackMetadata]:
@@ -489,7 +490,12 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             ]) or None
             sample_rate = getattr(info, "sample_rate", 44100)
             bit_depth = getattr(info, "bits_per_sample", 16)
-            has_cover = False
+            # APEv2-based formats (WavPack, MonkeysAudio) store cover art
+            # as binary items with key "Cover Art (Front)"
+            if isinstance(audio, (WavPack, MonkeysAudio)):
+                has_cover = bool(tags and "Cover Art (Front)" in tags)
+            else:
+                has_cover = False
 
         # Parse years
         year = None

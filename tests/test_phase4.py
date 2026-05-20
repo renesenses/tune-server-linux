@@ -275,7 +275,7 @@ class TestTimeoutConfigDefaults:
 class TestStreamingQueuePersistence:
     async def test_save_queue_with_streaming_tracks_as_json(self, db, event_bus, mock_output):
         """Queue with streaming tracks is saved as JSON in zones table."""
-        from tune_server.db.repository import PlayQueueRepo, ZoneRepo
+        from tune_server.db.sa_repository import PlayQueueRepo, ZoneRepo
         from tune_server.zones.zone import ZoneInstance
 
         zone_repo = ZoneRepo(db)
@@ -308,7 +308,7 @@ class TestStreamingQueuePersistence:
 
     async def test_streaming_track_file_path_not_persisted(self, db, event_bus, mock_output):
         """Streaming track file_path (URL) is NOT persisted since URLs expire."""
-        from tune_server.db.repository import PlayQueueRepo, ZoneRepo
+        from tune_server.db.sa_repository import PlayQueueRepo, ZoneRepo
         from tune_server.zones.zone import ZoneInstance
 
         zone_repo = ZoneRepo(db)
@@ -338,7 +338,7 @@ class TestStreamingQueuePersistence:
 
     async def test_restore_queue_from_json(self, db, event_bus, mock_output):
         """Queue restored from JSON includes streaming tracks."""
-        from tune_server.db.repository import PlayQueueRepo, ZoneRepo
+        from tune_server.db.sa_repository import PlayQueueRepo, ZoneRepo
         from tune_server.zones.zone import ZoneInstance
 
         zone_repo = ZoneRepo(db)
@@ -382,7 +382,7 @@ class TestStreamingQueuePersistence:
 
     async def test_mixed_queue_roundtrip(self, db, event_bus, mock_output, sample_tracks):
         """Mixed queue (local + streaming) round-trips correctly."""
-        from tune_server.db.repository import PlayQueueRepo, ZoneRepo
+        from tune_server.db.sa_repository import PlayQueueRepo, ZoneRepo
         from tune_server.zones.zone import ZoneInstance
 
         zone_repo = ZoneRepo(db)
@@ -423,7 +423,7 @@ class TestStreamingQueuePersistence:
 
     async def test_fallback_to_play_queue_table(self, db, event_bus, mock_output, sample_tracks):
         """Falls back to play_queue table when no queue_json."""
-        from tune_server.db.repository import PlayQueueRepo, ZoneRepo
+        from tune_server.db.sa_repository import PlayQueueRepo, ZoneRepo
         from tune_server.zones.zone import ZoneInstance
 
         zone_repo = ZoneRepo(db)
