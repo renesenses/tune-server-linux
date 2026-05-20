@@ -21,6 +21,8 @@ class EventType(str, Enum):
     LIBRARY_TRACK_REMOVED = "library.track.removed"
     LIBRARY_ARTWORK_PROGRESS = "library.artwork.progress"
     LIBRARY_ARTWORK_COMPLETED = "library.artwork.completed"
+    LIBRARY_ENRICH_PROGRESS = "library.enrich.progress"
+    LIBRARY_ENRICH_COMPLETED = "library.enrich.completed"
 
     # Playback events
     PLAYBACK_STARTED = "playback.started"

@@ -570,13 +570,23 @@ async def enrich_all_albums_endpoint():
                 except Exception:
                     logger.debug("enrich_all_album_error", album_id=row["id"], exc_info=True)
                 _enrich_all_state["processed"] = i + 1
-                # Rate limit: 1 request per second (MusicBrainz API requirement)
+                if (i + 1) % 5 == 0 or i + 1 == total:
+                    await deps.event_bus.emit(Event(
+                        type=EventType.LIBRARY_ENRICH_PROGRESS,
+                        data={"processed": i + 1, "total": total},
+                        source="enrich_all",
+                    ))
                 await asyncio.sleep(1.0)
             logger.info("enrich_all_complete", processed=_enrich_all_state["processed"], total=total)
         except Exception:
             logger.exception("enrich_all_error")
         finally:
             _enrich_all_state["running"] = False
+            await deps.event_bus.emit(Event(
+                type=EventType.LIBRARY_ENRICH_COMPLETED,
+                data={"processed": _enrich_all_state["processed"], "total": total},
+                source="enrich_all",
+            ))
 
     asyncio.create_task(_run_batch())
     return {"task_id": task_id, "total_albums": total}
