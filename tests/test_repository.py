@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tune_server.db.compat import full_text_search
+from tune_server.db.sa_repository import full_text_search
 from tune_server.db.sa_repository import (
     AlbumRepo,
     ArtistRepo,

@@ -68,7 +68,7 @@ async def party_add_track(request: PartyAddRequest):
         raise HTTPException(status_code=404, detail="No zone available")
 
     # Search for the track
-    from tune_server.db.compat import full_text_search
+    from tune_server.db.sa_repository import full_text_search
     results = await full_text_search(deps.db, request.query, limit=5)
 
     if results.tracks:
