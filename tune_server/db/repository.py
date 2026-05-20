@@ -642,13 +642,14 @@ class AlbumRepo:
                    LEFT JOIN artists ar ON al.artist_id = ar.id
                    LEFT JOIN albums_fts fts ON al.id = fts.rowid AND albums_fts MATCH ?
                    WHERE fts.rowid IS NOT NULL
+                      OR fold_accents(al.title) LIKE ?
                       OR fold_accents(ar.name) LIKE ?
                       OR fold_accents(al.artist_name) LIKE ?
                       OR fold_accents(al.genre) LIKE ?
                       OR CAST(al.year AS TEXT) = ?
                       OR fold_accents(al.label) LIKE ?
                    LIMIT ?""",
-                (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, limit),
+                (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, like_folded, query.strip(), like_folded, limit),
             )
         return [_row_to_album(r) for r in rows]
 
@@ -745,6 +746,7 @@ class TrackRepo:
                 LEFT JOIN artists ar ON t.artist_id = ar.id
                 LEFT JOIN tracks_fts fts ON t.id = fts.rowid AND tracks_fts MATCH ?
                 WHERE fts.rowid IS NOT NULL
+                   OR fold_accents(t.title) LIKE ?
                    OR fold_accents(ar.name) LIKE ?
                    OR fold_accents(t.genre) LIKE ?
                    OR fold_accents(t.composer) LIKE ?
@@ -753,7 +755,7 @@ class TrackRepo:
                                WHERE fold_accents(tc.artist_name) LIKE ?
                                   OR tc.instrument LIKE ?)
                 ORDER BY RANDOM() LIMIT ?""",
-            (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
+            (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
         )
         return [_row_to_track(r) for r in rows]
 
@@ -1009,6 +1011,7 @@ class TrackRepo:
                     LEFT JOIN artists ar ON t.artist_id = ar.id
                     LEFT JOIN tracks_fts fts ON t.id = fts.rowid AND tracks_fts MATCH ?
                     WHERE fts.rowid IS NOT NULL
+                       OR fold_accents(t.title) LIKE ?
                        OR fold_accents(ar.name) LIKE ?
                        OR fold_accents(t.genre) LIKE ?
                        OR fold_accents(t.composer) LIKE ?
@@ -1017,7 +1020,7 @@ class TrackRepo:
                                    WHERE fold_accents(tc.artist_name) LIKE ?
                                       OR tc.instrument LIKE ?)
                     LIMIT ?""",
-                (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
+                (sanitize_fts_query(query) + "*", like_folded, like_folded, like_folded, like_folded, query.strip(), like_folded, like_folded, limit),
             )
         return [_row_to_track(r) for r in rows]
 
