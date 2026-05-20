@@ -488,7 +488,12 @@ def read_metadata(file_path: str) -> Optional[TrackMetadata]:
             ]) or None
             sample_rate = getattr(info, "sample_rate", 44100)
             bit_depth = getattr(info, "bits_per_sample", 16)
-            has_cover = False
+            # APEv2-based formats (WavPack, MonkeysAudio) store cover art
+            # as binary items with key "Cover Art (Front)"
+            if isinstance(audio, (WavPack, MonkeysAudio)):
+                has_cover = bool(tags and "Cover Art (Front)" in tags)
+            else:
+                has_cover = False
 
         # Parse years
         year = None
