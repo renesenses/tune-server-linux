@@ -44,6 +44,9 @@ async def health():
 
 @router.get("/config", response_model=SystemConfigResponse)
 async def get_config():
+    from tune_server.api.routes.services import get_discogs_token
+
+    discogs_token = await get_discogs_token()
     return SystemConfigResponse(
         music_dirs=settings.music_dirs,
         api_port=settings.api_port,
@@ -55,6 +58,7 @@ async def get_config():
         spotify_enabled=settings.spotify_enabled,
         deezer_enabled=settings.deezer_enabled,
         discovery_enabled=settings.discovery_enabled,
+        squeezebox_enabled=settings.squeezebox_enabled,
         sync_poll_playing_interval=settings.sync_poll_playing_interval,
         sync_poll_idle_interval=settings.sync_poll_idle_interval,
         sync_drift_threshold_ms=settings.sync_drift_threshold_ms,
@@ -78,7 +82,7 @@ async def get_config():
         surround_bass_management=settings.surround_bass_management,
         surround_crossover_hz=settings.surround_crossover_hz,
         metadata_readonly=settings.metadata_readonly,
-        discogs_token_set=bool(settings.discogs_token),
+        discogs_token_set=bool(discogs_token),
         enrich_on_scan=settings.enrich_on_scan,
     )
 
@@ -99,6 +103,12 @@ async def update_config(body: dict):
         settings.enrich_on_scan = val
         persist_env_var("TUNE_ENRICH_ON_SCAN", str(val))
         updated["enrich_on_scan"] = val
+
+    if "squeezebox_enabled" in body:
+        val = bool(body["squeezebox_enabled"])
+        settings.squeezebox_enabled = val
+        persist_env_var("TUNE_SQUEEZEBOX_ENABLED", str(val))
+        updated["squeezebox_enabled"] = val
 
     if "local_exclusive_mode" in body:
         val = bool(body["local_exclusive_mode"])
@@ -1195,6 +1205,7 @@ async def cleanup_server():
 async def get_logs(lines: int = 100):
     """Get recent server logs."""
     import subprocess
+    import sys as _sys
     try:
         result = subprocess.run(
             ["journalctl", "-u", "tune-server", "--no-pager", "-n", str(lines)],
@@ -1203,14 +1214,25 @@ async def get_logs(lines: int = 100):
         return {"logs": result.stdout, "lines": lines}
     except FileNotFoundError:
         pass
-    for candidate in [
+    candidates = []
+    # Windows: log lives in the data dir (%APPDATA%/TuneServer/) or next to the exe
+    if _sys.platform == "win32":
+        import os
+        appdata = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+        candidates.append(Path(appdata) / "TuneServer" / "tune-server.log")
+        if getattr(_sys, "frozen", False):
+            candidates.append(Path(_sys.executable).resolve().parent / "tune-server.log")
+    candidates.extend([
+        Path.home() / "Library" / "Logs" / "Tune Server" / "tune-server.log",
         Path.home() / "Library" / "Logs" / "Tune Server.log",
         Path("/tmp/tune-server.log"),
         Path("/var/log/tune-server.log"),
         Path("/usr/local/var/log/tune-server.log"),
-    ]:
+    ])
+    candidates.append(Path.cwd() / "tune-server.log")
+    for candidate in candidates:
         if candidate.exists():
-            text = candidate.read_text()
+            text = candidate.read_text(encoding="utf-8", errors="replace")
             log_lines = text.strip().split("\n")
             return {"logs": "\n".join(log_lines[-lines:]), "lines": len(log_lines[-lines:])}
     return {"logs": "", "lines": 0}
@@ -1543,9 +1565,15 @@ async def diagnostics(errors_limit: int = Query(50, le=200)):
         import tune_native
         rust_engines["available"] = True
         rust_engines["version"] = tune_native.version()
-        rust_engines["metadata_engine"] = os.environ.get("TUNE_METADATA_ENGINE", "rust")
-        rust_engines["pipeline_engine"] = os.environ.get("TUNE_PIPELINE_ENGINE", "auto")
-        rust_engines["discovery_engine"] = os.environ.get("TUNE_DISCOVERY_ENGINE", "auto")
+        rust_engines["scanner_engine"] = settings.scanner_engine
+        rust_engines["discovery_engine"] = settings.discovery_engine
+        rust_engines["metadata_engine"] = settings.metadata_engine
+        from tune_server.library.rust_scanner import rust_scanner_available
+        from tune_server.discovery.rust_discovery import rust_discovery_available
+        from tune_server.library.metadata_reader import _use_rust_engine
+        rust_engines["scanner_active"] = rust_scanner_available()
+        rust_engines["discovery_active"] = rust_discovery_available()
+        rust_engines["metadata_active"] = _use_rust_engine()
     except ImportError:
         pass
     diag["rust_engines"] = rust_engines

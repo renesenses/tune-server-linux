@@ -179,6 +179,8 @@ class Zone(BaseModel):
     surround_group_id: str | None = None
     surround_channel: str | None = None  # ChannelAssignment value
     audiophile_mode: bool = False
+    credits: list[TrackCredit] | None = None
+    lyrics_available: bool | None = None
 
 
 class ZoneGroupModel(BaseModel):
@@ -688,6 +690,7 @@ class SystemConfigResponse(BaseModel):
     spotify_enabled: bool = False
     deezer_enabled: bool = False
     discovery_enabled: bool
+    squeezebox_enabled: bool = True
     sync_poll_playing_interval: float = 1.0
     sync_poll_idle_interval: float = 10.0
     sync_drift_threshold_ms: int = 500

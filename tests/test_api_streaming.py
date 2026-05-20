@@ -44,7 +44,7 @@ def _make_mock_service(
 @pytest.fixture
 async def streaming_client(db, event_bus):
     """Minimal ASGI test client with no streaming services wired up."""
-    from tune_server.db.repository import (
+    from tune_server.db.sa_repository import (
         AlbumRepo, ArtistRepo, PlaylistRepo, PlayQueueRepo, TrackRepo, ZoneRepo,
     )
 

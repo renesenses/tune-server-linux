@@ -18,11 +18,13 @@ router = APIRouter(tags=["metadata"])
 async def search_covers_endpoint(album: str, artist: str = "", release_id: str = ""):
     """Search for album covers from Cover Art Archive + Discogs."""
     from tune_server.config import settings
+    from tune_server.api.routes.services import get_discogs_token
+
     results = await search_covers(
         album_title=album,
         artist_name=artist,
         musicbrainz_release_id=release_id,
-        discogs_token=getattr(settings, "discogs_token", ""),
+        discogs_token=await get_discogs_token(),
         cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
     )
     return {"results": results}
@@ -36,13 +38,15 @@ async def fetch_album_cover(album_id: int):
         raise HTTPException(status_code=404, detail="Album not found")
 
     from tune_server.config import settings
+    from tune_server.api.routes.services import get_discogs_token as _gdt
+
     mb_id = row.get("musicbrainz_release_id") or "" if "musicbrainz_release_id" in row.keys() else ""
 
     results = await search_covers(
         album_title=row["title"],
         artist_name=row.get("artist_name") or "",
         musicbrainz_release_id=mb_id,
-        discogs_token=getattr(settings, "discogs_token", ""),
+        discogs_token=await _gdt(),
         cache_dir=getattr(settings, "artwork_cache_dir", "artwork_cache"),
     )
 

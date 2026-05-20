@@ -167,28 +167,35 @@ async def find_best_match(
         return result
 
     # Stage 1: ISRC match
+    # Most streaming APIs support an "isrc:<code>" prefix in their search
+    # query (Tidal, Spotify, Deezer).  Sending the raw ISRC as free-text
+    # almost never returns the right track, so we try the prefixed form
+    # first, then fall back to the raw code as a search term.
     if source_isrc:
-        try:
-            candidates = await search_func(source_isrc, 5)
-            for c in candidates:
-                c_isrc = c.get("isrc", "")
-                if c_isrc and c_isrc.upper() == source_isrc.upper():
-                    match = MatchCandidate(
-                        title=c.get("title", ""),
-                        artist_name=c.get("artist_name", ""),
-                        album_title=c.get("album_title", ""),
-                        source_id=c.get("source_id", ""),
-                        duration_ms=c.get("duration_ms", 0),
-                        isrc=c_isrc,
-                        score=1.0,
-                        match_method="isrc",
-                        confidence="high",
-                    )
-                    result.best_match = match
-                    result.status = "matched"
-                    return result
-        except Exception:
-            pass
+        isrc_queries = [f"isrc:{source_isrc}", source_isrc]
+        for isrc_q in isrc_queries:
+            try:
+                candidates = await search_func(isrc_q, 5)
+                for c in candidates:
+                    c_isrc = c.get("isrc", "")
+                    if c_isrc and c_isrc.upper() == source_isrc.upper():
+                        match = MatchCandidate(
+                            title=c.get("title", ""),
+                            artist_name=c.get("artist_name", ""),
+                            album_title=c.get("album_title", ""),
+                            source_id=c.get("source_id", ""),
+                            duration_ms=c.get("duration_ms", 0),
+                            isrc=c_isrc,
+                            score=1.0,
+                            match_method="isrc",
+                            confidence="high",
+                        )
+                        result.best_match = match
+                        result.status = "matched"
+                        logger.debug("isrc_match_found", isrc=source_isrc, query=isrc_q)
+                        return result
+            except Exception:
+                pass
 
     # Stage 2 & 3: Search by artist + title
     query = f"{source_artist} {source_title}"

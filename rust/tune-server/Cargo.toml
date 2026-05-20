@@ -1,0 +1,19 @@
+[package]
+name = "tune-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tune-server"
+path = "src/main.rs"
+
+[dependencies]
+tune-core = { path = "../tune-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true }

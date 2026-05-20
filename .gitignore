@@ -43,3 +43,6 @@ Thumbs.db
 .coverage.*
 htmlcov/
 coverage.xml
+
+# Rust
+rust/target/

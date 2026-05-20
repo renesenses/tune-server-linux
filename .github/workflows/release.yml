@@ -96,9 +96,10 @@ jobs:
         with:
           path: |
             ~/.cargo/registry
+            ~/.cargo/git
             ~/.cargo/bin/librespot
             ~/.cargo/bin/librespot.exe
-          key: ${{ runner.os }}-${{ runner.arch }}-librespot-0.4.2
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-librespot-0.4.2-v2
 
       - name: Build librespot (Spotify Connect receiver)
         shell: bash
@@ -131,6 +132,61 @@ jobs:
           # Console subsystem (no --noconsole) so start-tune-server.bat can wait
           # on the process and the user sees logs live in the launched cmd window.
           pyinstaller --name tune-server --onedir --add-data "web;web" --collect-all tune_server --noconfirm tune_server/__main__.py
+
+      - name: Build tune_native wheel (maturin)
+        shell: bash
+        continue-on-error: true
+        run: |
+          pip install maturin
+          maturin build -m rust/tune-pyo3/Cargo.toml --release
+          echo "Maturin wheel(s) built:"
+          ls -lh target/wheels/ 2>/dev/null || echo "No wheels found"
+
+      - name: Extract tune_native from wheel into PyInstaller dist (Unix)
+        if: matrix.platform != 'windows'
+        shell: bash
+        continue-on-error: true
+        run: |
+          WHEEL=$(ls target/wheels/tune_server-*.whl 2>/dev/null | head -1)
+          if [ -z "$WHEEL" ]; then
+            echo "::warning::No maturin wheel found — tune_native will not be bundled"
+            exit 0
+          fi
+          echo "Extracting tune_native from $WHEEL"
+          TMPDIR=$(mktemp -d)
+          unzip -o "$WHEEL" -d "$TMPDIR"
+          # Find the .so file (tune_native.cpython-*.so)
+          SO_FILE=$(find "$TMPDIR" -name 'tune_native*.so' -type f | head -1)
+          if [ -n "$SO_FILE" ]; then
+            cp "$SO_FILE" dist/tune-server/_internal/
+            echo "Bundled: $(basename "$SO_FILE") -> dist/tune-server/_internal/"
+            ls -lh dist/tune-server/_internal/tune_native*
+          else
+            echo "::warning::tune_native .so not found in wheel"
+          fi
+          rm -rf "$TMPDIR"
+
+      - name: Extract tune_native from wheel into PyInstaller dist (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $wheel = Get-ChildItem -Path "target/wheels" -Filter "tune_server-*.whl" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $wheel) {
+            Write-Host "::warning::No maturin wheel found — tune_native will not be bundled"
+            exit 0
+          }
+          Write-Host "Extracting tune_native from $($wheel.FullName)"
+          $tmpDir = New-Item -ItemType Directory -Path "$env:TEMP\tune_wheel_extract" -Force
+          Expand-Archive -Path $wheel.FullName -DestinationPath $tmpDir.FullName -Force
+          $pydFile = Get-ChildItem -Path $tmpDir.FullName -Recurse -Filter "tune_native*.pyd" | Select-Object -First 1
+          if ($pydFile) {
+            Copy-Item $pydFile.FullName "dist/tune-server/_internal/"
+            Write-Host "Bundled: $($pydFile.Name) -> dist/tune-server/_internal/"
+          } else {
+            Write-Host "::warning::tune_native .pyd not found in wheel"
+          }
+          Remove-Item $tmpDir.FullName -Recurse -Force
 
       - name: Bundle librespot binary (Unix)
         if: matrix.platform != 'windows'
@@ -640,6 +696,18 @@ jobs:
             Set-Content -Path "${setup}.sha256" -Value $hash2 -NoNewline
           }
 
+      - name: Copy maturin wheel to upload area
+        shell: bash
+        continue-on-error: true
+        run: |
+          if ls target/wheels/tune_server-*.whl 1>/dev/null 2>&1; then
+            cp target/wheels/tune_server-*.whl .
+            echo "Wheel(s) staged for upload:"
+            ls -lh tune_server-*.whl
+          else
+            echo "No maturin wheel to upload"
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -653,6 +721,7 @@ jobs:
             tune-server-*-setup.exe.sha256
             tune-server-*.dmg
             tune-server-*.dmg.sha256
+            tune_server-*.whl
           retention-days: 30
 
   build-intel:
@@ -782,6 +851,37 @@ jobs:
             --exclude-module _bootlocale \
             --noconfirm \
             tune_server/__main__.py
+
+      - name: Build tune_native wheel (maturin, Intel)
+        shell: bash
+        continue-on-error: true
+        run: |
+          .venv/bin/pip install maturin
+          .venv/bin/maturin build -m rust/tune-pyo3/Cargo.toml --release
+          echo "Maturin wheel(s) built:"
+          ls -lh target/wheels/ 2>/dev/null || echo "No wheels found"
+
+      - name: Extract tune_native from wheel into PyInstaller dist (Intel)
+        shell: bash
+        continue-on-error: true
+        run: |
+          WHEEL=$(ls target/wheels/tune_server-*.whl 2>/dev/null | head -1)
+          if [ -z "$WHEEL" ]; then
+            echo "::warning::No maturin wheel found — tune_native will not be bundled"
+            exit 0
+          fi
+          echo "Extracting tune_native from $WHEEL"
+          TMPDIR=$(mktemp -d)
+          unzip -o "$WHEEL" -d "$TMPDIR"
+          SO_FILE=$(find "$TMPDIR" -name 'tune_native*.so' -type f | head -1)
+          if [ -n "$SO_FILE" ]; then
+            cp "$SO_FILE" dist/tune-server/_internal/
+            echo "Bundled: $(basename "$SO_FILE") -> dist/tune-server/_internal/"
+            ls -lh dist/tune-server/_internal/tune_native*
+          else
+            echo "::warning::tune_native .so not found in wheel"
+          fi
+          rm -rf "$TMPDIR"
 
       - name: Bundle librespot binary
         shell: bash
@@ -1022,6 +1122,18 @@ jobs:
         run: |
           shasum -a 256 "${DMG_NAME}" | awk '{print $1}' > "${DMG_NAME}.sha256"
 
+      - name: Copy maturin wheel to upload area (Intel)
+        shell: bash
+        continue-on-error: true
+        run: |
+          if ls target/wheels/tune_server-*.whl 1>/dev/null 2>&1; then
+            cp target/wheels/tune_server-*.whl .
+            echo "Wheel(s) staged for upload:"
+            ls -lh tune_server-*.whl
+          else
+            echo "No maturin wheel to upload"
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -1031,6 +1143,7 @@ jobs:
             tune-server-*-macos-intel.tar.gz.sha256
             tune-server-*-macos-intel.dmg
             tune-server-*-macos-intel.dmg.sha256
+            tune_server-*.whl
           retention-days: 30
 
   release:
@@ -1072,6 +1185,7 @@ jobs:
             artifacts/tune-server-*-setup.exe.sha256
             artifacts/tune-server-*.dmg
             artifacts/tune-server-*.dmg.sha256
+            artifacts/tune_server-*.whl
 
       - name: Wait for GitHub release assets to be fully available
         if: success()

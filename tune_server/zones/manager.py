@@ -6,7 +6,7 @@ import uuid
 import structlog
 
 from tune_server.db.engine import Database
-from tune_server.db.repository import PlayQueueRepo, ZoneRepo
+from tune_server.db.sa_repository import PlayQueueRepo, ZoneRepo
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.models import OutputType, PlaybackState
 from tune_server.outputs.base import OutputTarget
@@ -135,6 +135,11 @@ class ZoneManager:
                     saved_volume = row.get("volume", 0.5)
                     if saved_volume is not None and saved_volume != 0.5:
                         await zone.player.set_volume(saved_volume)
+
+                    # Restore normalization setting
+                    if row.get("normalization_enabled"):
+                        zone.player._normalization_enabled = True
+                        zone.player._normalization_target = row.get("normalization_target_lufs", -14.0) or -14.0
 
                     # Restore persisted queue
                     await zone.restore_queue()
@@ -634,12 +639,33 @@ class ZoneManager:
 
     async def _on_device_discovered(self, event: Event) -> None:
         """A device came back online — flag zones and resume if they were playing."""
-        dev_id = event.data.get("id") if event.data else None
+        if not event.data:
+            return
+        dev_id = event.data.get("id")
+        dev_host = event.data.get("host", "")
+        dev_name = event.data.get("name", "")
         if not dev_id:
             return
         for zone in self._zones.values():
-            if zone.output_device_id != dev_id or zone.online:
+            if zone.online:
                 continue
+            matched = zone.output_device_id == dev_id
+            if not matched and dev_host and zone.output_device_id:
+                # Fallback: match by host+name when SSDP ID changed (e.g. Shanling reconnect)
+                old_dev = None
+                if hasattr(self, '_discovery_manager') and self._discovery_manager:
+                    old_dev = self._discovery_manager.get_device(zone.output_device_id)
+                if old_dev and old_dev.host == dev_host and old_dev.name == dev_name:
+                    matched = True
+                elif not old_dev and zone.name == dev_name:
+                    matched = True
+            if not matched:
+                continue
+            if zone.output_device_id != dev_id:
+                logger.info("zone_device_id_updated", zone_id=zone.zone_id,
+                            old_id=zone.output_device_id, new_id=dev_id)
+                zone.output_device_id = dev_id
+                await self._zone_repo.update(zone.zone_id, output_device_id=dev_id)
             zone.online = True
             should_resume = self._resume_on_recovery.pop(zone.zone_id, False)
             # Never resume a zone that the user explicitly stopped

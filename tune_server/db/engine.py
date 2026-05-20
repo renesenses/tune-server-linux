@@ -209,6 +209,8 @@ class SQLiteDatabase:
             "ALTER TABLE user_profiles ADD COLUMN is_admin INTEGER DEFAULT 0",
             "ALTER TABLE user_profiles ADD COLUMN eq_settings TEXT",
             "ALTER TABLE user_profiles ADD COLUMN quality_preference TEXT",
+            "ALTER TABLE zones ADD COLUMN normalization_enabled INTEGER DEFAULT 0",
+            "ALTER TABLE zones ADD COLUMN normalization_target_lufs REAL DEFAULT -14.0",
         ]
         for sql in migrations:
             try:
@@ -647,6 +649,7 @@ class SQLiteDatabase:
         # FTS5: ensure remove_diacritics 2 tokenizer for accent-insensitive search.
         # Old databases may have FTS tables without this option.
         fts_tables = {"tracks_fts": "title", "albums_fts": "title", "artists_fts": "name"}
+        fts_migrated = False
         for fts_name, column in fts_tables.items():
             try:
                 row = await self.fetchone(
@@ -691,8 +694,36 @@ class SQLiteDatabase:
                     f"INSERT INTO {fts_name}({fts_name}) VALUES ('rebuild')"
                 )
                 await self.commit()
+                fts_migrated = True
             except Exception as exc:
                 logger.warning("fts_migrate_diacritics_error", table=fts_name, error=str(exc))
+
+        # One-time FTS rebuild for databases where the tokenizer was already
+        # correct but the index content was never re-tokenized with
+        # remove_diacritics 2, causing accent-insensitive search to fail.
+        try:
+            await self.connection.execute(
+                "CREATE TABLE IF NOT EXISTS _fts_diacritics_rebuilt (done INTEGER)"
+            )
+            row = await self.fetchone("SELECT 1 FROM _fts_diacritics_rebuilt")
+            needs_rebuild = row is None or fts_migrated
+            if needs_rebuild:
+                for fts_name in fts_tables:
+                    try:
+                        logger.info("fts_diacritics_rebuild", table=fts_name)
+                        await self.connection.execute(
+                            f"INSERT INTO {fts_name}({fts_name}) VALUES ('rebuild')"
+                        )
+                    except Exception as exc:
+                        logger.warning("fts_diacritics_rebuild_error",
+                                       table=fts_name, error=str(exc))
+                if row is None:
+                    await self.connection.execute(
+                        "INSERT INTO _fts_diacritics_rebuilt (done) VALUES (1)"
+                    )
+                await self.commit()
+        except Exception as exc:
+            logger.warning("fts_one_time_rebuild_error", error=str(exc))
 
     # ------------------------------------------------------------------
     # Backup (SQLite-specific, file-based)

@@ -31,122 +31,9 @@ GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CHECK_INTERVAL_HOURS = 6
 
 
-# Windows-specific update applier. Spawned detached from tune-server.exe;
-# waits for the .exe to release file locks, robocopies the staged bundle
-# over the live install (preserving user data), restarts the launcher,
-# then deletes itself. Must be ASCII-safe (cmd.exe is unforgiving on UTF-8
-# in batch files).
-_WINDOWS_APPLY_UPDATE_BAT = r"""@echo off
-REM ===========================================================================
-REM Tune Server -- staged-update applier (Windows)
-REM ===========================================================================
-REM Spawned detached by tune-server.exe right before the parent process exits
-REM (SIGTERM). Job: confirm the parent is gone, mirror _update_staging\ over
-REM the install dir, then relaunch.
-REM
-REM Logs everything to _update.log so a tester can share it when the update
-REM ends in a bad state ("UI still says old version after restart" was the
-REM symptom Yves hit on 2026-04-30 going from 0.6.5 -> 0.7.56 -- file handles
-REM weren't released in time, robocopy retried, but start-tune-server.bat
-REM had already relaunched the OLD exe in parallel).
-REM ===========================================================================
-setlocal enabledelayedexpansion
-cd /d "%~dp0"
-
-set "LOGFILE=%~dp0_update.log"
-echo [%DATE% %TIME%] tune-update applier starting > "%LOGFILE%"
-echo [%DATE% %TIME%] cwd: %cd% >> "%LOGFILE%"
-
-REM Sanity: staging must exist + contain the new tune-server.exe.
-if not exist "_update_staging" (
-    echo [%DATE% %TIME%] [ERROR] _update_staging folder missing -- aborting >> "%LOGFILE%"
-    echo [tune-update][ERROR] _update_staging folder missing. See _update.log
-    exit /b 1
-)
-if not exist "_update_staging\tune-server.exe" (
-    echo [%DATE% %TIME%] [ERROR] _update_staging\tune-server.exe missing -- aborting >> "%LOGFILE%"
-    echo [tune-update][ERROR] Staged update incomplete. See _update.log
-    exit /b 1
-)
-
-REM 1. Wait for the parent process to actually release its file handles.
-REM    Polling tasklist is more reliable than a fixed sleep: Yves hit a case
-REM    where 4 s wasn't enough on a slow Windows install.
-echo [%DATE% %TIME%] Polling for tune-server.exe exit (max 30 s)... >> "%LOGFILE%"
-set /a TRIES=0
-:wait_exit
-tasklist /FI "IMAGENAME eq tune-server.exe" /FO CSV /NH 2>nul | findstr /I "tune-server.exe" >nul
-if errorlevel 1 goto :proc_gone
-set /a TRIES+=1
-if %TRIES% GEQ 15 (
-    echo [%DATE% %TIME%] tune-server.exe still alive after 30 s -- force-killing >> "%LOGFILE%"
-    taskkill /IM tune-server.exe /F >> "%LOGFILE%" 2>&1
-    ping -n 4 127.0.0.1 >nul
-    goto :proc_gone
-)
-ping -n 3 127.0.0.1 >nul
-goto :wait_exit
-:proc_gone
-
-REM 2. Backstop: kill librespot and any orphan helper too. Multiple cmd
-REM    windows from start-tune-server.bat can keep the dir locked.
-taskkill /IM librespot.exe /F >> "%LOGFILE%" 2>&1
-
-REM 3. Extra grace period -- Windows takes ~1-2 s after process exit to
-REM    actually release file locks on the .exe.
-echo [%DATE% %TIME%] Process gone, waiting 3 s for file handle release... >> "%LOGFILE%"
-ping -n 4 127.0.0.1 >nul
-
-REM 4. Mirror the staged bundle on top of the install dir. /MIR removes
-REM    files no longer in the new build (clean upgrade) but excludes user
-REM    state. /R:10 /W:3 = 10 retries x 3 s wait each (30 s total grace
-REM    for any handle the OS hasn't released yet).
-echo [%DATE% %TIME%] robocopy _update_staging\ -> . starting... >> "%LOGFILE%"
-robocopy "_update_staging" "." /MIR ^
-    /XF .env tune_server.db tune-server.log tune-server.log.1 _update.log ^
-    /XD artwork_cache backups _update_staging _backup_* ^
-    /R:10 /W:3 /NP /NJH /NJS >> "%LOGFILE%" 2>&1
-
-set RC=%errorlevel%
-echo [%DATE% %TIME%] robocopy returned %RC% >> "%LOGFILE%"
-
-REM robocopy success codes are 0-7; 8+ is failure.
-if %RC% GEQ 8 (
-    echo [%DATE% %TIME%] [ERROR] robocopy failed (code %RC%) -- install dir may be partial >> "%LOGFILE%"
-    echo [tune-update][ERROR] robocopy failed with code %RC%. See _update.log
-    exit /b 1
-)
-
-REM 5. Sanity-check: confirm the live tune-server.exe really got swapped.
-REM    Compare file sizes between staging and install -- they should match.
-for %%I in ("_update_staging\tune-server.exe") do set "STAGING_SIZE=%%~zI"
-for %%I in ("tune-server.exe") do set "LIVE_SIZE=%%~zI"
-echo [%DATE% %TIME%] sizes: staging=%STAGING_SIZE% live=%LIVE_SIZE% >> "%LOGFILE%"
-if not "%STAGING_SIZE%"=="%LIVE_SIZE%" (
-    echo [%DATE% %TIME%] [WARN] sizes differ -- robocopy did NOT replace tune-server.exe (locked?) >> "%LOGFILE%"
-    echo [tune-update][WARN] tune-server.exe size mismatch -- see _update.log
-    REM Try one more time directly with copy /Y as a fallback for the exe
-    REM (robocopy can mis-handle a file held briefly by its own retry loop).
-    copy /Y "_update_staging\tune-server.exe" "tune-server.exe" >> "%LOGFILE%" 2>&1
-)
-
-REM 6. Cleanup staging.
-rmdir /S /Q "_update_staging" 2>nul
-
-echo [%DATE% %TIME%] Update applied successfully. Relaunching... >> "%LOGFILE%"
-if exist "start-tune-server.bat" (
-    start "" "%~dp0start-tune-server.bat"
-) else (
-    start "" "%~dp0tune-server.exe"
-)
-
-REM Note: this bat is NOT self-deleted. cmd holds the file handle while
-REM running and the workarounds (delayed del/rmdir) are flaky across
-REM Windows versions. The next update simply overwrites this file.
-
-endlocal
-exit /b 0
-"""
+# NOTE: The old _WINDOWS_APPLY_UPDATE_BAT (robocopy-based) was removed in
+# favour of the NSIS silent installer approach in _spawn_windows_apply_helper().
+# The manual fallback for robocopy-based updates lives in scripts/tune-update.bat.
 
 
 def _get_platform_asset_name(version: str) -> str:
@@ -654,20 +541,6 @@ exit /b 0
         except Exception:
             logger.exception("update_install_error")
             return False
-
-    def _stage_windows_update(self, exe_dir: Path, source_dir: Path) -> None:
-        """Copy the new bundle into _update_staging/ and write the swap
-        helper bat. Called from download_and_install on Windows."""
-        staging = exe_dir / "_update_staging"
-        if staging.exists():
-            shutil.rmtree(staging)
-        # shutil.copytree fully populates staging; we use copy rather than
-        # move so the temp dir stays clean for the GC step in the caller.
-        shutil.copytree(str(source_dir), str(staging))
-
-        helper = exe_dir / "_apply_update.bat"
-        helper.write_text(_WINDOWS_APPLY_UPDATE_BAT, encoding="ascii")
-        logger.info("update_staged", staging=str(staging), helper=str(helper))
 
     @staticmethod
     def _is_newer(new_version: str, current_version: str) -> bool:

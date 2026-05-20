@@ -10,18 +10,17 @@ from pathlib import Path
 import structlog
 
 from tune_server.db.engine import Database
-from tune_server.db.repository import AlbumRepo, ArtistRepo, TrackCreditRepo, TrackRepo
+from tune_server.db.compat import TrackCreditRepo
+from tune_server.db.sa_repository import AlbumRepo, ArtistRepo, TrackRepo
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork
 from tune_server.library.enrichment import normalize_genre
 from tune_server.library.metadata_reader import SUPPORTED_EXTENSIONS, read_metadata
-from tune_server.library.rust_scanner import rust_scanner_available
+from tune_server.library.rust_scanner import rust_scanner_available as _rust_scanner_available
 from tune_server.config import settings
 from tune_server.models import Track, TrackCredit
 
 logger = structlog.get_logger()
-
-_USE_RUST_SCANNER = rust_scanner_available()
 
 
 AUDIO_HASH_SAMPLE_SIZE = 64 * 1024  # 64KB sample for audio hash
@@ -38,11 +37,28 @@ def _quality_suffix(sample_rate: int | None, bit_depth: int | None) -> str:
     return sr_str
 
 
-def _same_quality_tier(sr1: int | None, sr2: int | None) -> bool:
-    """Check if two sample rates belong to the same quality tier."""
+def _quality_tier(sr: int | None, bd: int | None = None, fmt: str | None = None) -> str:
+    """Classify audio into a quality tier: 'dsd', 'hi-res', 'cd', or 'lossy'."""
+    if fmt and fmt.lower() in ("dsd", "dsf", "dff"):
+        return "dsd"
+    if sr and sr >= 2_000_000:
+        return "dsd"
+    if sr and sr > 44100:
+        return "hi-res"
+    if bd and bd > 16:
+        return "hi-res"
+    if fmt and fmt.lower() in ("mp3", "aac", "ogg", "opus", "wma"):
+        return "lossy"
+    return "cd"
+
+
+def _same_quality_tier(sr1: int | None, sr2: int | None,
+                       bd1: int | None = None, bd2: int | None = None,
+                       fmt1: str | None = None, fmt2: str | None = None) -> bool:
+    """Check if two tracks belong to the same quality tier (CD / Hi-Res / DSD)."""
     if sr1 is None or sr2 is None:
-        return True  # Can't compare — assume same
-    return sr1 == sr2
+        return True
+    return _quality_tier(sr1, bd1, fmt1) == _quality_tier(sr2, bd2, fmt2)
 
 
 def _ffprobe_audio_info(file_path: str) -> tuple[int | None, int | None]:
@@ -94,7 +110,7 @@ def compute_audio_hash(file_path: str) -> str | None:
     Skips metadata (typically at start/end) by reading from 25% into the file.
     Uses Rust implementation when available (Phase 4).
     """
-    if _USE_RUST_SCANNER:
+    if _rust_scanner_available():
         try:
             from tune_server.library.rust_scanner import compute_audio_hash as _rust_hash
             return _rust_hash(file_path)
@@ -124,10 +140,14 @@ def _list_audio_files(dir_path: Path) -> list[Path]:
 
     Uses Rust walkdir when available (Phase 4) for faster traversal.
     """
-    if _USE_RUST_SCANNER:
+    if _rust_scanner_available():
         try:
             from tune_server.library.rust_scanner import list_audio_files as _rust_list
-            return [Path(p) for p in _rust_list([str(dir_path)])]
+            return [
+                Path(p) for p in _rust_list([str(dir_path)])
+                if not Path(p).name.startswith("._")
+                and not (SKIP_DIRS & set(Path(p).parts))
+            ]
         except Exception:
             pass
 
@@ -257,10 +277,13 @@ class LibraryScanner:
                     await self._track_repo.delete_by_path(path_str)
                     stats["removed"] += 1
 
-            # Remove duplicate tracks (same album + disc + track from different mount points)
+            # Remove duplicate tracks (same audio_hash from different mount points)
             deduped = await self._track_repo.deduplicate()
             if deduped:
                 logger.info("deduplicated_tracks", count=deduped)
+                dups = await self._track_repo.list_recent_duplicates()
+                for d in dups:
+                    logger.debug("deduplicated_detail", **d)
 
             # Clean up orphan albums (no tracks)
             orphans = await self._album_repo.delete_orphans()
@@ -493,9 +516,15 @@ class LibraryScanner:
                     album = None
 
             if album:
-                # Check if existing album has a different sample rate
+                logger.debug("album_resolved", title=base_title, album_id=album.id,
+                             album_year=album.year, track_year=track_year, action="reuse")
+                # Check if existing album belongs to a different quality tier
                 dominant_sr = await self._album_repo.get_dominant_sample_rate(album.id)
-                if settings.quality_split and not _same_quality_tier(dominant_sr, metadata.sample_rate):
+                if settings.quality_split and not _same_quality_tier(
+                    dominant_sr, metadata.sample_rate,
+                    bd1=album.bit_depth, bd2=metadata.bit_depth,
+                    fmt1=album.format, fmt2=metadata.format,
+                ):
                     # Different quality — create a suffixed album for the new track
                     suffix = _quality_suffix(metadata.sample_rate, metadata.bit_depth)
                     qualified_title = f"{base_title} ({suffix})" if suffix else base_title
@@ -530,6 +559,8 @@ class LibraryScanner:
                     artist_id=artist.id,
                     **album_kwargs,
                 )
+                logger.debug("album_resolved", title=base_title, album_id=album.id,
+                             album_year=album.year, track_year=track_year, action="get_or_create")
 
             # Create track
             track = Track(

@@ -36,6 +36,7 @@ class TestFormatFromExtension:
             ("alac", AudioFormat.ALAC),
             ("wv", AudioFormat.WAVPACK),
             ("ape", AudioFormat.APE),
+            ("dst", AudioFormat.DSD),
         ],
     )
     def test_known_extensions(self, ext, expected):
@@ -148,13 +149,14 @@ class TestMimeType:
             (AudioFormat.OGG, "audio/ogg"),
             (AudioFormat.OPUS, "audio/opus"),
             (AudioFormat.AIFF, "audio/aiff"),
+            (AudioFormat.DSD, "application/x-dsd"),
+            (AudioFormat.WAVPACK, "audio/x-wavpack"),
+            (AudioFormat.APE, "audio/x-ape"),
         ],
     )
     def test_known_formats(self, fmt, expected):
         assert mime_type_for_format(fmt) == expected
 
     def test_unknown_format_fallback(self):
-        # DSD now has a dedicated MIME (application/x-dsd) so it no longer falls
-        # through to the default. WMA still has no mapping → octet-stream.
-        assert mime_type_for_format(AudioFormat.DSD) == "application/x-dsd"
+        # WMA has no mapping → octet-stream.
         assert mime_type_for_format(AudioFormat.WMA) == "application/octet-stream"
