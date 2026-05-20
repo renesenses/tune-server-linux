@@ -7,18 +7,14 @@ FROM rust:1.87-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libasound2-dev \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Cache dependencies first
 COPY Cargo.toml Cargo.lock ./
 COPY rust/ rust/
-RUN mkdir -p rust/tune-pyo3/src && echo "" > rust/tune-pyo3/src/lib.rs
-RUN cargo build --release -p tune-server 2>/dev/null || true
 
-# Build the real binary
-COPY rust/ rust/
 RUN cargo build --release -p tune-server
 
 # ---- runtime: minimal image ----

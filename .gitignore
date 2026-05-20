@@ -46,4 +46,3 @@ coverage.xml
 
 # Rust
 rust/target/
-Cargo.lock
