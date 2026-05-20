@@ -1,0 +1,34 @@
+[package]
+name = "tune-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+lofty = { workspace = true }
+reqwest = { workspace = true }
+quick-xml = { workspace = true }
+mdns-sd = { workspace = true }
+socket2 = { workspace = true }
+uuid = { workspace = true }
+walkdir = { workspace = true }
+rayon = { workspace = true }
+notify = { workspace = true }
+md-5 = { workspace = true }
+rusqlite = { workspace = true }
+axum = { workspace = true }
+async-stream = { workspace = true }
+bytes = { workspace = true }
+futures-util = { workspace = true }
+async-trait = { workspace = true }
+urlencoding = { workspace = true }
+cpal = { version = "0.15", optional = true }
+sha2 = { workspace = true }
+
+[features]
+default = ["local-audio"]
+local-audio = ["cpal"]

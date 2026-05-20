@@ -44,6 +44,9 @@ async def health():
 
 @router.get("/config", response_model=SystemConfigResponse)
 async def get_config():
+    from tune_server.api.routes.services import get_discogs_token
+
+    discogs_token = await get_discogs_token()
     return SystemConfigResponse(
         music_dirs=settings.music_dirs,
         api_port=settings.api_port,
@@ -79,7 +82,7 @@ async def get_config():
         surround_bass_management=settings.surround_bass_management,
         surround_crossover_hz=settings.surround_crossover_hz,
         metadata_readonly=settings.metadata_readonly,
-        discogs_token_set=bool(settings.discogs_token),
+        discogs_token_set=bool(discogs_token),
         enrich_on_scan=settings.enrich_on_scan,
     )
 
@@ -1550,9 +1553,15 @@ async def diagnostics(errors_limit: int = Query(50, le=200)):
         import tune_native
         rust_engines["available"] = True
         rust_engines["version"] = tune_native.version()
-        rust_engines["metadata_engine"] = os.environ.get("TUNE_METADATA_ENGINE", "rust")
-        rust_engines["pipeline_engine"] = os.environ.get("TUNE_PIPELINE_ENGINE", "auto")
-        rust_engines["discovery_engine"] = os.environ.get("TUNE_DISCOVERY_ENGINE", "auto")
+        rust_engines["scanner_engine"] = settings.scanner_engine
+        rust_engines["discovery_engine"] = settings.discovery_engine
+        rust_engines["metadata_engine"] = settings.metadata_engine
+        from tune_server.library.rust_scanner import rust_scanner_available
+        from tune_server.discovery.rust_discovery import rust_discovery_available
+        from tune_server.library.metadata_reader import _use_rust_engine
+        rust_engines["scanner_active"] = rust_scanner_available()
+        rust_engines["discovery_active"] = rust_discovery_available()
+        rust_engines["metadata_active"] = _use_rust_engine()
     except ImportError:
         pass
     diag["rust_engines"] = rust_engines

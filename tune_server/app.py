@@ -238,11 +238,62 @@ class TuneServer:
                 hint = "Install with: sudo apt install ffmpeg (or brew install ffmpeg on macOS)"
             logger.error("ffmpeg_not_found", hint=hint, configured_path=settings.ffmpeg_path)
 
-        # Database — use SQLAlchemy Core engine (database-independent)
+        # Rust native acceleration status
+        try:
+            import tune_native
+            from tune_server.library.rust_scanner import rust_scanner_available
+            from tune_server.discovery.rust_discovery import rust_discovery_available
+            from tune_server.library.metadata_reader import _use_rust_engine
+            logger.info(
+                "rust_native_engines",
+                version=tune_native.version(),
+                scanner=rust_scanner_available(),
+                discovery=rust_discovery_available(),
+                metadata=_use_rust_engine(),
+            )
+        except ImportError:
+            logger.info("rust_native_engines", available=False)
+
+        # Phase 1 — Database + repos
+        repos = await self._init_database()
+
+        # Phase 2 — Library scanner
+        self._init_scanner()
+
+        # Phase 3 — Zones, groups, sync
+        self._init_zones()
+
+        # Phase 4 — HTTP streamer, UPnP, Deezer proxy
+        await self._init_http_streamer()
+
+        # Phase 5 — Register output factories + create FastAPI app
+        await self._register_output_factories()
+        self._api_app = create_api_app()
+
+        # Phase 6 — Plugins
+        await self._init_plugins()
+
+        # Phase 7 — Discovery, OpenHome, mounts, SMB
+        await self._init_discovery()
+
+        # Phase 8 — WebSocket manager + SPA wrap + zone init
+        await self._init_web_and_events()
+
+        # Phase 9 — Streaming auth, deps, schedulers
+        await self._init_schedulers(repos)
+
+        # Phase 10 — Initial scan, banner, telemetry
+        await self._init_finalize()
+
+    # ------------------------------------------------------------------
+    # Private init phases — called from start() in order
+    # ------------------------------------------------------------------
+
+    async def _init_database(self) -> dict:
+        """Phase 1: Database creation + repository instantiation."""
         self._db = create_database(settings, use_sa=True)
         await self._db.connect()
 
-        # Repos — SA Core (database-independent)
         from tune_server.db.sa_repository import (
             SAArtistRepo, SAAlbumRepo, SATrackRepo,
             SAPlayQueueRepo, SAZoneRepo, SAPlaylistRepo, SARadioStationRepo,
@@ -254,33 +305,33 @@ class TuneServer:
         zone_repo = SAZoneRepo(self._db)
         playlist_repo = SAPlaylistRepo(self._db)
         radio_repo = SARadioStationRepo(self._db)
-
-        # Track credit repo
         credit_repo = TrackCreditRepo(self._db)
 
-        # Library scanner
-        self._scanner = LibraryScanner(self._db, self._event_bus, credit_repo=credit_repo)
+        return dict(
+            track_repo=track_repo, album_repo=album_repo, artist_repo=artist_repo,
+            queue_repo=queue_repo, zone_repo=zone_repo, playlist_repo=playlist_repo,
+            radio_repo=radio_repo, credit_repo=credit_repo,
+        )
 
-        # Zone manager
+    def _init_scanner(self) -> None:
+        """Phase 2: LibraryScanner."""
+        self._scanner = LibraryScanner(self._db, self._event_bus, credit_repo=TrackCreditRepo(self._db))
+
+    def _init_zones(self) -> None:
+        """Phase 3: ZoneManager + GroupManager + SyncEngine."""
         self._zone_manager = ZoneManager(self._db, self._event_bus)
-
-        # Group manager
         self._group_manager = GroupManager(self._event_bus)
         self._zone_manager.set_group_manager(self._group_manager)
-
-        # Sync engine
         self._sync_engine = SyncEngine(self._group_manager)
 
-        # HTTP audio streamer for DLNA. Pre-bind a free port so we don't
-        # crash when 8080 is taken (Plex, Jenkins, dev servers…). Mutate
-        # settings.stream_port so downstream URL builders + UPnP see the
-        # chosen port.
+    async def _init_http_streamer(self) -> None:
+        """Phase 4: HttpAudioStreamer + UPnP MediaServer + Deezer proxy."""
+        # Pre-bind a free port so we don't crash when 8080 is taken
         settings.stream_port = pick_free_port(settings.stream_host, settings.stream_port)
         self._http_streamer = HttpAudioStreamer(
             host=settings.stream_host,
             port=settings.stream_port,
         )
-
 
         # UPnP MediaServer
         self._upnp_server = None
@@ -319,16 +370,8 @@ class TuneServer:
         if self._upnp_server:
             await self._upnp_server.start()
 
-
-
-        # Register output factories
-        await self._register_output_factories()
-
-        # Create the FastAPI app early — plugins need it to register routes
-        # during setup(), before zones initialize. The same instance is
-        # reused by run_server() to spin up uvicorn.
-        self._api_app = create_api_app()
-
+    async def _init_plugins(self) -> None:
+        """Phase 6: PluginLoader + PluginContext + discover_and_setup."""
         # Auto-install plugins from env var (Docker persistence)
         if settings.install_plugins:
             from tune_server.plugins.store import auto_install_plugins
@@ -367,6 +410,8 @@ class TuneServer:
         # layer so static SPA routing works.
         self._serving_app = wrap_for_serving(self._api_app)
 
+    async def _init_discovery(self) -> None:
+        """Phase 7: DiscoveryManager + OpenHome events + mounts + SMB."""
         # Discovery — start BEFORE zone init so DLNA devices can be found
         self._discovery_manager = DiscoveryManager(self._event_bus)
         await self._discovery_manager.start()
@@ -400,6 +445,8 @@ class TuneServer:
             await self._smb_discovery.start()
             deps.smb_discovery = self._smb_discovery
 
+    async def _init_web_and_events(self) -> None:
+        """Phase 8: WebSocket manager + zone initialization."""
         # WebSocket manager — start BEFORE zones so events are never lost
         self._ws_manager = await setup_websocket_manager(self._event_bus)
 
@@ -418,9 +465,9 @@ class TuneServer:
                     break
         asyncio.create_task(_retry_zones())
 
-        # Streaming services already created above (before http_streamer.start
-        # so the Deezer proxy could register routes). Restore auth now that
-        # the DB is available.
+    async def _init_schedulers(self, repos: dict) -> None:
+        """Phase 9: Streaming auth, deps wiring, schedulers, background services."""
+        # Restore streaming auth now that DB is available
         await self._restore_streaming_auth()
         self._build_stream_url_resolver()
 
@@ -431,14 +478,14 @@ class TuneServer:
         deps.zone_manager = self._zone_manager
         deps.group_manager = self._group_manager
         deps.discovery_manager = self._discovery_manager
-        deps.track_repo = track_repo
-        deps.album_repo = album_repo
-        deps.artist_repo = artist_repo
-        deps.playlist_repo = playlist_repo
-        deps.queue_repo = queue_repo
-        deps.zone_repo = zone_repo
-        deps.radio_repo = radio_repo
-        deps.credit_repo = credit_repo
+        deps.track_repo = repos["track_repo"]
+        deps.album_repo = repos["album_repo"]
+        deps.artist_repo = repos["artist_repo"]
+        deps.playlist_repo = repos["playlist_repo"]
+        deps.queue_repo = repos["queue_repo"]
+        deps.zone_repo = repos["zone_repo"]
+        deps.radio_repo = repos["radio_repo"]
+        deps.credit_repo = repos["credit_repo"]
         from tune_server.db.repository import PlaybackHistoryRepo
         history_repo = PlaybackHistoryRepo(self._db)
         deps.history_repo = history_repo
@@ -569,6 +616,10 @@ class TuneServer:
 
         # DLNA adaptive buffer: periodic stability check (decrease buffers for stable devices)
         self._dlna_buffer_check_task = asyncio.create_task(self._dlna_buffer_stability_loop())
+
+    async def _init_finalize(self) -> None:
+        """Phase 10: Initial scan, startup banner, telemetry."""
+        from tune_server import __version__
 
         # Initial scan
         if settings.scan_on_startup:

@@ -1,0 +1,43 @@
+[workspace]
+members = ["rust/tune-core", "rust/tune-pyo3"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Bertrand Clech <bertrand.clech@orange.fr>"]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+pyo3 = { version = "0.28", features = ["extension-module"] }
+lofty = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+walkdir = "2"
+rayon = "1.10"
+notify = "7"
+md-5 = "0.10"
+quick-xml = "0.37"
+mdns-sd = "0.12"
+socket2 = "0.5"
+uuid = { version = "1", features = ["v4"] }
+async-stream = "0.3"
+futures-util = "0.3"
+async-trait = "0.1"
+bytes = "1"
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors", "compression-gzip", "trace", "fs"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+urlencoding = "2"
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+codegen-units = 1
+panic = "abort"
