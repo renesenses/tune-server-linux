@@ -7,15 +7,17 @@ Audio is cast via HTTP URL (same pull model as DLNA).
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 
 from tune_server.audio.formats import AudioCapabilities, AudioFormat, CHROMECAST_CAPABILITIES
-from tune_server.models import AudioStreamInfo, Track
+from tune_server.models import AudioStreamInfo, Source, Track
 from tune_server.outputs.base import OutputTarget
 
 logger = structlog.get_logger()
+
+GAPLESS_PRELOAD_SECS = 20
 
 _CAST_DIRECT_FORMATS = {AudioFormat.FLAC, AudioFormat.MP3, AudioFormat.AAC, AudioFormat.OGG, AudioFormat.WAV}
 
@@ -64,6 +66,10 @@ class ChromecastOutput(OutputTarget):
     @property
     def is_direct_url(self) -> bool:
         return self._direct_url
+
+    @property
+    def has_pending_stream(self) -> bool:
+        return self._stream_id is not None or self._last_content_id is not None
 
     def supports_direct_url(self, track: Track) -> bool:
         if not track or not track.file_path:
@@ -143,11 +149,15 @@ class ChromecastOutput(OutputTarget):
         if track and track.duration_ms:
             media_info["duration"] = track.duration_ms / 1000.0
 
+        is_radio = track and hasattr(track, 'source') and track.source == Source.RADIO
+        stream_type = "LIVE" if is_radio else "BUFFERED"
+
         try:
             await self._cast_call(
                 mc.play_media, url, content_type,
                 title=title, thumb=thumb, metadata=metadata,
                 media_info=media_info if media_info else None,
+                stream_type=stream_type,
             )
             await self._cast_call(mc.block_until_active, timeout=15)
             self._last_content_id = url
@@ -222,12 +232,7 @@ class ChromecastOutput(OutputTarget):
 
     async def set_next_track(self, stream_info: AudioStreamInfo, track: Track,
                              **kwargs) -> bool:
-        """Queue the next track on the Chromecast for gapless transition.
-
-        Pre-creates the HTTP streamer session so the audio data is ready
-        before the current track ends, then enqueues via play_media with
-        enqueue=True (QUEUE_NEXT).
-        """
+        """Queue the next track for gapless transition via QUEUE_INSERT with preloadTime."""
         if not track or not track.file_path:
             return False
 
@@ -265,25 +270,50 @@ class ChromecastOutput(OutputTarget):
                 filename = track.cover_path.split("/")[-1]
                 thumb = f"http://{self._server_ip}:8888/api/v1/library/artwork/{filename}"
 
-        metadata = {"metadataType": 3, "title": title}
+        metadata: dict[str, Any] = {"metadataType": 3, "title": title}
         if artist:
             metadata["artist"] = artist
         if album:
             metadata["albumName"] = album
+        if thumb:
+            metadata["images"] = [{"url": thumb}]
 
         try:
+            status = mc.status
+            if not status or not status.media_session_id:
+                logger.warning("chromecast_no_session_for_queue", device=self._name)
+                if self._next_stream_id:
+                    self._streamer.remove_session(self._next_stream_id)
+                    self._next_stream_id = None
+                return False
+
+            media: dict[str, Any] = {
+                "contentId": url,
+                "streamType": "BUFFERED",
+                "contentType": content_type,
+                "metadata": metadata,
+            }
+
+            msg: dict[str, Any] = {
+                "mediaSessionId": status.media_session_id,
+                "items": [{
+                    "media": media,
+                    "autoplay": True,
+                    "startTime": 0,
+                    "preloadTime": GAPLESS_PRELOAD_SECS,
+                }],
+                "type": "QUEUE_INSERT",
+            }
+
             await self._cast_call(
-                mc.play_media, url, content_type,
-                title=title, thumb=thumb, metadata=metadata,
-                enqueue=True,
+                mc.send_message, msg, inc_session_id=True,
             )
             logger.info("chromecast_next_queued", device=self._name, track=title,
-                        url=url[:80])
+                        url=url[:80], preload_secs=GAPLESS_PRELOAD_SECS)
             return True
         except Exception:
-            logger.debug("chromecast_queue_next_failed", device=self._name,
-                         track=title)
-            # Clean up the pre-created session on failure
+            logger.exception("chromecast_queue_next_failed", device=self._name,
+                             track=title)
             if self._next_stream_id:
                 self._streamer.remove_session(self._next_stream_id)
                 self._next_stream_id = None

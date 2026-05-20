@@ -7,7 +7,7 @@ import structlog
 
 from tune_server.config import settings
 from tune_server.db.engine import Database
-from tune_server.db.repository import TrackRepo
+from tune_server.db.sa_repository import TrackRepo
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.library.metadata_reader import SUPPORTED_EXTENSIONS
 from tune_server.library.scanner import LibraryScanner

@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 
 from tune_server.api.deps import deps
 from tune_server.config import settings
-from tune_server.db.repository import full_text_search
+from tune_server.db.compat import full_text_search
 from tune_server.event_bus import Event, EventType
 from tune_server.library.artwork import copy_cover_to_album_folder, fetch_cover_from_musicbrainz, get_album_artwork, save_artwork
 from tune_server.library.metadata_reader import write_tags
@@ -570,13 +570,23 @@ async def enrich_all_albums_endpoint():
                 except Exception:
                     logger.debug("enrich_all_album_error", album_id=row["id"], exc_info=True)
                 _enrich_all_state["processed"] = i + 1
-                # Rate limit: 1 request per second (MusicBrainz API requirement)
+                if (i + 1) % 5 == 0 or i + 1 == total:
+                    await deps.event_bus.emit(Event(
+                        type=EventType.LIBRARY_ENRICH_PROGRESS,
+                        data={"processed": i + 1, "total": total},
+                        source="enrich_all",
+                    ))
                 await asyncio.sleep(1.0)
             logger.info("enrich_all_complete", processed=_enrich_all_state["processed"], total=total)
         except Exception:
             logger.exception("enrich_all_error")
         finally:
             _enrich_all_state["running"] = False
+            await deps.event_bus.emit(Event(
+                type=EventType.LIBRARY_ENRICH_COMPLETED,
+                data={"processed": _enrich_all_state["processed"], "total": total},
+                source="enrich_all",
+            ))
 
     asyncio.create_task(_run_batch())
     return {"task_id": task_id, "total_albums": total}
@@ -1426,14 +1436,14 @@ async def get_similar_albums(album_id: int, limit: int = Query(10, le=30)):
 
 @router.get("/smart-playlists")
 async def list_smart_playlists():
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     return await repo.list()
 
 
 @router.post("/smart-playlists")
 async def create_smart_playlist(body: dict):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     import json
     sp_id = await repo.create(
@@ -1450,7 +1460,7 @@ async def create_smart_playlist(body: dict):
 
 @router.get("/smart-playlists/{sp_id}")
 async def get_smart_playlist(sp_id: int):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     sp = await repo.get(sp_id)
     if not sp:
@@ -1460,7 +1470,7 @@ async def get_smart_playlist(sp_id: int):
 
 @router.put("/smart-playlists/{sp_id}")
 async def update_smart_playlist(sp_id: int, body: dict):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     import json
     updates = {}
@@ -1475,7 +1485,7 @@ async def update_smart_playlist(sp_id: int, body: dict):
 
 @router.delete("/smart-playlists/{sp_id}")
 async def delete_smart_playlist(sp_id: int):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     await repo.delete(sp_id)
     return {"deleted": sp_id}
@@ -1483,7 +1493,7 @@ async def delete_smart_playlist(sp_id: int):
 
 @router.get("/smart-playlists/{sp_id}/tracks")
 async def get_smart_playlist_tracks(sp_id: int):
-    from tune_server.db.repository import SmartPlaylistRepo
+    from tune_server.db.compat import SmartPlaylistRepo
     repo = SmartPlaylistRepo(deps.db)
     return await repo.resolve_tracks(sp_id)
 

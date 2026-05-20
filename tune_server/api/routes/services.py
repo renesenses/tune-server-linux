@@ -178,6 +178,13 @@ async def get_credential(service: str, key: str = "token") -> str | None:
     return val if isinstance(val, str) and val else None
 
 
+async def get_discogs_token() -> str:
+    """Return the Discogs token: .env first, then DB (Services UI) fallback."""
+    if settings.discogs_token:
+        return settings.discogs_token
+    return await get_credential("discogs", "token") or ""
+
+
 # ---------------------------------------------------------------------------
 # Validators — one per service that has a network-testable credential.
 # ---------------------------------------------------------------------------

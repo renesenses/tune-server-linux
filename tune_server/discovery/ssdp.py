@@ -298,11 +298,15 @@ class SsdpDiscovery:
                         discovered.add(usn)
 
                         try:
-                            # If already registered via a previous search target, skip
                             dev_id = usn or location
                             async with self._lock:
                                 if dev_id in self._devices and self._devices[dev_id].available:
                                     return
+                                # Check if same host+port+name already registered under a different ID
+                                # (same device reconnecting with new USN). Don't filter different
+                                # devices on the same host (e.g. multiple Squeezebox via LMS bridge).
+                                _parsed_loc = urlparse(location)
+                                _loc_host = _parsed_loc.hostname or ""
 
                             if is_openhome and not is_media_renderer:
                                 logger.info(
@@ -330,7 +334,16 @@ class SsdpDiscovery:
 
                             dmr = DmrDevice(device, event_handler=None)
 
-                            name = device.friendly_name or "Unknown DLNA"
+                            import re as _re
+                            _raw_name = device.friendly_name or ""
+                            _is_uuid = bool(_re.fullmatch(
+                                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                                _raw_name, _re.IGNORECASE,
+                            ))
+                            if _is_uuid or not _raw_name:
+                                name = device.model_name or device.device_type or _raw_name or "Unknown DLNA"
+                            else:
+                                name = _raw_name
                             parsed = urlparse(device.device_url or location)
 
                             # Query sink protocol info for format detection
@@ -355,6 +368,13 @@ class SsdpDiscovery:
                             manufacturer = (device.manufacturer or "").lower()
                             if "google" in manufacturer:
                                 logger.debug("ssdp_skip_chromecast", name=name)
+                                return
+
+                            # Skip renderers hosted on this machine (same IP)
+                            device_host = parsed.hostname or ""
+                            local_ip = self._get_local_ip()
+                            if device_host and local_ip and device_host in (local_ip, "127.0.0.1", "localhost"):
+                                logger.debug("ssdp_skip_local_renderer", name=name, host=device_host)
                                 return
 
                             # Resolve Sonos room name for friendlier display
@@ -661,7 +681,16 @@ class SsdpDiscovery:
 
                 dmr = DmrDevice(device, event_handler=None)
 
-                name = device.friendly_name or "Unknown DLNA"
+                import re as _re
+                _raw_name = device.friendly_name or ""
+                _is_uuid = bool(_re.fullmatch(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                    _raw_name, _re.IGNORECASE,
+                ))
+                if _is_uuid or not _raw_name:
+                    name = device.model_name or device.device_type or _raw_name or "Unknown DLNA"
+                else:
+                    name = _raw_name
                 parsed = urlparse(device.device_url or location)
 
                 sink_protocols: list[str] = []

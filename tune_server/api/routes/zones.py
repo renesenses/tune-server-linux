@@ -4,6 +4,7 @@ import structlog
 from fastapi import APIRouter, HTTPException
 
 from tune_server.api.deps import deps
+from tune_server.api.routes.playback import enrich_zone_now_playing
 from tune_server.config import settings
 from tune_server.models import Zone, ZoneCreateRequest, ZoneUpdateRequest, ZoneGroupRequest, ZoneGroupResponse, StereoPairRequest, StereoPairResponse, SurroundGroupRequest, SurroundGroupResponse
 
@@ -46,7 +47,8 @@ async def get_zone(zone_id: int):
     zone = deps.zone_manager.get_zone(zone_id)
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
-    return zone.to_model()
+    model = zone.to_model()
+    return await enrich_zone_now_playing(model)
 
 
 @router.put("/{zone_id}", response_model=Zone)

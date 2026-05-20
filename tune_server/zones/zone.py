@@ -4,7 +4,7 @@ import json
 
 import structlog
 
-from tune_server.db.repository import PlayQueueRepo, ZoneRepo
+from tune_server.db.sa_repository import PlayQueueRepo, ZoneRepo
 from tune_server.event_bus import EventBus
 from tune_server.models import AudioFormat, OutputType, PlaybackState, Source, Track, Zone
 from tune_server.outputs.base import OutputTarget

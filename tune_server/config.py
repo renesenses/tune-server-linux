@@ -15,6 +15,17 @@ def _detect_base_dir() -> Path:
     return Path.cwd()
 
 
+def _env_file_candidates() -> list[str]:
+    """Build ordered list of .env paths: exe dir, %APPDATA%/TuneServer, CWD."""
+    candidates = [str(_detect_base_dir() / ".env")]
+    if sys.platform == "win32":
+        import os
+        appdata = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+        candidates.append(str(Path(appdata) / "TuneServer" / ".env"))
+    candidates.append(".env")
+    return candidates
+
+
 def _detect_web_dir() -> str | None:
     """Auto-detect web/ directory next to the binary or in _internal/."""
     base = _detect_base_dir()
@@ -37,10 +48,16 @@ def _detect_bin(name: str) -> str:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="TUNE_",
-        env_file=".env",
+        env_file=_env_file_candidates(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    # Rust native acceleration (tune_native via PyO3)
+    # "auto" = use Rust if available, "rust" = require Rust, "python" = force Python
+    scanner_engine: str = "auto"
+    discovery_engine: str = "auto"
+    metadata_engine: str = "auto"
 
     # Library
     music_dirs: list[str] = Field(default_factory=lambda: [str(Path.home() / "Music")])
@@ -270,7 +287,28 @@ class Settings(BaseSettings):
     log_format: str = "console"  # console or json
 
 
+def _coerce_env_music_dirs() -> None:
+    """Accept TUNE_MUSIC_DIRS=/path as shorthand for '["/path"]'."""
+    import os
+    raw = os.environ.get("TUNE_MUSIC_DIRS", "")
+    if raw and not raw.lstrip().startswith("["):
+        import json
+        os.environ["TUNE_MUSIC_DIRS"] = json.dumps([raw])
+
+_coerce_env_music_dirs()
 settings = Settings()
+
+def _log_env_files_loaded() -> None:
+    """Log which .env files were found at startup."""
+    import structlog
+    _logger = structlog.get_logger()
+    for candidate in _env_file_candidates():
+        if Path(candidate).is_file():
+            _logger.info("env_file_loaded", path=candidate)
+    _logger.info("config_effective", quality_split=settings.quality_split,
+                 db_engine=settings.db_engine, music_dirs=settings.music_dirs)
+
+_log_env_files_loaded()
 
 
 def persist_env_var(key: str, value: str, env_file: str = ".env") -> None:
