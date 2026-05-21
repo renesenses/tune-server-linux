@@ -528,32 +528,93 @@ class TidalService(StreamingService):
                 offset = 0
                 while True:
                     if fav_type == "albums":
-                        batch = favs.albums(limit=100, offset=offset)
+                        batch = favs.albums(limit=50, offset=offset)
                     elif fav_type == "artists":
-                        batch = favs.artists(limit=100, offset=offset)
+                        batch = favs.artists(limit=50, offset=offset)
                     elif fav_type == "tracks":
-                        batch = favs.tracks(limit=100, offset=offset)
+                        batch = favs.tracks(limit=50, offset=offset)
                     else:
                         break
                     if not batch:
                         break
                     items.extend(batch)
-                    if len(batch) < 100 or len(items) >= limit:
+                    if len(batch) < 50 or len(items) >= limit:
                         break
-                    offset += 100
+                    offset += 50
                 return items[:limit]
 
             raw = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=60)
+            logger.info("tidal_favorites_fetched", type=fav_type, count=len(raw))
             if fav_type == "albums":
-                return {"albums": [self._map_album(a) for a in raw if hasattr(a, "name")]}
+                mapped = []
+                for a in raw:
+                    try:
+                        mapped.append(self._map_album(a))
+                    except Exception:
+                        logger.debug("tidal_favorite_album_map_failed", album_id=getattr(a, "id", "?"))
+                return {"albums": mapped}
             elif fav_type == "artists":
-                return {"artists": [self._map_artist(a) for a in raw if hasattr(a, "name")]}
+                mapped = []
+                for a in raw:
+                    try:
+                        mapped.append(self._map_artist(a))
+                    except Exception:
+                        logger.debug("tidal_favorite_artist_map_failed", artist_id=getattr(a, "id", "?"))
+                return {"artists": mapped}
             elif fav_type == "tracks":
-                return {"tracks": [self._map_track(t) for t in raw if hasattr(t, "name")]}
+                mapped = []
+                for t in raw:
+                    try:
+                        mapped.append(self._map_track(t))
+                    except Exception:
+                        logger.debug("tidal_favorite_track_map_failed", track_id=getattr(t, "id", "?"))
+                return {"tracks": mapped}
             return {}
         except Exception:
             logger.exception("tidal_user_favorites_error", type=fav_type)
             return {}
+
+    async def add_favorite(self, fav_type: str, item_id: str) -> bool:
+        if not await self._ensure_authenticated():
+            return False
+        try:
+            def _add():
+                favs = self._session.user.favorites
+                if fav_type == "albums":
+                    return favs.add_album(item_id)
+                elif fav_type == "artists":
+                    return favs.add_artist(item_id)
+                elif fav_type == "tracks":
+                    return favs.add_track(item_id)
+                return False
+
+            ok = await asyncio.wait_for(asyncio.to_thread(_add), timeout=30)
+            logger.info("tidal_favorite_added", type=fav_type, id=item_id, ok=ok)
+            return bool(ok)
+        except Exception:
+            logger.exception("tidal_add_favorite_error", type=fav_type, id=item_id)
+            return False
+
+    async def remove_favorite(self, fav_type: str, item_id: str) -> bool:
+        if not await self._ensure_authenticated():
+            return False
+        try:
+            def _remove():
+                favs = self._session.user.favorites
+                if fav_type == "albums":
+                    return favs.remove_album(item_id)
+                elif fav_type == "artists":
+                    return favs.remove_artist(item_id)
+                elif fav_type == "tracks":
+                    return favs.remove_track(item_id)
+                return False
+
+            ok = await asyncio.wait_for(asyncio.to_thread(_remove), timeout=30)
+            logger.info("tidal_favorite_removed", type=fav_type, id=item_id, ok=ok)
+            return bool(ok)
+        except Exception:
+            logger.exception("tidal_remove_favorite_error", type=fav_type, id=item_id)
+            return False
 
     async def get_playlist_tracks(self, playlist_id: str) -> list[Track]:
         if not await self._ensure_authenticated():

@@ -6,7 +6,7 @@ import structlog
 from fastapi import APIRouter, Query
 
 from tune_server.api.deps import deps
-from tune_server.db.compat import full_text_search
+from tune_server.db.sa_repository import full_text_search
 from tune_server.models import FederatedSearchResult, SearchResult
 
 logger = structlog.get_logger()

@@ -2,11 +2,13 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Json;
 use axum::routing::{delete, get, post};
 use axum::Router;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -42,7 +44,7 @@ struct AppState {
     ssdp: Arc<Mutex<SsdpScanner>>,
     outputs: Arc<Mutex<OutputRegistry>>,
     services: Arc<Mutex<ServiceRegistry>>,
-    music_dirs: Vec<String>,
+    music_dirs: std::sync::RwLock<Vec<String>>,
     web_dir: Option<PathBuf>,
 }
 
@@ -59,8 +61,15 @@ async fn main() {
 
     let music_dirs = std::env::var("TUNE_MUSIC_DIRS")
         .map(|s| {
-            serde_json::from_str::<Vec<String>>(&s)
-                .unwrap_or_else(|_| vec![s.trim_matches('"').to_string()])
+            tracing::debug!(raw = %s, "parsing TUNE_MUSIC_DIRS");
+            serde_json::from_str::<Vec<String>>(&s).unwrap_or_else(|_| {
+                let cleaned = s.trim_matches(|c: char| c == '"' || c == '\'' || c == '[' || c == ']');
+                cleaned
+                    .split(',')
+                    .map(|p| p.trim().trim_matches(|c: char| c == '"' || c == '\'').to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
         })
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME")
@@ -97,7 +106,18 @@ async fn main() {
 
     let db = SqliteDb::open(&db_path).expect("failed to open database");
     db.init_schema().expect("failed to initialize schema");
+    tune_core::db::migrations::run_migrations(&db).expect("failed to run migrations");
     info!("database_ready");
+
+    // Load music_dirs from settings DB (overrides env var if present)
+    let music_dirs = {
+        let repo = tune_core::db::settings_repo::SettingsRepo::new(db.clone());
+        if let Ok(Some(stored)) = repo.get("music_dirs") {
+            serde_json::from_str::<Vec<String>>(&stored).unwrap_or(music_dirs)
+        } else {
+            music_dirs
+        }
+    };
 
     let streamer = Arc::new(AudioStreamer::new(stream_port));
     let playback = Arc::new(PlaybackManager::new());
@@ -212,7 +232,7 @@ async fn main() {
         ssdp,
         outputs,
         services,
-        music_dirs,
+        music_dirs: std::sync::RwLock::new(music_dirs),
         web_dir: web_dir.clone(),
     });
 
@@ -234,6 +254,14 @@ async fn main() {
         .route("/library/search", get(search_library))
         .route("/library/stats", get(library_stats))
         .route("/library/scan", post(trigger_scan))
+        .route("/library/browse/roots", get(browse_roots))
+        .route("/library/browse/dir", get(browse_dir))
+        // System config
+        .route("/system/music-dirs", get(get_music_dirs))
+        .route("/system/music-dirs", post(add_music_dir))
+        .route("/system/music-dirs", delete(remove_music_dir))
+        .route("/system/scan", post(trigger_scan))
+        .route("/system/scan/status", get(scan_status))
         // Playback
         .route("/playback/play", post(playback_play))
         .route("/playback/pause", post(playback_pause))
@@ -261,7 +289,9 @@ async fn main() {
         // History
         .route("/history/recent", get(recent_history))
         // Artwork
-        .route("/library/artwork/{filename}", get(serve_artwork));
+        .route("/library/artwork/{filename}", get(serve_artwork))
+        // WebSocket
+        .route("/ws", get(ws_handler));
 
     let stream_sessions = streamer.sessions_state();
 
@@ -322,7 +352,7 @@ async fn system_info(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> 
         "version": VERSION,
         "engine": "rust",
         "local_ip": local_ip,
-        "music_dirs": s.music_dirs,
+        "music_dirs": *s.music_dirs.read().unwrap(),
         "web_dir": s.web_dir.as_ref().map(|p| p.display().to_string()),
     }))
 }
@@ -354,13 +384,30 @@ struct PaginationParams {
     query: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct AlbumListParams {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    sort: Option<String>,
+    order: Option<String>,
+    quality: Option<String>,
+    format: Option<String>,
+}
+
 async fn list_albums(
     State(s): State<Arc<AppState>>,
-    Query(p): Query<PaginationParams>,
+    Query(p): Query<AlbumListParams>,
 ) -> Json<Vec<serde_json::Value>> {
     let repo = AlbumRepo::new(s.db.clone());
     let albums = repo
-        .list(p.limit.unwrap_or(100), p.offset.unwrap_or(0))
+        .list_sorted(
+            p.limit.unwrap_or(100),
+            p.offset.unwrap_or(0),
+            p.sort.as_deref().unwrap_or("title"),
+            p.order.as_deref().unwrap_or("asc"),
+            p.quality.as_deref(),
+            p.format.as_deref(),
+        )
         .unwrap_or_default();
     Json(albums.into_iter().map(|a| a.to_json()).collect())
 }
@@ -481,7 +528,7 @@ async fn library_stats(State(s): State<Arc<AppState>>) -> Json<serde_json::Value
 
 async fn trigger_scan(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let db = s.db.clone();
-    let dirs = s.music_dirs.clone();
+    let dirs = s.music_dirs.read().unwrap().clone();
     tokio::spawn(async move {
         let _ = tokio::task::spawn_blocking(move || {
             tune_core::scanner::scan_and_import(&db, &dirs)
@@ -499,6 +546,8 @@ async fn trigger_scan(State(s): State<Arc<AppState>>) -> Json<serde_json::Value>
 struct PlayBody {
     zone_id: i64,
     track_id: Option<i64>,
+    track_ids: Option<Vec<i64>>,
+    position: Option<usize>,
     output_device_id: Option<String>,
     source: Option<String>,
     source_id: Option<String>,
@@ -508,9 +557,54 @@ async fn playback_play(
     State(s): State<Arc<AppState>>,
     Json(body): Json<PlayBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // If track_ids provided, set up the queue and play from position
+    if let Some(ref ids) = body.track_ids {
+        if !ids.is_empty() {
+            let queue_repo = PlayQueueRepo::new(s.db.clone());
+            let _ = queue_repo.set_queue(body.zone_id, ids);
+            let pos = body.position.unwrap_or(0);
+            let play_id = ids.get(pos).or_else(|| ids.first()).copied();
+            if let Some(tid) = play_id {
+                let _ = queue_repo.set_current(body.zone_id, tid);
+
+                let zone = ZoneRepo::new(s.db.clone()).get(body.zone_id).ok().flatten();
+                let device_id = zone.and_then(|z| z.output_device_id);
+
+                let req = PlayRequest {
+                    zone_id: body.zone_id,
+                    output_device_id: device_id,
+                    track_id: Some(tid),
+                    source: Some("local".into()),
+                    source_id: None,
+                    title: None,
+                    artist_name: None,
+                    album_title: None,
+                    cover_url: None,
+                    duration_ms: None,
+                };
+                match s.orchestrator.play(req).await {
+                    Ok(result) => return Ok(Json(serde_json::json!({
+                        "stream_url": result.stream_url,
+                        "output_sent": result.output_sent,
+                        "source": result.source,
+                        "queue_length": ids.len(),
+                    }))),
+                    Err(e) => {
+                        warn!(error = %e, "playback_play_queue_error");
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                }
+            }
+        }
+    }
+
+    // Single track play
+    let zone = ZoneRepo::new(s.db.clone()).get(body.zone_id).ok().flatten();
+    let device_id = body.output_device_id.or_else(|| zone.and_then(|z| z.output_device_id));
+
     let req = PlayRequest {
         zone_id: body.zone_id,
-        output_device_id: body.output_device_id,
+        output_device_id: device_id,
         track_id: body.track_id,
         source: body.source,
         source_id: body.source_id,
@@ -871,6 +965,164 @@ async fn serve_artwork(Path(filename): Path<String>) -> Result<axum::response::R
         .header(header::CACHE_CONTROL, "public, max-age=86400")
         .body(Body::from(data))
         .unwrap())
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket handler
+// ---------------------------------------------------------------------------
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
+}
+
+async fn handle_ws_connection(socket: WebSocket, state: Arc<AppState>) {
+    let (mut sender, mut receiver) = socket.split();
+    let mut event_rx = state.playback.subscribe();
+
+    info!("ws_client_connected");
+
+    loop {
+        tokio::select! {
+            // Forward playback events to the WebSocket client
+            event = event_rx.recv() => {
+                match event {
+                    Ok(ev) => {
+                        let mut data = ev.data.clone();
+                        if let Some(obj) = data.as_object_mut() {
+                            obj.insert("zone_id".to_string(), serde_json::json!(ev.zone_id));
+                        }
+                        let msg = serde_json::json!({
+                            "type": format!("playback.{}", ev.event),
+                            "data": data,
+                        });
+                        if sender.send(Message::Text(msg.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "ws_client_lagged");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+            // Handle incoming messages from the client (or detect disconnect)
+            msg = receiver.next() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(data))) => {
+                        if sender.send(Message::Pong(data)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(_)) => {} // Ignore other messages
+                    Some(Err(_)) => break,
+                }
+            }
+        }
+    }
+
+    info!("ws_client_disconnected");
+}
+
+// ---------------------------------------------------------------------------
+// Music dirs / onboarding routes
+// ---------------------------------------------------------------------------
+
+async fn get_music_dirs(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let dirs = s.music_dirs.read().unwrap().clone();
+    Json(serde_json::json!({ "music_dirs": dirs }))
+}
+
+async fn add_music_dir(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let path = body.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let dirs = {
+        let mut guard = s.music_dirs.write().unwrap();
+        if !path.is_empty() && !guard.contains(&path.to_string()) {
+            guard.push(path.to_string());
+        }
+        guard.clone()
+    };
+    let repo = tune_core::db::settings_repo::SettingsRepo::new(s.db.clone());
+    let _ = repo.set("music_dirs", &serde_json::to_string(&dirs).unwrap_or_default());
+    Json(serde_json::json!({ "music_dirs": dirs }))
+}
+
+async fn remove_music_dir(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let path = body.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let dirs = {
+        let mut guard = s.music_dirs.write().unwrap();
+        guard.retain(|d| d.as_str() != path);
+        guard.clone()
+    };
+    let repo = tune_core::db::settings_repo::SettingsRepo::new(s.db.clone());
+    let _ = repo.set("music_dirs", &serde_json::to_string(&dirs).unwrap_or_default());
+    Json(serde_json::json!({ "music_dirs": dirs }))
+}
+
+async fn browse_roots(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let roots: Vec<serde_json::Value> = s.music_dirs.read().unwrap().iter().map(|d| {
+        let p = std::path::Path::new(d);
+        serde_json::json!({
+            "path": d,
+            "name": p.file_name().and_then(|n| n.to_str()).unwrap_or(d),
+            "exists": p.is_dir(),
+        })
+    }).collect();
+    Json(serde_json::json!({ "roots": roots }))
+}
+
+#[derive(Deserialize)]
+struct BrowseParams {
+    path: String,
+}
+
+async fn browse_dir(Query(p): Query<BrowseParams>) -> Json<serde_json::Value> {
+    let dir = std::path::Path::new(&p.path);
+    if !dir.is_dir() {
+        return Json(serde_json::json!({ "path": p.path, "exists": false, "entries": [] }));
+    }
+    let mut entries = Vec::new();
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !name.starts_with('.') {
+                        entries.push(serde_json::json!({
+                            "name": name,
+                            "path": entry.path().to_string_lossy(),
+                            "is_dir": true,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    entries.sort_by(|a, b| {
+        a.get("name").and_then(|v| v.as_str()).unwrap_or("")
+            .cmp(b.get("name").and_then(|v| v.as_str()).unwrap_or(""))
+    });
+    Json(serde_json::json!({ "path": p.path, "exists": true, "entries": entries }))
+}
+
+async fn scan_status(State(s): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let tracks = TrackRepo::new(s.db.clone()).count().unwrap_or(0);
+    Json(serde_json::json!({
+        "scanning": false,
+        "tracks": tracks,
+    }))
 }
 
 // ---------------------------------------------------------------------------

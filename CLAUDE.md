@@ -30,8 +30,7 @@ tune_server/
 ├── db/               # SQLite (aiosqlite) + PostgreSQL (asyncpg/SQLAlchemy)
 │   ├── engine.py     # SQLite database wrapper
 │   ├── sa_engine.py  # SQLAlchemy async engine (PostgreSQL + SQLite)
-│   ├── sa_repository.py # SQLAlchemy repos (canonical) + short-name aliases
-│   ├── compat.py     # Legacy raw-SQL repos: TrackCreditRepo, PlaybackHistoryRepo, SmartPlaylistRepo, full_text_search
+│   ├── sa_repository.py # SQLAlchemy repos (canonical) + short-name aliases (all repos)
 │   ├── tables.py     # SQLAlchemy table definitions
 │   └── schema_sqlite.sql # Full schema with FTS5 virtual tables + sync triggers
 ├── discovery/        # SSDP (DLNA) + mDNS (AirPlay) + network shares + media servers
@@ -124,7 +123,7 @@ Schema: `db/schema_sqlite.sql` (SQLite) / `db/tables.py` (SQLAlchemy). Engine se
 
 **FTS5** virtual tables for full-text search: tracks_fts, albums_fts, artists_fts (with auto-sync triggers). Search also queries artist name, genre, year, composer, instrument, label via LIKE fallback.
 
-**Repository pattern** (GRDB-style): `ArtistRepo`, `AlbumRepo`, `TrackRepo`, `PlaylistRepo`, `PlayQueueRepo`, `ZoneRepo`, `RadioStationRepo`, `RadioFavoriteRepo`, `PartyVoteRepo`, `AlbumRatingRepo` in `db/sa_repository.py` (SQLAlchemy Core, canonical). Legacy raw-SQL repos (`TrackCreditRepo`, `PlaybackHistoryRepo`, `SmartPlaylistRepo`, `full_text_search`) in `db/compat.py`.
+**Repository pattern** (GRDB-style): All repos in `db/sa_repository.py` (SQLAlchemy Core, canonical): `ArtistRepo`, `AlbumRepo`, `TrackRepo`, `PlaylistRepo`, `PlayQueueRepo`, `ZoneRepo`, `RadioStationRepo`, `RadioFavoriteRepo`, `PartyVoteRepo`, `AlbumRatingRepo`, `TrackCreditRepo`, `PlaybackHistoryRepo`, `SmartPlaylistRepo`, `full_text_search`.
 
 ## Technical Notes
 

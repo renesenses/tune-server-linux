@@ -291,10 +291,9 @@ class MetadataEnricher:
 
         try:
             # Enrich artists
-            artists = await self._artist_repo.list(limit=50)
-            for artist in artists:
-                if artist.musicbrainz_id:
-                    continue
+            artists = await self._artist_repo.list(limit=10000)
+            artists_without_mb = [a for a in artists if not a.musicbrainz_id]
+            for artist in artists_without_mb:
                 try:
                     result = await asyncio.to_thread(
                         musicbrainzngs.search_artists, artist=artist.name, limit=1
@@ -314,7 +313,7 @@ class MetadataEnricher:
 
             # Enrich artist images: community cache first, then Discogs
             from tune_server.config import settings as _s
-            all_artists = await self._artist_repo.list(limit=200)
+            all_artists = await self._artist_repo.list(limit=10000)
             # Only target artists without image or with a lower-priority source
             candidates = [a for a in all_artists
                           if (not a.image_path and a.image_source != "user")

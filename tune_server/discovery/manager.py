@@ -52,15 +52,8 @@ class DiscoveryManager:
             if settings.ssdp_enabled:
                 self._rust_ssdp = RustSsdpBackend(event_bus)
             if settings.mdns_enabled:
-                self._rust_mdns = RustMdnsBackend(
-                    event_bus,
-                    airplay=settings.mdns_enabled,
-                    bluos=getattr(settings, 'bluos_enabled', True),
-                    chromecast=getattr(settings, 'cast_enabled', True),
-                    squeezebox=getattr(settings, 'squeezebox_enabled', True),
-                    tune_peers=settings.peer_discovery_enabled,
-                )
-            logger.info("discovery_engine", engine="rust")
+                self._rust_mdns = RustMdnsBackend(event_bus)
+            logger.info("discovery_engine", engine="rust", ssdp="rust" if self._rust_ssdp else "python", mdns="rust" if self._rust_mdns else "python")
         else:
             logger.info("discovery_engine", engine="python")
 

@@ -259,6 +259,8 @@ zones = sa.Table(
     sa.Column("queue_json", sa.Text),
     sa.Column("muted", sa.Boolean, server_default=sa.text("FALSE")),
     sa.Column("online", sa.Boolean, server_default=sa.text("TRUE")),
+    sa.Column("was_playing", sa.Boolean, server_default=sa.text("FALSE")),
+    sa.Column("last_position_ms", sa.Integer, server_default="0"),
 )
 
 # ---------------------------------------------------------------------------
