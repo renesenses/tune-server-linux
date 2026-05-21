@@ -46,3 +46,4 @@ coverage.xml
 
 # Rust
 rust/target/
+target/

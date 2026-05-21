@@ -666,6 +666,16 @@ class ZoneManager:
                             old_id=zone.output_device_id, new_id=dev_id)
                 zone.output_device_id = dev_id
                 await self._zone_repo.update(zone.zone_id, output_device_id=dev_id)
+            # Sync zone name from discovered device when it looks like a UUID
+            import re as _re
+            if dev_name and _re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                zone.name, _re.IGNORECASE,
+            ):
+                logger.info("zone_name_synced", zone_id=zone.zone_id,
+                            old_name=zone.name, new_name=dev_name)
+                zone.name = dev_name
+                await self._zone_repo.update(zone.zone_id, name=dev_name)
             zone.online = True
             should_resume = self._resume_on_recovery.pop(zone.zone_id, False)
             # Never resume a zone that the user explicitly stopped

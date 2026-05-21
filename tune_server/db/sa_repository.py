@@ -15,8 +15,9 @@ from tune_server.db.tables import (
     artists, albums, tracks, playlists, playlist_tracks,
     zones, play_queue, streaming_auth, radio_favorites, radio_stations,
     user_profiles, user_favorites, party_votes, album_ratings,
+    track_credits, playback_history, smart_playlists,
 )
-from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track
+from tune_server.models import Album, Artist, Playlist, RadioStation, RadioStationCreate, SearchResult, Track, TrackCredit
 from tune_server.utils import fold_accents, sanitize_fts_query
 
 logger = structlog.get_logger()
@@ -188,7 +189,7 @@ class SAArtistRepo:
         if principal_only:
             stmt = stmt.where(self._principal_only_clause())
         rows = await self._db.sa_fetchall(
-            stmt.order_by(artists.c.sort_name, artists.c.name)
+            stmt.order_by(sa.func.lower(sa.func.coalesce(artists.c.sort_name, artists.c.name)), artists.c.name)
                 .limit(limit).offset(offset)
         )
         return [_row_to_artist(r) for r in rows]
@@ -226,7 +227,7 @@ class SAArtistRepo:
             where = sa.and_(where, self._principal_only_clause())
         rows = await self._db.sa_fetchall(
             sa.select(artists).where(where)
-            .order_by(artists.c.sort_name, artists.c.name)
+            .order_by(sa.func.lower(sa.func.coalesce(artists.c.sort_name, artists.c.name)), artists.c.name)
             .limit(limit).offset(offset)
         )
         return [_row_to_artist(r) for r in rows]
@@ -474,6 +475,8 @@ class SAAlbumRepo:
                 source_id=album.source_id,
                 label=album.label,
                 catalog_number=album.catalog_number,
+                musicbrainz_release_id=album.musicbrainz_release_id,
+                musicbrainz_release_group_id=album.musicbrainz_release_group_id,
             )
         )
         return result.lastrowid
@@ -1294,7 +1297,7 @@ class SATrackRepo:
         )
 
     async def deduplicate(self) -> int:
-        """Remove duplicate tracks (same audio_hash), keeping the lowest id.
+        """Remove duplicate tracks (same audio_hash AND file_size), keeping the lowest id.
 
         Re-targets playlist_tracks and play_queue references before deleting.
         Uses raw SQL for the complex subqueries.
@@ -1307,18 +1310,21 @@ class SATrackRepo:
                        WHERE audio_hash = (
                            SELECT audio_hash FROM tracks WHERE id = playlist_tracks.track_id
                        )
+                         AND file_size = (
+                           SELECT file_size FROM tracks WHERE id = playlist_tracks.track_id
+                       )
                          AND audio_hash IS NOT NULL
                          AND album_id IS NOT NULL
                   )
                 WHERE track_id IN (
                     SELECT t.id FROM tracks t
                     JOIN (
-                        SELECT audio_hash
+                        SELECT audio_hash, file_size
                           FROM tracks
                          WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                         GROUP BY audio_hash
+                         GROUP BY audio_hash, file_size
                         HAVING COUNT(*) > 1
-                    ) d ON t.audio_hash = d.audio_hash
+                    ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size
                 )""",
         )
         # 2. Same for play_queue.
@@ -1329,18 +1335,21 @@ class SATrackRepo:
                        WHERE audio_hash = (
                            SELECT audio_hash FROM tracks WHERE id = play_queue.track_id
                        )
+                         AND file_size = (
+                           SELECT file_size FROM tracks WHERE id = play_queue.track_id
+                       )
                          AND audio_hash IS NOT NULL
                          AND album_id IS NOT NULL
                   )
                 WHERE track_id IN (
                     SELECT t.id FROM tracks t
                     JOIN (
-                        SELECT audio_hash
+                        SELECT audio_hash, file_size
                           FROM tracks
                          WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                         GROUP BY audio_hash
+                         GROUP BY audio_hash, file_size
                         HAVING COUNT(*) > 1
-                    ) d ON t.audio_hash = d.audio_hash
+                    ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size
                 )""",
         )
         # 3. Delete the non-canonical duplicates.
@@ -1348,26 +1357,26 @@ class SATrackRepo:
             """DELETE FROM tracks WHERE id NOT IN (
                 SELECT MIN(id) FROM tracks
                 WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                GROUP BY audio_hash
+                GROUP BY audio_hash, file_size
             ) AND id IN (
                 SELECT t.id FROM tracks t
                 JOIN (
-                    SELECT audio_hash
+                    SELECT audio_hash, file_size
                     FROM tracks WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                    GROUP BY audio_hash
+                    GROUP BY audio_hash, file_size
                     HAVING COUNT(*) > 1
-                ) d ON t.audio_hash = d.audio_hash
+                ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size
             )""",
         )
         return cursor.rowcount
 
     async def list_recent_duplicates(self, limit: int = 50) -> list[dict]:
         rows = await self._db.fetchall(
-            """SELECT audio_hash, COUNT(*) as cnt,
+            """SELECT audio_hash, file_size, COUNT(*) as cnt,
                       GROUP_CONCAT(file_path, ' | ') as paths
                FROM tracks
                WHERE audio_hash IS NOT NULL AND album_id IS NOT NULL
-               GROUP BY audio_hash
+               GROUP BY audio_hash, file_size
                HAVING COUNT(*) > 1
                LIMIT ?""",
             (limit,),
@@ -2081,6 +2090,383 @@ class SAAlbumRatingRepo:
 
 
 # ===================================================================
+# TrackCreditRepo — SA Core
+# ===================================================================
+
+def _row_to_track_credit(row) -> TrackCredit:
+    return TrackCredit(
+        id=row["id"],
+        track_id=row["track_id"],
+        artist_id=row["artist_id"],
+        artist_name=row["artist_name"],
+        role=row["role"],
+        instrument=row.get("instrument") if hasattr(row, "get") else row["instrument"],
+        position=row["position"],
+    )
+
+
+class SATrackCreditRepo:
+    def __init__(self, db: SADatabase) -> None:
+        self._db = db
+
+    async def list_by_track(self, track_id: int) -> list[TrackCredit]:
+        rows = await self._db.sa_fetchall(
+            sa.select(track_credits)
+            .where(track_credits.c.track_id == track_id)
+            .order_by(track_credits.c.position)
+        )
+        return [_row_to_track_credit(r) for r in rows]
+
+    async def list_by_artist(self, artist_id: int) -> list[TrackCredit]:
+        rows = await self._db.sa_fetchall(
+            sa.select(track_credits)
+            .where(track_credits.c.artist_id == artist_id)
+            .order_by(track_credits.c.track_id, track_credits.c.position)
+        )
+        return [_row_to_track_credit(r) for r in rows]
+
+    async def add(self, credit: TrackCredit) -> int:
+        result = await self._db.sa_execute(
+            track_credits.insert().values(
+                track_id=credit.track_id,
+                artist_id=credit.artist_id,
+                artist_name=credit.artist_name,
+                role=credit.role,
+                instrument=credit.instrument,
+                position=credit.position,
+            )
+        )
+        return result.lastrowid
+
+    async def add_many(self, credits: list[TrackCredit]) -> None:
+        if not credits:
+            return
+        for c in credits:
+            await self._db.sa_execute(
+                track_credits.insert().values(
+                    track_id=c.track_id,
+                    artist_id=c.artist_id,
+                    artist_name=c.artist_name,
+                    role=c.role,
+                    instrument=c.instrument,
+                    position=c.position,
+                )
+            )
+
+    async def delete_by_track(self, track_id: int) -> None:
+        await self._db.sa_execute(
+            track_credits.delete().where(track_credits.c.track_id == track_id)
+        )
+
+    async def update_instrument(self, credit_id: int, instrument: str) -> None:
+        await self._db.sa_execute(
+            track_credits.update()
+            .where(track_credits.c.id == credit_id)
+            .values(instrument=instrument)
+        )
+
+    async def get_instruments_for_artist(self, artist_id: int) -> list[str]:
+        rows = await self._db.sa_fetchall(
+            sa.select(sa.distinct(track_credits.c.instrument))
+            .where(
+                sa.and_(
+                    track_credits.c.artist_id == artist_id,
+                    track_credits.c.instrument.isnot(None),
+                )
+            )
+            .order_by(track_credits.c.instrument)
+        )
+        return [r[0] for r in rows]
+
+
+# ===================================================================
+# PlaybackHistoryRepo — SA Core
+# ===================================================================
+
+class SAPlaybackHistoryRepo:
+    def __init__(self, db: SADatabase) -> None:
+        self._db = db
+
+    async def record(self, track_id: int | None, zone_id: int | None,
+                     track_title: str, artist_name: str | None, album_title: str | None,
+                     cover_path: str | None, duration_ms: int | None,
+                     listened_ms: int | None, source: str | None) -> None:
+        await self._db.sa_execute(
+            playback_history.insert().values(
+                track_id=track_id,
+                zone_id=zone_id,
+                track_title=track_title,
+                artist_name=artist_name,
+                album_title=album_title,
+                cover_path=cover_path,
+                duration_ms=duration_ms,
+                listened_ms=listened_ms,
+                source=source,
+                played_at=sa.func.now(),
+            )
+        )
+
+    async def list_recent(self, limit: int = 50) -> list[dict]:
+        rows = await self._db.sa_fetchall(
+            sa.select(playback_history)
+            .order_by(playback_history.c.played_at.desc())
+            .limit(limit)
+        )
+        return [dict(r.items()) for r in rows]
+
+    async def top_tracks(self, limit: int = 20) -> list[dict]:
+        cover = sa.func.coalesce(playback_history.c.cover_path, albums.c.cover_path).label("cover_path")
+        stmt = (
+            sa.select(
+                playback_history.c.track_title,
+                playback_history.c.artist_name,
+                playback_history.c.album_title,
+                cover,
+                sa.func.count().label("play_count"),
+                sa.func.max(playback_history.c.played_at).label("last_played"),
+            )
+            .outerjoin(tracks, tracks.c.id == playback_history.c.track_id)
+            .outerjoin(albums, albums.c.id == tracks.c.album_id)
+            .where(playback_history.c.track_id.isnot(None))
+            .group_by(
+                playback_history.c.track_title,
+                playback_history.c.artist_name,
+                playback_history.c.album_title,
+                cover,
+            )
+            .order_by(sa.desc("play_count"))
+            .limit(limit)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [dict(r.items()) for r in rows]
+
+    async def top_artists(self, limit: int = 20) -> list[dict]:
+        stmt = (
+            sa.select(
+                playback_history.c.artist_name,
+                sa.func.count().label("play_count"),
+                sa.func.max(playback_history.c.played_at).label("last_played"),
+            )
+            .where(
+                sa.and_(
+                    playback_history.c.artist_name.isnot(None),
+                    playback_history.c.artist_name != "",
+                )
+            )
+            .group_by(playback_history.c.artist_name)
+            .order_by(sa.desc("play_count"))
+            .limit(limit)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [dict(r.items()) for r in rows]
+
+
+# ===================================================================
+# SmartPlaylistRepo — SA Core
+# ===================================================================
+
+class SASmartPlaylistRepo:
+    """Smart playlists with dynamic rule-based track resolution."""
+
+    def __init__(self, db: SADatabase) -> None:
+        self._db = db
+
+    async def list(self) -> list[dict]:
+        rows = await self._db.sa_fetchall(
+            sa.select(smart_playlists).order_by(smart_playlists.c.name)
+        )
+        return [dict(r.items()) for r in rows]
+
+    async def get(self, sp_id: int) -> dict | None:
+        row = await self._db.sa_fetchone(
+            sa.select(smart_playlists).where(smart_playlists.c.id == sp_id)
+        )
+        return dict(row.items()) if row else None
+
+    async def create(self, name: str, rules: str, match_mode: str = "all",
+                     sort_by: str = "title", sort_order: str = "asc",
+                     max_tracks: int = 200, description: str | None = None) -> int:
+        result = await self._db.sa_execute(
+            smart_playlists.insert().values(
+                name=name,
+                description=description,
+                rules=rules,
+                match_mode=match_mode,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                max_tracks=max_tracks,
+                created_at=sa.func.now(),
+                updated_at=sa.func.now(),
+            )
+        )
+        return result.lastrowid
+
+    async def update(self, sp_id: int, **kwargs) -> None:
+        values = {}
+        for key in ("name", "description", "rules", "match_mode",
+                     "sort_by", "sort_order", "max_tracks"):
+            if key in kwargs:
+                values[key] = kwargs[key]
+        if not values:
+            return
+        values["updated_at"] = sa.func.now()
+        await self._db.sa_execute(
+            smart_playlists.update()
+            .where(smart_playlists.c.id == sp_id)
+            .values(**values)
+        )
+
+    async def delete(self, sp_id: int) -> None:
+        await self._db.sa_execute(
+            smart_playlists.delete().where(smart_playlists.c.id == sp_id)
+        )
+
+    async def resolve_tracks(self, sp_id: int) -> list:
+        """Resolve a smart playlist's rules into matching tracks."""
+        import json
+        sp = await self.get(sp_id)
+        if not sp:
+            return []
+
+        rules = json.loads(sp["rules"]) if sp["rules"] else []
+        match_mode = sp.get("match_mode", "all")  # "all" = AND, "any" = OR
+        sort_by = sp.get("sort_by", "title")
+        sort_order = sp.get("sort_order", "asc")
+        max_tracks = sp.get("max_tracks", 5000)
+
+        conditions = []
+
+        for rule in rules:
+            field = rule.get("field", "")
+            op = rule.get("operator", "contains")
+            value = rule.get("value", "")
+
+            col_map = {
+                "title": tracks.c.title,
+                "artist": artists.c.name,
+                "album": albums.c.title,
+                "genre": albums.c.genre,
+                "year": albums.c.year,
+                "format": tracks.c.format,
+                "sample_rate": tracks.c.sample_rate,
+                "bit_depth": tracks.c.bit_depth,
+                "source": tracks.c.source,
+                "composer": tracks.c.composer,
+            }
+            col = col_map.get(field)
+            if col is None:
+                continue
+
+            if op == "contains":
+                conditions.append(col.like(f"%{value}%"))
+            elif op == "equals":
+                conditions.append(col == value)
+            elif op == "not_equals":
+                conditions.append(col != value)
+            elif op == "greater_than":
+                conditions.append(col > value)
+            elif op == "less_than":
+                conditions.append(col < value)
+            elif op == "starts_with":
+                conditions.append(col.like(f"{value}%"))
+            elif op == "branch_of":
+                from tune_server.library.genre_tree import expand_branch
+                branch = expand_branch(str(value))
+                if branch:
+                    conditions.append(col.in_(sorted(branch)))
+
+        where = None
+        if conditions:
+            if match_mode == "all":
+                where = sa.and_(*conditions)
+            else:
+                where = sa.or_(*conditions)
+
+        sort_col_map = {
+            "title": tracks.c.title,
+            "artist": artists.c.name,
+            "album": albums.c.title,
+            "year": albums.c.year,
+            "duration": tracks.c.duration_ms,
+            "track_number": tracks.c.track_number,
+            "random": sa.func.random(),
+        }
+        order_col = sort_col_map.get(sort_by, tracks.c.title)
+        order_dir = order_col.desc() if sort_order == "desc" else order_col.asc()
+
+        stmt = (
+            sa.select(
+                tracks,
+                albums.c.title.label("album_title"),
+                artists.c.name.label("artist_name"),
+                albums.c.cover_path.label("cover_path"),
+            )
+            .outerjoin(albums, tracks.c.album_id == albums.c.id)
+            .outerjoin(artists, tracks.c.artist_id == artists.c.id)
+        )
+        if where is not None:
+            stmt = stmt.where(where)
+        stmt = stmt.order_by(order_dir).limit(max_tracks)
+
+        rows = await self._db.sa_fetchall(stmt)
+        return [_row_to_track(r) for r in rows]
+
+
+DEFAULT_SMART_PLAYLISTS: list[dict] = [
+    {
+        "name": "Hi-Res Tracks",
+        "description": "Pistes ≥ 96 kHz",
+        "rules": [{"field": "sample_rate", "operator": "greater_than", "value": 95999}],
+        "sort_by": "title", "sort_order": "asc", "max_tracks": 200,
+    },
+    {
+        "name": "Live",
+        "description": "Pistes dont le titre contient « Live »",
+        "rules": [{"field": "title", "operator": "contains", "value": "Live"}],
+        "sort_by": "artist", "sort_order": "asc", "max_tracks": 200,
+    },
+    {
+        "name": "Jazz",
+        "description": "Pistes au genre Jazz",
+        "rules": [{"field": "genre", "operator": "contains", "value": "Jazz"}],
+        "sort_by": "artist", "sort_order": "asc", "max_tracks": 200,
+    },
+    {
+        "name": "Random 50",
+        "description": "50 pistes au hasard dans toute la bibliothèque",
+        "rules": [],
+        "sort_by": "random", "sort_order": "asc", "max_tracks": 50,
+    },
+]
+
+
+async def seed_default_smart_playlists(repo: SASmartPlaylistRepo) -> int:
+    """Seed default smart playlists on first server start. Idempotent --
+    skip names that already exist (allows users to delete defaults
+    they don't want without them coming back)."""
+    import json
+    existing = {row["name"] for row in await repo.list()}
+    inserted = 0
+    for spec in DEFAULT_SMART_PLAYLISTS:
+        if spec["name"] in existing:
+            continue
+        try:
+            await repo.create(
+                name=spec["name"],
+                rules=json.dumps(spec["rules"]),
+                match_mode=spec.get("match_mode", "all"),
+                sort_by=spec.get("sort_by", "title"),
+                sort_order=spec.get("sort_order", "asc"),
+                max_tracks=spec.get("max_tracks", 200),
+                description=spec.get("description"),
+            )
+            inserted += 1
+        except Exception:
+            pass
+    return inserted
+
+
+# ===================================================================
 # Full-Text Search — SA Core (aggregated)
 # ===================================================================
 
@@ -2120,6 +2506,10 @@ async def sa_full_text_search(db: SADatabase, query: str, limit: int = 50) -> Se
     )
 
 
+# Alias for backward compatibility with callers using the compat.py name
+full_text_search = sa_full_text_search
+
+
 # ---------------------------------------------------------------------------
 # Short-name aliases — allows `from tune_server.db.sa_repository import AlbumRepo`
 # so callers don't need to know whether they're using the SA or legacy version.
@@ -2135,3 +2525,6 @@ RadioStationRepo = SARadioStationRepo
 RadioFavoriteRepo = SARadioFavoriteRepo
 PartyVoteRepo = SAPartyVoteRepo
 AlbumRatingRepo = SAAlbumRatingRepo
+TrackCreditRepo = SATrackCreditRepo
+PlaybackHistoryRepo = SAPlaybackHistoryRepo
+SmartPlaylistRepo = SASmartPlaylistRepo

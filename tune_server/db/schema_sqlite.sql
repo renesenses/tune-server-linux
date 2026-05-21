@@ -119,7 +119,9 @@ CREATE TABLE IF NOT EXISTS zones (
     stereo_channel TEXT,
     surround_group_id TEXT,
     surround_channel TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    was_playing INTEGER DEFAULT 0,
+    last_position_ms INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS play_queue (

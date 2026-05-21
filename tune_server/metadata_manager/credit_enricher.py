@@ -7,8 +7,7 @@ import asyncio
 import aiohttp
 import structlog
 
-from tune_server.db.compat import TrackCreditRepo
-from tune_server.db.sa_repository import AlbumRepo, TrackRepo
+from tune_server.db.sa_repository import AlbumRepo, TrackCreditRepo, TrackRepo
 
 logger = structlog.get_logger()
 
