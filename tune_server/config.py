@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     scanner_engine: str = "auto"
     discovery_engine: str = "auto"
     metadata_engine: str = "auto"
+    # HTTP streamer engine: "auto" = Rust sidecar if available, "rust" = require, "python" = force aiohttp
+    streamer_engine: str = "auto"
 
     # Library
     music_dirs: list[str] = Field(default_factory=lambda: [str(Path.home() / "Music")])
