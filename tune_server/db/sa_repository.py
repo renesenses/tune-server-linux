@@ -252,8 +252,16 @@ class SAArtistRepo:
         )
         return _row_to_artist(row) if row else None
 
+    @staticmethod
+    def _normalize_sort_name(s: str) -> str:
+        import unicodedata
+        nfkd = unicodedata.normalize("NFKD", s)
+        return "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+
     async def get_or_create(self, name: str, musicbrainz_id: str | None = None,
                             sort_name: str | None = None) -> Artist:
+        if sort_name:
+            sort_name = self._normalize_sort_name(sort_name)
         if musicbrainz_id:
             existing = await self.get_by_musicbrainz_id(musicbrainz_id)
             if existing:
@@ -270,7 +278,7 @@ class SAArtistRepo:
                 existing.sort_name = sort_name
                 await self.update(existing)
             return existing
-        effective_sort = sort_name or name
+        effective_sort = sort_name or self._normalize_sort_name(name)
         artist = Artist(name=name, sort_name=effective_sort, musicbrainz_id=musicbrainz_id)
         artist_id = await self.create(artist)
         return Artist(id=artist_id, name=name, sort_name=effective_sort, musicbrainz_id=musicbrainz_id)
@@ -1297,59 +1305,39 @@ class SATrackRepo:
         )
 
     async def deduplicate(self) -> int:
-        """Remove duplicate tracks (same audio_hash AND file_size), keeping the lowest id.
+        """Remove duplicate tracks (same audio_hash, file_size AND duration), keeping the lowest id.
 
         Re-targets playlist_tracks and play_queue references before deleting.
         Uses raw SQL for the complex subqueries.
         """
-        # 1. Re-target playlist_tracks at the canonical (min-id) row.
-        await self._db.execute(
-            """UPDATE playlist_tracks
-                  SET track_id = (
-                      SELECT MIN(id) FROM tracks
-                       WHERE audio_hash = (
-                           SELECT audio_hash FROM tracks WHERE id = playlist_tracks.track_id
-                       )
-                         AND file_size = (
-                           SELECT file_size FROM tracks WHERE id = playlist_tracks.track_id
-                       )
-                         AND audio_hash IS NOT NULL
-                         AND album_id IS NOT NULL
-                  )
-                WHERE track_id IN (
-                    SELECT t.id FROM tracks t
-                    JOIN (
-                        SELECT audio_hash, file_size
+        _dup_join = """JOIN (
+                        SELECT audio_hash, file_size, duration
                           FROM tracks
                          WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                         GROUP BY audio_hash, file_size
+                         GROUP BY audio_hash, file_size, duration
                         HAVING COUNT(*) > 1
-                    ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size
+                    ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size AND t.duration = d.duration"""
+
+        _canonical_subquery = """SELECT MIN(id) FROM tracks
+                       WHERE audio_hash = (SELECT audio_hash FROM tracks WHERE id = {table}.track_id)
+                         AND file_size = (SELECT file_size FROM tracks WHERE id = {table}.track_id)
+                         AND duration = (SELECT duration FROM tracks WHERE id = {table}.track_id)
+                         AND audio_hash IS NOT NULL AND album_id IS NOT NULL"""
+
+        # 1. Re-target playlist_tracks at the canonical (min-id) row.
+        await self._db.execute(
+            f"""UPDATE playlist_tracks
+                  SET track_id = ({_canonical_subquery.format(table='playlist_tracks')})
+                WHERE track_id IN (
+                    SELECT t.id FROM tracks t {_dup_join}
                 )""",
         )
         # 2. Same for play_queue.
         await self._db.execute(
-            """UPDATE play_queue
-                  SET track_id = (
-                      SELECT MIN(id) FROM tracks
-                       WHERE audio_hash = (
-                           SELECT audio_hash FROM tracks WHERE id = play_queue.track_id
-                       )
-                         AND file_size = (
-                           SELECT file_size FROM tracks WHERE id = play_queue.track_id
-                       )
-                         AND audio_hash IS NOT NULL
-                         AND album_id IS NOT NULL
-                  )
+            f"""UPDATE play_queue
+                  SET track_id = ({_canonical_subquery.format(table='play_queue')})
                 WHERE track_id IN (
-                    SELECT t.id FROM tracks t
-                    JOIN (
-                        SELECT audio_hash, file_size
-                          FROM tracks
-                         WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                         GROUP BY audio_hash, file_size
-                        HAVING COUNT(*) > 1
-                    ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size
+                    SELECT t.id FROM tracks t {_dup_join}
                 )""",
         )
         # 3. Delete the non-canonical duplicates.
@@ -1357,15 +1345,15 @@ class SATrackRepo:
             """DELETE FROM tracks WHERE id NOT IN (
                 SELECT MIN(id) FROM tracks
                 WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                GROUP BY audio_hash, file_size
+                GROUP BY audio_hash, file_size, duration
             ) AND id IN (
                 SELECT t.id FROM tracks t
                 JOIN (
                     SELECT audio_hash, file_size
                     FROM tracks WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                    GROUP BY audio_hash, file_size
+                    GROUP BY audio_hash, file_size, duration
                     HAVING COUNT(*) > 1
-                ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size
+                ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size AND t.duration = d.duration
             )""",
         )
         return cursor.rowcount
@@ -1376,7 +1364,7 @@ class SATrackRepo:
                       GROUP_CONCAT(file_path, ' | ') as paths
                FROM tracks
                WHERE audio_hash IS NOT NULL AND album_id IS NOT NULL
-               GROUP BY audio_hash, file_size
+               GROUP BY audio_hash, file_size, duration
                HAVING COUNT(*) > 1
                LIMIT ?""",
             (limit,),
