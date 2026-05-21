@@ -437,10 +437,12 @@ def create_pipeline(
 ) -> AudioPipeline:
     """Factory: returns RustAudioPipeline if available, else Python."""
     import os
+    import sys
     engine = os.environ.get("TUNE_PIPELINE_ENGINE", "auto")
     use_rust = (
         _RUST_PIPELINE_AVAILABLE
         and engine != "python"
+        and sys.platform != "win32"
         and icy_callback is None  # Rust doesn't support ICY yet
         and channel_filter is None  # Rust doesn't support channel filter yet
     )
