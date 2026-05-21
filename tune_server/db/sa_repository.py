@@ -1305,23 +1305,23 @@ class SATrackRepo:
         )
 
     async def deduplicate(self) -> int:
-        """Remove duplicate tracks (same audio_hash, file_size AND duration), keeping the lowest id.
+        """Remove duplicate tracks (same audio_hash, file_size AND duration_ms), keeping the lowest id.
 
         Re-targets playlist_tracks and play_queue references before deleting.
         Uses raw SQL for the complex subqueries.
         """
         _dup_join = """JOIN (
-                        SELECT audio_hash, file_size, duration
+                        SELECT audio_hash, file_size, duration_ms
                           FROM tracks
                          WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                         GROUP BY audio_hash, file_size, duration
+                         GROUP BY audio_hash, file_size, duration_ms
                         HAVING COUNT(*) > 1
-                    ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size AND t.duration = d.duration"""
+                    ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size AND t.duration_ms = d.duration_ms"""
 
         _canonical_subquery = """SELECT MIN(id) FROM tracks
                        WHERE audio_hash = (SELECT audio_hash FROM tracks WHERE id = {table}.track_id)
                          AND file_size = (SELECT file_size FROM tracks WHERE id = {table}.track_id)
-                         AND duration = (SELECT duration FROM tracks WHERE id = {table}.track_id)
+                         AND duration_ms = (SELECT duration_ms FROM tracks WHERE id = {table}.track_id)
                          AND audio_hash IS NOT NULL AND album_id IS NOT NULL"""
 
         # 1. Re-target playlist_tracks at the canonical (min-id) row.
@@ -1345,15 +1345,15 @@ class SATrackRepo:
             """DELETE FROM tracks WHERE id NOT IN (
                 SELECT MIN(id) FROM tracks
                 WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                GROUP BY audio_hash, file_size, duration
+                GROUP BY audio_hash, file_size, duration_ms
             ) AND id IN (
                 SELECT t.id FROM tracks t
                 JOIN (
-                    SELECT audio_hash, file_size
+                    SELECT audio_hash, file_size, duration_ms
                     FROM tracks WHERE album_id IS NOT NULL AND audio_hash IS NOT NULL
-                    GROUP BY audio_hash, file_size, duration
+                    GROUP BY audio_hash, file_size, duration_ms
                     HAVING COUNT(*) > 1
-                ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size AND t.duration = d.duration
+                ) d ON t.audio_hash = d.audio_hash AND t.file_size = d.file_size AND t.duration_ms = d.duration_ms
             )""",
         )
         return cursor.rowcount
@@ -1364,7 +1364,7 @@ class SATrackRepo:
                       GROUP_CONCAT(file_path, ' | ') as paths
                FROM tracks
                WHERE audio_hash IS NOT NULL AND album_id IS NOT NULL
-               GROUP BY audio_hash, file_size, duration
+               GROUP BY audio_hash, file_size, duration_ms
                HAVING COUNT(*) > 1
                LIMIT ?""",
             (limit,),
