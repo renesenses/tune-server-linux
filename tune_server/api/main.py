@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from tune_server.api.deps import deps
-from tune_server.api.routes import admin, alarms, artist_metadata, bug_report, dashboard, devices, dj, export, import_export, library, network, party, peers, playback, playlist_manager, playlist_sync, playlists, plugins, podcasts, profiles, radio_favorites, radios, search, services, smart_collections, spotify_connect, streaming, system, tags, zone_manager, zones
+from tune_server.api.routes import admin, alarms, artist_metadata, bug_report, dashboard, devices, dj, export, import_export, library, network, party, peers, playback, playlist_manager, playlists, plugins, podcasts, profiles, radio_favorites, radios, search, services, smart_collections, spotify_connect, streaming, system, tags, zone_manager, zones
 from tune_server.api.routes import metadata
 from tune_server.api.websocket import WebSocketManager
 from tune_server.config import settings
@@ -136,7 +136,6 @@ def create_api_app() -> FastAPI:
     app.include_router(profiles.router, prefix="/api/v1")
     app.include_router(podcasts.router, prefix="/api/v1")
     app.include_router(playlist_manager.router, prefix="/api/v1")
-    app.include_router(playlist_sync.router, prefix="/api/v1")
     app.include_router(party.router, prefix="/api/v1")
     app.include_router(dj.router, prefix="/api/v1")
     app.include_router(zone_manager.router, prefix="/api/v1")

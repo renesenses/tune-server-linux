@@ -10,8 +10,7 @@ from pathlib import Path
 import structlog
 
 from tune_server.db.engine import Database
-from tune_server.db.compat import TrackCreditRepo
-from tune_server.db.sa_repository import AlbumRepo, ArtistRepo, TrackRepo
+from tune_server.db.sa_repository import AlbumRepo, ArtistRepo, TrackCreditRepo, TrackRepo
 from tune_server.event_bus import Event, EventBus, EventType
 from tune_server.library.artwork import fetch_cover_from_musicbrainz, get_album_artwork
 from tune_server.library.enrichment import normalize_genre

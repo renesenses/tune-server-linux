@@ -216,6 +216,10 @@ impl RustMdnsScanner {
         let inner = guard.as_mut().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("scanner already stopped")
         })?;
+        // mdns-sd browse_loop uses tokio::spawn() which requires a running
+        // reactor.  runtime.enter() installs the runtime as the thread-local
+        // default so tokio::spawn() can register tasks on it.
+        let _rt_guard = inner.runtime.enter();
         inner.scanner.start()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
     }

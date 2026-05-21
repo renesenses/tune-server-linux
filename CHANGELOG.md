@@ -2,6 +2,88 @@
 
 All notable changes to Tune Server.
 
+## v0.7.130 — 2026-05-20
+
+### Added
+- **install.sh smart Rust rebuild** — skips maturin rebuild when native lib is already up to date.
+- **Music dirs persistent in Rust server** — `add_music_dir`/`remove_music_dir` stored in settings DB, survives restarts.
+
+### Fixed
+- **Dedup false positives** — deduplication now requires matching `file_size` to prevent unrelated files from being merged.
+- **Missing zone columns** — `was_playing`/`last_position_ms` added to zones table (fixes crash on zone resume).
+- **Web client dynamic album grid** — scroll position preserved when switching views.
+- **Case-insensitive artist sort** — artists now sort correctly regardless of case.
+- **Artist enrichment limits** — raised from 50/200 to 10,000 (large libraries no longer skip enrichment).
+- **Zone UUID name sync** — zones with UUID-like names are renamed to the device's friendly name on discovery.
+
+### Improved
+- **CI Intel builds** — replaced self-hosted .16 runner with GitHub-hosted `macos-15-intel`.
+- **Rust TUNE_MUSIC_DIRS parsing** — handles quoted strings, single values, and mixed formats robustly.
+
+---
+
+## v0.7.129 — 2026-05-20
+
+### Added
+- **Album sorting/filtering + play queue** in Rust standalone server.
+- **Music-dirs, browse, scan-status endpoints** for onboarding wizard (Rust).
+- **WebSocket events + artwork extraction** in Rust server.
+- **Configurable Chromecast preload time** — `TUNE_CHROMECAST_PRELOAD_SECS` env var.
+
+### Fixed
+- **Tidal favorites albums** not showing + add/remove favorite support.
+- **Rust mDNS crash** — disabled Rust mDNS backend (tokio runtime panic via PyO3 on .18).
+
+### Removed
+- **Legacy `playlist_sync/` module** — superseded by `playlist_manager/`.
+
+---
+
+## v0.7.128 — 2026-05-20
+
+### Added
+- **Rust standalone server** — `tune-server` binary + `Dockerfile.v2` for Docker alpha.
+- **Docker v2 alpha CI workflow** — builds Rust binary image.
+
+### Fixed
+- **Search shuffle** — now plays the actual search results instead of random tracks.
+- **Playlist manager ISRC matching** + deprecated duplicate transfer routes.
+- **CI Rust build** — committed `Cargo.lock` + simplified Dockerfile.v2.
+
+---
+
+## v0.7.127 — 2026-05-20
+
+### Added
+- **Typed dataclasses for EventBus** — high-frequency events use dataclasses instead of raw dicts.
+- **CI maturin wheel build** — added to release workflow.
+
+### Fixed
+- **Windows data paths** — consolidated log location, cleaned dead code.
+- **Scan stats notification** — dedup log order + silent empty `parse_int`.
+
+### Removed
+- **Legacy `repository.py`** — consolidated on SA repos + `compat.py`.
+
+---
+
+## v0.7.126 — 2026-05-20
+
+### Added
+- **RustAudioStreamer PyO3 wrapper** — Sprint 4 foundation for Rust streaming pipeline.
+- **Now Playing enriched API** — credits, signal path, and lyrics flag.
+
+### Fixed
+- **Discogs token fallback** — uses DB token when `.env` is empty (both enrichment paths).
+- **Device UUID regression** in `rescan()`.
+- **Cover art detection** for WavPack/APE formats.
+
+### Improved
+- **Refactored TuneServer.start()** into 8 init phases.
+- **Extracted CrossfadeHandler + RadioMetadataHandler** from Player.
+
+---
+
 ## v0.7.125 — 2026-05-20
 
 ### Added
