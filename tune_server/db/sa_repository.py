@@ -904,6 +904,45 @@ class SAAlbumRepo:
         rows = await self._db.sa_fetchall(stmt)
         return [_row_to_album(r) for r in rows]
 
+    async def list_initial_letters(self) -> list[tuple[str, int]]:
+        """Return (letter, count) pairs for album titles, A-Z + # for non-alpha."""
+        letter = sa.case(
+            (sa.func.upper(sa.func.substr(albums.c.title, 1, 1)).between("A", "Z"),
+             sa.func.upper(sa.func.substr(albums.c.title, 1, 1))),
+            else_="#",
+        ).label("letter")
+        stmt = (
+            sa.select(letter, sa.func.count().label("cnt"))
+            .group_by(letter)
+            .order_by(letter)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [(r["letter"], r["cnt"]) for r in rows]
+
+    async def count_by_letter(self, letter: str) -> int:
+        first_char = sa.func.upper(sa.func.substr(albums.c.title, 1, 1))
+        if letter == "#":
+            where = ~first_char.between("A", "Z")
+        else:
+            where = first_char == letter.upper()
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(albums).where(where)
+        )
+        return row[0] if row else 0
+
+    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0) -> list[Album]:
+        first_char = sa.func.upper(sa.func.substr(albums.c.title, 1, 1))
+        if letter == "#":
+            where = ~first_char.between("A", "Z")
+        else:
+            where = first_char == letter.upper()
+        rows = await self._db.sa_fetchall(
+            self._album_select().where(where)
+            .order_by(albums.c.title)
+            .limit(limit).offset(offset)
+        )
+        return [_row_to_album(r) for r in rows]
+
     async def update_musicbrainz_ids(self, album_id: int,
                                        release_id: str | None = None,
                                        release_group_id: str | None = None) -> None:
@@ -977,6 +1016,45 @@ class SATrackRepo:
             sa.select(sa.func.count()).select_from(tracks)
         )
         return row[0] if row else 0
+
+    async def list_initial_letters(self) -> list[tuple[str, int]]:
+        """Return (letter, count) pairs for track titles, A-Z + # for non-alpha."""
+        letter = sa.case(
+            (sa.func.upper(sa.func.substr(tracks.c.title, 1, 1)).between("A", "Z"),
+             sa.func.upper(sa.func.substr(tracks.c.title, 1, 1))),
+            else_="#",
+        ).label("letter")
+        stmt = (
+            sa.select(letter, sa.func.count().label("cnt"))
+            .group_by(letter)
+            .order_by(letter)
+        )
+        rows = await self._db.sa_fetchall(stmt)
+        return [(r["letter"], r["cnt"]) for r in rows]
+
+    async def count_by_letter(self, letter: str) -> int:
+        first_char = sa.func.upper(sa.func.substr(tracks.c.title, 1, 1))
+        if letter == "#":
+            where = ~first_char.between("A", "Z")
+        else:
+            where = first_char == letter.upper()
+        row = await self._db.sa_fetchone(
+            sa.select(sa.func.count()).select_from(tracks).where(where)
+        )
+        return row[0] if row else 0
+
+    async def list_by_letter(self, letter: str, limit: int = 500, offset: int = 0) -> list[Track]:
+        first_char = sa.func.upper(sa.func.substr(tracks.c.title, 1, 1))
+        if letter == "#":
+            where = ~first_char.between("A", "Z")
+        else:
+            where = first_char == letter.upper()
+        rows = await self._db.sa_fetchall(
+            self._track_select().where(where)
+            .order_by(tracks.c.title)
+            .limit(limit).offset(offset)
+        )
+        return [_row_to_track(r) for r in rows]
 
     async def list_random(self, limit: int = 5000) -> list[Track]:
         """Return up to *limit* tracks in random order."""
