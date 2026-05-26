@@ -36,6 +36,7 @@ jobs:
           push: true
           tags: |
             renesenses/tune:v2-alpha
+            renesenses/tune:dev
             renesenses/tune:v2-alpha-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
