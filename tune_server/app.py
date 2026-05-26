@@ -896,6 +896,7 @@ class TuneServer:
                 raise RuntimeError("Chromecast: no device_id specified")
             if not self._discovery_manager or not self._discovery_manager.cast:
                 raise RuntimeError("Chromecast: Cast discovery is not running")
+            resolved_id = self._discovery_manager.cast.resolve_device_id(device_id)
             cast = await self._discovery_manager.cast.reconnect_cast_device(device_id)
             if not cast:
                 known = list(self._discovery_manager.cast.devices.keys())
@@ -903,7 +904,7 @@ class TuneServer:
                     f"Chromecast: device '{device_id}' not found. "
                     f"Discovered: {known or 'none'}."
                 )
-            device = self._discovery_manager.get_device(device_id)
+            device = self._discovery_manager.get_device(resolved_id or device_id)
             name = device.name if device else "Chromecast"
             return ChromecastOutput(cast, self._http_streamer, self._server_ip, device_name=name)
 
