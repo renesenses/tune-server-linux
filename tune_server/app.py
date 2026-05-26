@@ -1490,7 +1490,66 @@ class TuneServer:
 
 
 async def run_server(shutdown_event: asyncio.Event | None = None) -> None:
-    """Entry point: start the server and run Uvicorn."""
+    """Entry point: start the server and run Uvicorn.
+
+    When TUNE_MODE=remote and TUNE_REMOTE_HOST is set, runs a lightweight
+    reverse-proxy app instead of the full TuneServer stack.
+    """
+    # ── Remote proxy mode ──────────────────────────────────────────────
+    if settings.mode == "remote" and not settings.remote_host:
+        _configure_logging()
+        logger.warning(
+            "remote_mode_no_host",
+            hint="TUNE_MODE=remote but TUNE_REMOTE_HOST is not set. "
+                 "Falling back to standalone server mode.",
+        )
+
+    if settings.mode == "remote" and settings.remote_host:
+        _configure_logging()
+        from tune_server import __version__
+        remote_base = settings.remote_host
+        if not remote_base.startswith("http"):
+            remote_base = f"http://{remote_base}"
+        logger.info(
+            "tune_remote_starting",
+            version=__version__,
+            remote_host=remote_base,
+        )
+
+        from tune_server.remote.proxy import create_remote_app
+        app = create_remote_app(remote_base)
+
+        config = uvicorn.Config(
+            app,
+            host=settings.api_host,
+            port=settings.api_port,
+            log_level=settings.log_level.lower(),
+            access_log=False,
+        )
+        uvi_server = uvicorn.Server(config)
+
+        signal_task = None
+        if shutdown_event:
+            async def _wait_for_signal():
+                await shutdown_event.wait()
+                uvi_server.should_exit = True
+            signal_task = asyncio.create_task(_wait_for_signal())
+
+        try:
+            print()
+            print("=" * 60)
+            print(f"  Tune Remote v{__version__}")
+            print(f"  Proxying to: {remote_base}")
+            print(f"  Web UI:  http://localhost:{settings.api_port}")
+            print("=" * 60)
+            print()
+            await uvi_server.serve()
+        finally:
+            if signal_task:
+                signal_task.cancel()
+        return
+
+    # ── Normal standalone server mode ──────────────────────────────────
     server = TuneServer()
     try:
         await server.start()
