@@ -209,6 +209,7 @@ class RustSidecarStreamer:
                 "file_size": info.file_size,
                 "upstream_url": upstream_url,
                 "is_radio": is_radio,
+                "session_id": stream_id,
             })
             logger.debug("rust_proxy_session_created", stream_id=stream_id)
         except Exception as e:

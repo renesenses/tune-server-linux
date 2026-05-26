@@ -40,6 +40,7 @@ struct ProxySessionRequest {
     file_size: Option<u64>,
     upstream_url: String,
     is_radio: bool,
+    session_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -92,7 +93,7 @@ async fn create_proxy_session(
         file_size: req.file_size,
     };
     let id = streamer
-        .create_proxy_session(info, req.upstream_url, req.is_radio)
+        .create_proxy_session(info, req.upstream_url, req.is_radio, req.session_id)
         .await;
     info!(session_id = %id, "proxy_session_created_via_api");
     (StatusCode::CREATED, Json(SessionResponse { session_id: id }))

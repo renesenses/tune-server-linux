@@ -156,6 +156,7 @@ impl PlaybackOrchestrator {
                 info,
                 stream_data.url.clone(),
                 false,
+                None,
             ).await;
 
             let server_ip = crate::discovery::ssdp::get_local_ip()
