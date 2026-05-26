@@ -9,7 +9,7 @@ from typing import Any, Callable, Coroutine, Optional
 import structlog
 
 from tune_server.config import settings
-from tune_server.audio.formats import AudioCapabilities, LOCAL_CAPABILITIES
+from tune_server.audio.formats import AudioCapabilities, LOCAL_CAPABILITIES, needs_transcode_for_dlna
 from pathlib import Path
 
 from tune_server.audio.pipeline import AudioPipeline, create_pipeline
@@ -639,9 +639,14 @@ class Player:
                     p = Path(next_track.file_path)
                     file_size = p.stat().st_size if p.exists() else None
 
-                # Check if transcoding is needed
+                # Check if transcoding is needed:
+                # 1. Format requires DLNA transcoding (AIFF, DSD, WavPack, APE)
+                # 2. Or format differs from current pipeline output (e.g. mixed-format queue)
                 pipeline_format = self._pipeline.stream_info.format if self._pipeline and self._pipeline.stream_info else None
-                needs_transcode = is_local and pipeline_format and source_format != pipeline_format
+                needs_transcode = is_local and (
+                    needs_transcode_for_dlna(source_format)
+                    or (pipeline_format and source_format != pipeline_format)
+                )
 
                 if needs_transcode:
                     # Preload via gapless handler to get transcoded data

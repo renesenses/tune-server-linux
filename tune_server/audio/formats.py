@@ -294,3 +294,63 @@ def dsd_mime_from_extension(file_path: str) -> str:
     if lower.endswith(".dst"):
         return "audio/x-dst"
     return "audio/x-dsf"  # default for .dsf
+
+
+def needs_transcode_for_dlna(fmt: AudioFormat) -> bool:
+    """Returns True if this format needs FFmpeg transcoding before DLNA streaming.
+
+    FLAC, WAV, MP3, AAC can be served as raw files; everything else must be transcoded.
+    """
+    return fmt in (AudioFormat.AIFF, AudioFormat.DSD, AudioFormat.WAVPACK, AudioFormat.APE)
+
+
+def dlna_transcode_target(source_format: AudioFormat) -> AudioFormat:
+    """Returns the target output format for DLNA transcoding.
+
+    AIFF -> FLAC (lossless, widely supported by DLNA renderers)
+    DSD/WavPack/APE -> WAV (universal PCM container, avoids re-encoding overhead)
+    """
+    if source_format == AudioFormat.AIFF:
+        return AudioFormat.FLAC
+    if source_format in (AudioFormat.DSD, AudioFormat.WAVPACK, AudioFormat.APE):
+        return AudioFormat.WAV
+    return source_format
+
+
+def dsd_output_sample_rate(source_sample_rate: int) -> int:
+    """Compute the appropriate PCM output sample rate for DSD sources.
+
+    DSD64  (2.8224 MHz) -> 176400 Hz (4x 44100)
+    DSD128 (5.6448 MHz) -> 352800 Hz (8x 44100)
+    DSD256+ -> 352800 Hz (capped for compatibility)
+
+    Some scanners store DSD rates divided (e.g. 2822 instead of 2822400).
+    """
+    if source_sample_rate >= 11_000_000:
+        return 352_800  # DSD256/512
+    if source_sample_rate >= 5_000_000:
+        return 352_800  # DSD128
+    if source_sample_rate >= 2_000_000:
+        return 176_400  # DSD64
+    # Scaled-down values from some scanners
+    if source_sample_rate >= 5000:
+        return 352_800  # DSD128-ish
+    if source_sample_rate >= 2000:
+        return 176_400  # DSD64-ish
+    return 176_400  # safe default
+
+
+def best_output_format(
+    source_format: AudioFormat,
+    source_sample_rate: int,
+    source_bit_depth: int,
+    target_caps: AudioCapabilities,
+) -> AudioFormat:
+    """Choose best output format for a given source and target capabilities."""
+    if can_passthrough(source_format, source_sample_rate, source_bit_depth, target_caps):
+        return source_format
+    preference = [AudioFormat.FLAC, AudioFormat.WAV, AudioFormat.AAC, AudioFormat.MP3]
+    for fmt in preference:
+        if fmt in target_caps.formats:
+            return fmt
+    return next(iter(target_caps.formats), AudioFormat.WAV)
