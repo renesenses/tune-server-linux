@@ -59,13 +59,20 @@ class ZoneGroup:
 
         if not network_zones:
             for zone in self.all_zones:
-                await zone.player.play(tracks=tracks, start_position=start_position)
+                # Deep-copy tracks so each zone's player can mutate file_path,
+                # cover_path, etc. without affecting other zones' Track objects.
+                zone_tracks = [t.model_copy(deep=True) for t in tracks]
+                await zone.player.play(tracks=zone_tracks, start_position=start_position)
             self._last_play_time = asyncio.get_running_loop().time()
             return
 
-        # Start network outputs first
+        # Start network outputs first — each zone gets its own copy of the
+        # track list so stream URL resolution and cover caching in one zone's
+        # player never mutates another zone's Track objects (avoids the bug
+        # where two DLNA renderers end up sharing the same stream session).
         for zone in network_zones:
-            await zone.player.play(tracks=tracks, start_position=start_position)
+            zone_tracks = [t.model_copy(deep=True) for t in tracks]
+            await zone.player.play(tracks=zone_tracks, start_position=start_position)
 
         # Wait for the DLNA renderer to actually connect to our HTTP stream
         dlna_output = network_zones[0].output
@@ -104,7 +111,8 @@ class ZoneGroup:
 
         # Start local outputs
         for zone in local_zones:
-            await zone.player.play(tracks=tracks, start_position=start_position)
+            zone_tracks = [t.model_copy(deep=True) for t in tracks]
+            await zone.player.play(tracks=zone_tracks, start_position=start_position)
 
         self._last_play_time = asyncio.get_running_loop().time()
 
@@ -197,15 +205,18 @@ class GroupManager:
 
         self._groups[group_id] = group
 
-        # If leader is playing, sync followers to the same track + position
+        # If leader is playing, sync followers to the same track + position.
+        # Deep-copy the track for each follower to avoid shared mutation.
         if leader.player.state == PlaybackState.PLAYING and leader.player.current_track:
             track = leader.player.current_track
             leader_pos = leader.position_ms
             for f in followers:
                 try:
-                    # Set the track in the queue, then start at leader's position
-                    f.player.queue.set_tracks([track])
-                    await f.player._start_track(track, seek_ms=leader_pos)
+                    # Each follower gets its own Track copy so stream URL
+                    # resolution and cover caching stay independent.
+                    f_track = track.model_copy(deep=True)
+                    f.player.queue.set_tracks([f_track])
+                    await f.player._start_track(f_track, seek_ms=leader_pos)
                 except Exception:
                     logger.exception("group_sync_follower_error", zone_id=f.zone_id)
 
