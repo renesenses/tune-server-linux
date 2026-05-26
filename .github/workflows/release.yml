@@ -89,9 +89,10 @@ jobs:
           ls -la web/assets | head -8
 
       - name: Set up Rust (for librespot)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        shell: bash
 
       - name: Cache Cargo registry + librespot binary
         uses: actions/cache@v4
@@ -801,9 +802,10 @@ jobs:
           ls -la web/assets | head -8
 
       - name: Set up Rust (for librespot)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        shell: bash
 
       - name: Cache Cargo registry + librespot binary
         uses: actions/cache@v4

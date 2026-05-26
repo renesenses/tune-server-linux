@@ -27,6 +27,71 @@ logger = structlog.get_logger()
 SCOPES = "user-read-private user-library-read playlist-read-private playlist-read-collaborative playlist-modify-private playlist-modify-public"
 
 
+try:
+    from spotipy.cache_handler import CacheHandler as _SpotipyCacheBase
+except ImportError:
+    _SpotipyCacheBase = object  # type: ignore[assignment,misc]
+
+
+class _DbCacheHandler(_SpotipyCacheBase):
+    """Spotipy CacheHandler subclass that persists tokens to the Tune DB.
+
+    Every time spotipy refreshes the access token (which may also rotate
+    the refresh token), it calls ``save_token_to_cache``.  The default
+    ``MemoryCacheHandler`` keeps the new token in RAM only — so after a
+    server restart the DB still holds the *old* (now-revoked) refresh
+    token and Spotify auth fails.
+
+    This handler keeps an in-memory copy **and** fires an async DB write
+    on every save, ensuring the latest tokens survive restarts.
+    """
+
+    def __init__(self, token_info: dict, db: Database) -> None:
+        self.token_info = token_info
+        self._db = db
+        # Capture the running event loop at construction time (always
+        # called from the main async context). This reference is used
+        # later from background threads spawned by asyncio.to_thread.
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+
+    def get_cached_token(self):
+        return self.token_info
+
+    def save_token_to_cache(self, token_info):
+        self.token_info = token_info
+        # spotipy calls this synchronously, often from a background thread
+        # (via asyncio.to_thread). Schedule the async DB write on the main
+        # event loop so the aiosqlite / asyncpg connection is used safely.
+        if self._loop is None or self._loop.is_closed():
+            logger.warning("spotify_cache_handler_no_loop")
+            return
+        try:
+            asyncio.get_running_loop()
+            # We are on the event-loop thread — create_task is safe
+            self._loop.create_task(self._persist(token_info))
+        except RuntimeError:
+            # Called from a background thread — use threadsafe scheduling
+            asyncio.run_coroutine_threadsafe(self._persist(token_info), self._loop)
+
+    async def _persist(self, token_info: dict) -> None:
+        try:
+            token_data = json.dumps(token_info)
+            await self._db.execute(
+                "INSERT INTO streaming_auth (service, token_data, updated_at) "
+                "VALUES (?, ?, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (service) DO UPDATE SET "
+                "token_data = EXCLUDED.token_data, updated_at = CURRENT_TIMESTAMP",
+                ("spotify", token_data),
+            )
+            await self._db.commit()
+            logger.debug("spotify_token_refreshed_and_saved")
+        except Exception:
+            logger.exception("spotify_cache_handler_persist_error")
+
+
 class SpotifyService(StreamingService):
     """Spotify streaming service integration using spotipy (PKCE auth)."""
 
@@ -116,6 +181,13 @@ class SpotifyService(StreamingService):
 
             if db:
                 await self.save_auth(db)
+                # Switch from the file-based cache to the DB-backed handler
+                # so that subsequent token refreshes are persisted too.
+                cached = self._auth_manager.cache_handler.get_cached_token()
+                if cached:
+                    self._auth_manager.cache_handler = _DbCacheHandler(
+                        token_info=cached, db=db,
+                    )
 
             return True
         except Exception as exc:
@@ -497,9 +569,12 @@ class SpotifyService(StreamingService):
             token_info = json.loads(row["token_data"])
 
             import spotipy
-            from spotipy.cache_handler import MemoryCacheHandler
 
-            cache_handler = MemoryCacheHandler(token_info=token_info)
+            # Use _DbCacheHandler so that every token refresh (which may
+            # rotate the refresh_token) is persisted to the DB immediately.
+            # The old MemoryCacheHandler kept refreshed tokens in RAM only,
+            # causing "Refresh token revoked" after container restarts.
+            cache_handler = _DbCacheHandler(token_info=token_info, db=db)
             self._auth_manager = spotipy.SpotifyPKCE(
                 client_id=settings.spotify_client_id,
                 redirect_uri=settings.spotify_redirect_uri,
@@ -510,7 +585,8 @@ class SpotifyService(StreamingService):
 
             self._sp = spotipy.Spotify(auth_manager=self._auth_manager)
 
-            # Verify the token works
+            # Verify the token works (this may trigger a refresh if expired,
+            # which _DbCacheHandler will persist automatically)
             user = await asyncio.to_thread(self._sp.current_user)
             if user:
                 self._authenticated = True
