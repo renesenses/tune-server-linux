@@ -59,6 +59,8 @@ class FFmpegDecoder:
     def _pcm_format(self) -> str:
         if self._bit_depth <= 16:
             return "s16le"
+        elif self._bit_depth <= 24:
+            return "s24le"
         return "s32le"
 
     def _build_dsp_filters(self) -> str:

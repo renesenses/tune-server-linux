@@ -136,6 +136,18 @@ class TestFfmpegCodecArg:
     def test_mappings(self, fmt, expected):
         assert ffmpeg_codec_arg(fmt) == expected
 
+    def test_wav_24bit(self):
+        assert ffmpeg_codec_arg(AudioFormat.WAV, bit_depth=24) == "pcm_s24le"
+
+    def test_wav_32bit(self):
+        assert ffmpeg_codec_arg(AudioFormat.WAV, bit_depth=32) == "pcm_s32le"
+
+    def test_aiff_24bit(self):
+        assert ffmpeg_codec_arg(AudioFormat.AIFF, bit_depth=24) == "pcm_s24be"
+
+    def test_aiff_32bit(self):
+        assert ffmpeg_codec_arg(AudioFormat.AIFF, bit_depth=32) == "pcm_s32be"
+
 
 class TestMimeType:
     @pytest.mark.parametrize(

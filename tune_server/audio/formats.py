@@ -130,16 +130,26 @@ def ffmpeg_format_arg(fmt: AudioFormat) -> str:
     return mapping.get(fmt, "flac")
 
 
-def ffmpeg_codec_arg(fmt: AudioFormat) -> str:
+def ffmpeg_codec_arg(fmt: AudioFormat, bit_depth: int = 16) -> str:
+    if fmt == AudioFormat.WAV:
+        if bit_depth <= 16:
+            return "pcm_s16le"
+        elif bit_depth <= 24:
+            return "pcm_s24le"
+        return "pcm_s32le"
+    if fmt == AudioFormat.AIFF:
+        if bit_depth <= 16:
+            return "pcm_s16be"
+        elif bit_depth <= 24:
+            return "pcm_s24be"
+        return "pcm_s32be"
     mapping = {
         AudioFormat.FLAC: "flac",
-        AudioFormat.WAV: "pcm_s16le",
         AudioFormat.MP3: "libmp3lame",
         AudioFormat.AAC: "aac",
         AudioFormat.ALAC: "alac",
         AudioFormat.OGG: "libvorbis",
         AudioFormat.OPUS: "libopus",
-        AudioFormat.AIFF: "pcm_s16be",
     }
     return mapping.get(fmt, "flac")
 
