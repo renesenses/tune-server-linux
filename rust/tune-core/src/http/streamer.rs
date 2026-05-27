@@ -110,9 +110,8 @@ impl AudioStreamer {
         info: StreamInfo,
         upstream_url: String,
         is_radio: bool,
-        requested_id: Option<String>,
     ) -> String {
-        let id = requested_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let id = uuid::Uuid::new_v4().to_string();
         let mut session = StreamSession::new(id.clone(), info, false, 128);
         session.is_radio = is_radio;
         *session.proxy_url.lock().await = Some(upstream_url);
@@ -219,11 +218,8 @@ pub async fn handle_stream(
             let hdr = build_wav_header(ch, sr, bd);
             yield Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(&hdr));
         }
-        loop {
-            match session.recv_chunk().await {
-                Some(chunk) => yield Ok(bytes::Bytes::from(chunk)),
-                None => break,
-            }
+        while let Some(chunk) = session.recv_chunk().await {
+            yield Ok(bytes::Bytes::from(chunk));
         }
     });
 
@@ -439,7 +435,7 @@ mod tests {
             channels: 2,
             file_size: None,
         };
-        let id = streamer.create_proxy_session(info, "https://cdn.tidal.com/track.flac".into(), false, None).await;
+        let id = streamer.create_proxy_session(info, "https://cdn.tidal.com/track.flac".into(), false).await;
         assert!(!id.is_empty());
         streamer.remove_session(&id).await;
     }
