@@ -1,25 +1,25 @@
 class TuneServer < Formula
   desc "Multi-room music server (Rust) with DLNA/UPnP, streaming, and web UI"
   homepage "https://mozaiklabs.fr"
-  version "0.8.17"
+  version "0.8.18"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/renesenses/tune-server-rust/releases/download/v0.8.17/tune-server-v0.8.17-macos-aarch64.tar.gz"
+      url "https://github.com/renesenses/tune-server-rust/releases/download/v0.8.18/tune-server-v0.8.17-macos-aarch64.tar.gz"
       sha256 "1fa8831c79c90c66657c5c53a56ebdb6989c11e44fc525a1dc25e85e159aa7f4"
     else
-      url "https://github.com/renesenses/tune-server-rust/releases/download/v0.8.17/tune-server-v0.8.17-macos-x86_64.tar.gz"
+      url "https://github.com/renesenses/tune-server-rust/releases/download/v0.8.18/tune-server-v0.8.17-macos-x86_64.tar.gz"
       sha256 "0e6d1a4ca1969a55e3f1bbd2d0ac175d315512ded6cdeb5be2cd3a011885195d"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/renesenses/tune-server-rust/releases/download/v0.8.17/tune-server-v0.8.17-linux-aarch64.tar.gz"
+      url "https://github.com/renesenses/tune-server-rust/releases/download/v0.8.18/tune-server-v0.8.17-linux-aarch64.tar.gz"
       sha256 "171fa45fb552631e0eee3b38412f8a092b88d5f1f12ba6e19a1d678a7b1db008"
     else
-      url "https://github.com/renesenses/tune-server-rust/releases/download/v0.8.17/tune-server-v0.8.17-linux-x86_64.tar.gz"
+      url "https://github.com/renesenses/tune-server-rust/releases/download/v0.8.18/tune-server-v0.8.17-linux-x86_64.tar.gz"
       sha256 "3298f0e69eabe29aa2f569a50e41b6dae2016f6deb1e37b1c9fcc47c97f72ebf"
     end
   end
@@ -47,7 +47,7 @@ class TuneServer < Formula
 
   def caveats
     <<~EOS
-      Tune Server v0.8.17 (Rust) installed!
+      Tune Server v0.8.18 (Rust) installed!
 
       Start: tune-server-launcher
       Web UI: http://localhost:8888
