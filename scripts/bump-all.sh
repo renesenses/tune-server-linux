@@ -39,9 +39,9 @@ DEV="${TUNE_DEV_DIR:-$HOME/DEV}"
 RUST_DIR="$DEV/tune-server-rust"
 if [ -d "$RUST_DIR" ] && command -v cargo &>/dev/null; then
     if ! (cd "$RUST_DIR" && cargo fmt -- --check >/dev/null 2>&1); then
-        echo "Error: cargo fmt check failed in $RUST_DIR" >&2
-        echo "Run 'cargo fmt' before bumping to avoid CI Format failures." >&2
-        exit 1
+        echo "  Auto-formatting Rust code..." >&2
+        (cd "$RUST_DIR" && cargo fmt)
+        echo "  cargo fmt applied — will be included in the bump commit."
     fi
 fi
 PYPROJECT="$DEV/tune-server-linux/pyproject.toml"
