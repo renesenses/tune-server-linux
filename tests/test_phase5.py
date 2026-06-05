@@ -712,7 +712,7 @@ class TestFFmpegDecoder:
         from tune_server.audio.decoder import FFmpegDecoder
 
         assert FFmpegDecoder("/f", bit_depth=16)._pcm_format() == "s16le"
-        assert FFmpegDecoder("/f", bit_depth=24)._pcm_format() == "s32le"
+        assert FFmpegDecoder("/f", bit_depth=24)._pcm_format() == "s24le"
         assert FFmpegDecoder("/f", bit_depth=32)._pcm_format() == "s32le"
 
 

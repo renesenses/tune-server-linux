@@ -51,9 +51,10 @@ class DiscoveryManager:
         if _USE_RUST:
             if settings.ssdp_enabled:
                 self._rust_ssdp = RustSsdpBackend(event_bus)
-            if settings.mdns_enabled:
-                self._rust_mdns = RustMdnsBackend(event_bus)
-            logger.info("discovery_engine", engine="rust", ssdp="rust" if self._rust_ssdp else "python", mdns="rust" if self._rust_mdns else "python")
+            # Rust mDNS disabled: mdns-sd panics on Linux even with
+            # runtime.enter() guard. Works on macOS only. Keep Python mDNS
+            # until upstream fix or crate replacement.
+            logger.info("discovery_engine", engine="rust+python", ssdp="rust", mdns="python")
         else:
             logger.info("discovery_engine", engine="python")
 

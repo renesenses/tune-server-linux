@@ -294,9 +294,18 @@ class HttpAudioStreamer:
             return web.Response(status=404)
 
         mime = self._resolve_mime(stream_id, session)
+
+        # Only advertise Accept-Ranges: bytes when the session can actually
+        # serve Range requests (local file with known size).  Proxy and
+        # queue-based streaming sessions don't support Range — advertising
+        # it causes some renderers (Denon Home, Wiim) to retry with Range
+        # headers that we can't honour, leading to playback loops.
+        file_path = self._file_paths.get(stream_id)
+        is_file_session = bool(file_path and session.stream_info.file_size)
+
         headers = {
             "Content-Type": mime,
-            "Accept-Ranges": "bytes",
+            "Accept-Ranges": "bytes" if is_file_session else "none",
             "Connection": "keep-alive",
             "transferMode.dlna.org": "Streaming",
             "contentFeatures.dlna.org": "",
@@ -314,8 +323,7 @@ class HttpAudioStreamer:
                 headers["icy-description"] = session.track_album
 
         # For local files, return Content-Length immediately from file_size
-        file_path = self._file_paths.get(stream_id)
-        if file_path and session.stream_info.file_size:
+        if is_file_session:
             headers["Content-Length"] = str(session.stream_info.file_size)
             return web.Response(headers=headers)
 
@@ -557,28 +565,49 @@ class HttpAudioStreamer:
         self, request: web.Request, upstream_url: str, mime: str, stream_id: str,
         session: StreamSession | None = None,
     ) -> web.StreamResponse:
-        """Proxy an upstream HTTPS URL over HTTP with Content-Length."""
+        """Proxy an upstream URL over HTTP with Range forwarding.
+
+        When the renderer sends a Range header, forward it to the upstream
+        so the renderer can resume from an arbitrary byte offset.  Without
+        this, renderers that buffer a few seconds then re-request with
+        Range would restart from byte 0 and loop on the first seconds.
+        """
         is_radio = stream_id in self._radio_sessions
         timeout = aiohttp.ClientTimeout(total=None, sock_read=30) if is_radio else aiohttp.ClientTimeout(total=600)
         cs = self._get_http_session()
-        async with cs.get(upstream_url, timeout=timeout) as upstream:
-                headers = {
+
+        # Forward Range header from the renderer to the upstream so seek
+        # and resume work correctly for proxy sessions.
+        upstream_headers: dict[str, str] = {}
+        range_header = request.headers.get("Range")
+        if range_header:
+            upstream_headers["Range"] = range_header
+
+        async with cs.get(upstream_url, headers=upstream_headers, timeout=timeout) as upstream:
+                # Mirror upstream 206 status when a Range was honoured
+                status = upstream.status if upstream.status in (200, 206) else 200
+
+                resp_headers: dict[str, str] = {
                     "Content-Type": upstream.headers.get("Content-Type", mime),
                     "Accept-Ranges": "bytes",
                     "transferMode.dlna.org": "Streaming",
                 }
                 cl = upstream.headers.get("Content-Length")
                 if cl:
-                    headers["Content-Length"] = cl
+                    resp_headers["Content-Length"] = cl
+                cr = upstream.headers.get("Content-Range")
+                if cr:
+                    resp_headers["Content-Range"] = cr
                 if session:
-                    headers.update(self._tune_timing_headers(session))
+                    resp_headers.update(self._tune_timing_headers(session))
 
-                response = web.StreamResponse(headers=headers)
+                response = web.StreamResponse(status=status, headers=resp_headers)
                 await response.prepare(request)
                 if session:
                     session.register_response(response)
 
-                logger.info("proxy_stream_started", stream_id=stream_id, content_length=cl)
+                logger.info("proxy_stream_started", stream_id=stream_id, content_length=cl,
+                            range_fwd=range_header or "none")
 
                 try:
                     async for chunk in upstream.content.iter_chunked(65536):

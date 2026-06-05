@@ -34,16 +34,29 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     exit 2
 fi
 
+# Pre-flight: cargo fmt check on Rust repo to avoid CI Format failures on tag
 DEV="${TUNE_DEV_DIR:-$HOME/DEV}"
+RUST_DIR="$DEV/tune-server-rust"
+if [ -d "$RUST_DIR" ] && command -v cargo &>/dev/null; then
+    if ! (cd "$RUST_DIR" && cargo fmt -- --check >/dev/null 2>&1); then
+        echo "  Auto-formatting Rust code..." >&2
+        (cd "$RUST_DIR" && cargo fmt)
+        echo "  cargo fmt applied — will be included in the bump commit."
+    fi
+fi
 PYPROJECT="$DEV/tune-server-linux/pyproject.toml"
 BAT="$DEV/tune-server-linux/scripts/tune-update.bat"
 WEB="$DEV/tune-web-client/package.json"
 FLUTTER="$DEV/tune-server-flutter/pubspec.yaml"
 IPAD="$DEV/tune-server-ipados/Tune/project.yml"
+CARGO="$RUST_DIR/Cargo.toml"
 
-for f in "$PYPROJECT" "$BAT" "$WEB" "$FLUTTER" "$IPAD"; do
+for f in "$PYPROJECT" "$BAT" "$WEB" "$FLUTTER" "$IPAD" "$CARGO"; do
     [ -f "$f" ] || { echo "Error: missing $f" >&2; exit 1; }
 done
+
+# 0. Cargo.toml workspace — version = "X.Y.Z"
+sed -i.bak -E 's/^version = "[0-9]+\.[0-9]+\.[0-9]+"/version = "'"$VERSION"'"/' "$CARGO" && rm "$CARGO.bak"
 
 # 1. pyproject.toml — single line: version = "X.Y.Z"
 sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" "$PYPROJECT" && rm "$PYPROJECT.bak"
@@ -106,6 +119,7 @@ fi
 
 echo
 echo "Bumped Tune to v$VERSION (build $NEXT_BUILD for Apple targets)"
+echo "  - $CARGO"
 echo "  - $PYPROJECT"
 echo "  - $BAT"
 echo "  - $WEB"

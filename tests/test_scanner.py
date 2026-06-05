@@ -630,3 +630,83 @@ def test_list_audio_files_dot_underscore_skipped(tmp_path):
     result = _list_audio_files(tmp_path)
     assert len(result) == 1
     assert result[0].name == "good.flac"
+
+
+# ---------------------------------------------------------------------------
+# Compilation album: per-track artist_id
+# ---------------------------------------------------------------------------
+
+
+@patch("tune_server.library.scanner.compute_audio_hash")
+@patch("tune_server.library.scanner.fetch_cover_from_musicbrainz", return_value=None)
+@patch("tune_server.library.scanner.get_album_artwork", return_value=None)
+@patch("tune_server.library.scanner.read_metadata")
+async def test_compilation_tracks_have_per_track_artist(
+    mock_read, mock_art, mock_mb, mock_hash, scanner, tmp_path
+):
+    """On a compilation (album_artist='Various Artists'), each track's artist_id
+    must point to the per-track artist, not the album artist."""
+    from tune_server.library.metadata_reader import TrackMetadata
+
+    mock_hash.side_effect = lambda path: f"hash-{path}"
+
+    artists_data = [
+        ("Let's Fall in Love", "Diana Krall"),
+        ("Fly Me to the Moon", "Jamie Cullum"),
+        ("What a Wonderful World", "Gregory Porter"),
+    ]
+
+    call_count = 0
+
+    def _meta_side_effect(path):
+        nonlocal call_count
+        title, artist = artists_data[call_count % len(artists_data)]
+        call_count += 1
+        return TrackMetadata(
+            title=title,
+            artist=artist,
+            album="Jazz Loves Disney",
+            album_artist="Various Artists",
+            track_number=call_count,
+            disc_number=1,
+            year=2016,
+            genre="Jazz",
+            duration_ms=240000,
+            format="flac",
+            sample_rate=44100,
+            bit_depth=16,
+            channels=2,
+            has_cover=False,
+        )
+
+    mock_read.side_effect = _meta_side_effect
+
+    for i, (title, _) in enumerate(artists_data):
+        (tmp_path / f"track{i+1}.flac").touch()
+
+    await scanner.scan([str(tmp_path)])
+
+    all_tracks = await scanner._track_repo.list(limit=100)
+    compilation_tracks = [t for t in all_tracks if t.album_title == "Jazz Loves Disney"]
+    assert len(compilation_tracks) == 3
+
+    for track in compilation_tracks:
+        # artist_name (denormalized) must be the per-track performer
+        assert track.artist_name != "Various Artists", (
+            f"Track '{track.title}' shows 'Various Artists' instead of per-track artist"
+        )
+
+    # Verify that artist_id resolves to the per-track artist, not album artist
+    for title, expected_artist in artists_data:
+        track = [t for t in compilation_tracks if t.title == title][0]
+        artist = await scanner._artist_repo.get(track.artist_id)
+        assert artist.name == expected_artist, (
+            f"Track '{title}' artist_id resolves to '{artist.name}', "
+            f"expected '{expected_artist}'"
+        )
+
+    # Album artist_id should still be "Various Artists"
+    album_list = await scanner._album_repo.list()
+    album = [a for a in album_list if a.title == "Jazz Loves Disney"][0]
+    album_artist = await scanner._artist_repo.get(album.artist_id)
+    assert album_artist.name == "Various Artists"

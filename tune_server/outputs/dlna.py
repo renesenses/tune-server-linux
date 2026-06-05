@@ -346,6 +346,38 @@ class DlnaOutput(OutputTarget):
                 if self._is_micromega and url.startswith("http"):
                     # Fall through to Micromega proxy below
                     pass
+                elif url.startswith("http"):
+                    # HTTP/HTTPS streams: create a per-renderer proxy session
+                    # so each DLNA renderer gets its own unique stream URL and
+                    # its own independent upstream connection.  Without this,
+                    # grouped zones or two zones playing the same track would
+                    # send the same URL to multiple renderers, causing the
+                    # upstream (CDN or Deezer decrypt proxy) to be shared —
+                    # the second renderer loops on the first ~3 seconds when
+                    # the upstream limits concurrent connections.
+                    fmt = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+                    mime = mime_type_for_format(fmt)
+                    proxy_info = AudioStreamInfo(
+                        format=fmt,
+                        sample_rate=track.sample_rate or 44100,
+                        bit_depth=track.bit_depth or 16,
+                        channels=track.channels or 2,
+                    )
+                    self._stream_id = self._streamer.create_proxy_session(url, proxy_info)
+                    stream_url = self._streamer.get_stream_url(self._stream_id, self._server_ip)
+                    metadata = _build_didl_lite(track, stream_url, mime)
+
+                    dmr = self._device
+                    title = track.title or "Unknown"
+                    await self._set_and_play(dmr, stream_url, title, metadata)
+                    self._start_watchdog(stream_url, title, metadata)
+
+                    self._direct_url = True
+                    self._last_uri = stream_url
+                    self._available = True
+                    _elapsed = round((time.monotonic() - _start_t) * 1000)
+                    logger.info("dlna_proxy_url_playback", device=self.name, url=url[:80], startup_ms=_elapsed)
+                    return
                 else:
                     mime = mime_type_for_format(AudioFormat(track.format))
                     metadata = _build_didl_lite(track, url, mime)
@@ -883,6 +915,24 @@ class DlnaOutput(OutputTarget):
                     if url.startswith("https://"):
                         url = "http://" + url[len("https://"):]
                     url = await self._resolve_redirects(url)
+                # HTTP URLs: proxy through streamer so each renderer
+                # gets its own isolated upstream connection (same fix
+                # as start() for multi-zone playback).
+                if url.startswith("http"):
+                    fmt = AudioFormat(track.format) if track.format else AudioFormat.FLAC
+                    mime = mime_type_for_format(fmt)
+                    proxy_info = AudioStreamInfo(
+                        format=fmt,
+                        sample_rate=track.sample_rate or 44100,
+                        bit_depth=track.bit_depth or 16,
+                        channels=track.channels or 2,
+                    )
+                    sid = self._streamer.create_proxy_session(url, proxy_info)
+                    stream_url = self._streamer.get_stream_url(sid, self._server_ip)
+                    metadata = _build_didl_lite(track, stream_url, mime)
+                    await self._device.async_set_next_transport_uri(stream_url, track.title or "Unknown", meta_data=metadata)
+                    logger.info("dlna_next_track_set_proxy", device=self.name, track=track.title)
+                    return True
                 mime = mime_type_for_format(AudioFormat(track.format))
                 metadata = _build_didl_lite(track, url, mime)
                 await self._set_next_uri(url, track.title or "Unknown", metadata)

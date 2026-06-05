@@ -4,6 +4,12 @@ pub struct YouTubeService {
     authenticated: bool,
 }
 
+impl Default for YouTubeService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl YouTubeService {
     pub fn new() -> Self {
         Self { authenticated: false }
@@ -20,7 +26,7 @@ impl StreamingService for YouTubeService {
     }
 
     async fn auth_status(&self) -> AuthStatus {
-        AuthStatus { authenticated: self.authenticated, username: None, subscription: None, expires_at: None }
+        AuthStatus { authenticated: self.authenticated, ..Default::default() }
     }
 
     async fn logout(&mut self) -> Result<(), String> {

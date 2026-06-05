@@ -185,7 +185,67 @@ CREATE TABLE IF NOT EXISTS podcast_subscriptions (
 );
 ",
     },
+    Migration {
+        version: 8,
+        name: "add_radio_favorites_and_alarm_extras",
+        up: "
+CREATE TABLE IF NOT EXISTS radio_favorites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    artist TEXT DEFAULT '',
+    station_name TEXT DEFAULT '',
+    cover_url TEXT,
+    stream_url TEXT,
+    saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(title, artist)
+);
+
+ALTER TABLE alarms ADD COLUMN name TEXT DEFAULT 'Alarm';
+ALTER TABLE alarms ADD COLUMN one_shot INTEGER DEFAULT 0;
+ALTER TABLE alarms ADD COLUMN skip_holidays INTEGER DEFAULT 0;
+ALTER TABLE alarms ADD COLUMN source_name TEXT;
+ALTER TABLE alarms ADD COLUMN fade_duration_s INTEGER DEFAULT 60;
+ALTER TABLE alarms ADD COLUMN last_fired_at DATETIME;
+",
+    },
+    Migration {
+        version: 9,
+        name: "add_track_credits",
+        up: "
+CREATE TABLE IF NOT EXISTS track_credits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER NOT NULL,
+    artist_id INTEGER,
+    artist_name TEXT NOT NULL,
+    role TEXT DEFAULT 'performer',
+    instrument TEXT,
+    position INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_track_credits_track ON track_credits(track_id);
+CREATE INDEX IF NOT EXISTS idx_track_credits_artist ON track_credits(artist_name);
+",
+    },
+    Migration {
+        version: 10,
+        name: "add_album_artist_to_tracks",
+        up: "", // Column included in CORE_SCHEMA; for existing DBs, applied programmatically
+    },
 ];
+
+fn add_column_if_missing(db: &SqliteDb, table: &str, column: &str, col_type: &str) {
+    let conn = db.connection().lock().unwrap();
+    let has_column = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .map(|rows| rows.filter_map(|r| r.ok()).any(|name| name == column))
+        })
+        .unwrap_or(false);
+    drop(conn);
+    if !has_column {
+        db.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {col_type};")).ok();
+    }
+}
 
 pub fn run_migrations(db: &SqliteDb) -> Result<(), String> {
     db.execute_batch(
@@ -226,13 +286,17 @@ pub fn run_migrations(db: &SqliteDb) -> Result<(), String> {
         if migration.version <= current_version.max(if tables_exist { 1 } else { 0 }) {
             continue;
         }
-        if migration.up.is_empty() {
-            continue;
-        }
 
         info!(version = migration.version, name = migration.name, "migration_applying");
 
-        db.execute_batch(migration.up)?;
+        if !migration.up.is_empty() {
+            db.execute_batch(migration.up)?;
+        }
+
+        // Programmatic migrations for column additions (safe if column already exists)
+        if migration.version == 10 {
+            add_column_if_missing(db, "tracks", "album_artist", "TEXT");
+        }
 
         db.execute(
             "INSERT INTO _migrations (version, name) VALUES (?, ?)",

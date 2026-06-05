@@ -28,6 +28,7 @@ from tune_server.library.enrichment import MetadataEnricher
 from tune_server.library.scanner import LibraryScanner
 from tune_server.library.watcher import FileSystemWatcher
 from tune_server.outputs.http_streamer import HttpAudioStreamer
+from tune_server.outputs.rust_streamer import RustSidecarStreamer, create_streamer
 from tune_server.utils.audio_utils import check_ffmpeg
 from tune_server.utils.network import get_local_ip, pick_free_port
 from tune_server.zones.group import GroupManager
@@ -206,7 +207,7 @@ class TuneServer:
         self._group_manager: GroupManager | None = None
         self._sync_engine: SyncEngine | None = None
         self._discovery_manager: DiscoveryManager | None = None
-        self._http_streamer: HttpAudioStreamer | None = None
+        self._http_streamer: HttpAudioStreamer | RustSidecarStreamer | None = None
         self._oh_event_listener = None  # OpenHomeEventListener, shared across outputs
         self._mount_manager = None
         self._ws_manager = None
@@ -332,13 +333,30 @@ class TuneServer:
         self._sync_engine = SyncEngine(self._group_manager)
 
     async def _init_http_streamer(self) -> None:
-        """Phase 4: HttpAudioStreamer + UPnP MediaServer + Deezer proxy."""
+        """Phase 4: HttpAudioStreamer (or Rust sidecar) + UPnP MediaServer + Deezer proxy."""
         # Pre-bind a free port so we don't crash when 8080 is taken
         settings.stream_port = pick_free_port(settings.stream_host, settings.stream_port)
-        self._http_streamer = HttpAudioStreamer(
+
+        # Try Rust sidecar first (auto/rust), fall back to Python aiohttp
+        streamer = create_streamer(
             host=settings.stream_host,
             port=settings.stream_port,
         )
+        if isinstance(streamer, RustSidecarStreamer):
+            try:
+                await streamer.start()
+                self._http_streamer = streamer
+                logger.info("http_streamer_engine", engine="rust-sidecar", port=settings.stream_port)
+            except Exception as e:
+                logger.warning("rust_sidecar_start_failed", error=str(e), fallback="python")
+                await streamer.stop()
+                streamer = HttpAudioStreamer(
+                    host=settings.stream_host,
+                    port=settings.stream_port,
+                )
+                self._http_streamer = streamer
+        else:
+            self._http_streamer = streamer
 
         # UPnP MediaServer
         self._upnp_server = None
@@ -366,7 +384,11 @@ class TuneServer:
             self._deezer_proxy = DeezerProxy(deps.streaming_services["deezer"])
             self._http_streamer.on_app_created(self._deezer_proxy.register_routes)
 
-        await self._http_streamer.start()
+        # Start the Python aiohttp streamer if it was selected (Rust sidecar
+        # is already started above before the fallback check).
+        if isinstance(self._http_streamer, HttpAudioStreamer):
+            await self._http_streamer.start()
+            logger.info("http_streamer_engine", engine="python-aiohttp", port=settings.stream_port)
 
         # Now that the streamer is up, tell the Deezer service where to
         # build proxy URLs (used by get_stream_url).
@@ -904,6 +926,7 @@ class TuneServer:
                 raise RuntimeError("Chromecast: no device_id specified")
             if not self._discovery_manager or not self._discovery_manager.cast:
                 raise RuntimeError("Chromecast: Cast discovery is not running")
+            resolved_id = self._discovery_manager.cast.resolve_device_id(device_id)
             cast = await self._discovery_manager.cast.reconnect_cast_device(device_id)
             if not cast:
                 known = list(self._discovery_manager.cast.devices.keys())
@@ -911,7 +934,7 @@ class TuneServer:
                     f"Chromecast: device '{device_id}' not found. "
                     f"Discovered: {known or 'none'}."
                 )
-            device = self._discovery_manager.get_device(device_id)
+            device = self._discovery_manager.get_device(resolved_id or device_id)
             name = device.name if device else "Chromecast"
             return ChromecastOutput(cast, self._http_streamer, self._server_ip, device_name=name)
 
@@ -1497,7 +1520,66 @@ class TuneServer:
 
 
 async def run_server(shutdown_event: asyncio.Event | None = None) -> None:
-    """Entry point: start the server and run Uvicorn."""
+    """Entry point: start the server and run Uvicorn.
+
+    When TUNE_MODE=remote and TUNE_REMOTE_HOST is set, runs a lightweight
+    reverse-proxy app instead of the full TuneServer stack.
+    """
+    # ── Remote proxy mode ──────────────────────────────────────────────
+    if settings.mode == "remote" and not settings.remote_host:
+        _configure_logging()
+        logger.warning(
+            "remote_mode_no_host",
+            hint="TUNE_MODE=remote but TUNE_REMOTE_HOST is not set. "
+                 "Falling back to standalone server mode.",
+        )
+
+    if settings.mode == "remote" and settings.remote_host:
+        _configure_logging()
+        from tune_server import __version__
+        remote_base = settings.remote_host
+        if not remote_base.startswith("http"):
+            remote_base = f"http://{remote_base}"
+        logger.info(
+            "tune_remote_starting",
+            version=__version__,
+            remote_host=remote_base,
+        )
+
+        from tune_server.remote.proxy import create_remote_app
+        app = create_remote_app(remote_base)
+
+        config = uvicorn.Config(
+            app,
+            host=settings.api_host,
+            port=settings.api_port,
+            log_level=settings.log_level.lower(),
+            access_log=False,
+        )
+        uvi_server = uvicorn.Server(config)
+
+        signal_task = None
+        if shutdown_event:
+            async def _wait_for_signal():
+                await shutdown_event.wait()
+                uvi_server.should_exit = True
+            signal_task = asyncio.create_task(_wait_for_signal())
+
+        try:
+            print()
+            print("=" * 60)
+            print(f"  Tune Remote v{__version__}")
+            print(f"  Proxying to: {remote_base}")
+            print(f"  Web UI:  http://localhost:{settings.api_port}")
+            print("=" * 60)
+            print()
+            await uvi_server.serve()
+        finally:
+            if signal_task:
+                signal_task.cancel()
+        return
+
+    # ── Normal standalone server mode ──────────────────────────────────
     server = TuneServer()
     try:
         await server.start()

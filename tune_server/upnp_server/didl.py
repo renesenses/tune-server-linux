@@ -122,11 +122,12 @@ def container_to_didl(
     title: str,
     parent_id: str = "0",
     child_count: int = 0,
+    upnp_class: str = "object.container.storageFolder",
 ) -> str:
     return (
         f'<container id="{escape(object_id)}" parentID="{escape(parent_id)}" '
         f'childCount="{child_count}" restricted="true">'
         f"<dc:title>{escape(title)}</dc:title>"
-        f"<upnp:class>object.container.storageFolder</upnp:class>"
+        f"<upnp:class>{escape(upnp_class)}</upnp:class>"
         f"</container>"
     )

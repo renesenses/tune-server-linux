@@ -402,10 +402,11 @@ class SsdpDiscovery:
                             if is_openhome:
                                 capabilities["openhome"] = True
 
+                            device_type = OutputType.OPENHOME if (is_openhome and not is_media_renderer) else OutputType.DLNA
                             disc_device = DiscoveredDevice(
                                 id=dev_id,
                                 name=name,
-                                type=OutputType.DLNA,
+                                type=device_type,
                                 host=parsed.hostname or "",
                                 port=parsed.port or 0,
                                 available=True,
@@ -471,10 +472,11 @@ class SsdpDiscovery:
                             }
                             if is_openhome:
                                 fallback_caps["openhome"] = True
+                            fallback_type = OutputType.OPENHOME if (is_openhome and not is_media_renderer) else OutputType.DLNA
                             fallback_device = DiscoveredDevice(
                                 id=fallback_id,
                                 name=fallback_name,
-                                type=OutputType.DLNA,
+                                type=fallback_type,
                                 host=parsed_loc.hostname or "",
                                 port=parsed_loc.port or 0,
                                 available=True,
@@ -731,10 +733,11 @@ class SsdpDiscovery:
                 if is_openhome:
                     capabilities["openhome"] = True
 
+                rescan_type = OutputType.OPENHOME if (is_openhome and not is_media_renderer) else OutputType.DLNA
                 disc_device = DiscoveredDevice(
                     id=dev_id,
                     name=name,
-                    type=OutputType.DLNA,
+                    type=rescan_type,
                     host=parsed.hostname or "",
                     port=parsed.port or 0,
                     available=True,
@@ -783,10 +786,11 @@ class SsdpDiscovery:
                 }
                 if is_openhome:
                     fallback_caps["openhome"] = True
+                rescan_fallback_type = OutputType.OPENHOME if (is_openhome and not is_media_renderer) else OutputType.DLNA
                 fallback_device = DiscoveredDevice(
                     id=fallback_id,
                     name=fallback_name,
-                    type=OutputType.DLNA,
+                    type=rescan_fallback_type,
                     host=parsed_loc.hostname or "",
                     port=parsed_loc.port or 0,
                     available=True,

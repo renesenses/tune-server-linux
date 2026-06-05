@@ -448,7 +448,7 @@ class MetadataEnricher:
 
                 # Enrich artist images: community cache first, then Discogs
                 from tune_server.config import settings as _s
-                all_artists = await self._artist_repo.list(limit=200)
+                all_artists = await self._artist_repo.list(limit=10000)
                 # Only target artists without image or with a lower-priority source
                 no_image = [a for a in all_artists
                             if (not a.image_path and a.image_source != "user")
@@ -494,7 +494,7 @@ class MetadataEnricher:
                                 asyncio.create_task(_share_image_to_community(
                                     artist.musicbrainz_id, artist.name, img_path, "discogs"
                                 ))
-                        await asyncio.sleep(1.5)
+                        await asyncio.sleep(1.0)
                 if enriched_count:
                     logger.info("artist_images_enriched", count=enriched_count)
 
