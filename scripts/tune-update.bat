@@ -32,8 +32,8 @@ if not exist "tune-server.exe" (
 )
 
 echo [0/6] Looking up latest release...
-for /f "tokens=*" %%t in ('powershell -NoProfile -Command "try { (Invoke-RestMethod -Uri 'https://api.github.com/repos/renesenses/tune-server-linux/releases/latest' -UseBasicParsing).tag_name.TrimStart('v') } catch { Write-Output '0.8.44' }"') do set "VERSION=%%t"
-if "%VERSION%"=="" set "VERSION=0.8.44"
+for /f "tokens=*" %%t in ('powershell -NoProfile -Command "try { (Invoke-RestMethod -Uri 'https://api.github.com/repos/renesenses/tune-server-linux/releases/latest' -UseBasicParsing).tag_name.TrimStart('v') } catch { Write-Output '0.8.45' }"') do set "VERSION=%%t"
+if "%VERSION%"=="" set "VERSION=0.8.45"
 set "URL=https://github.com/renesenses/tune-server-linux/releases/download/v%VERSION%/tune-server-%VERSION%-windows.zip"
 
 echo.
