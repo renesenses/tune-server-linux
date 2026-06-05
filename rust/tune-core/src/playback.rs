@@ -76,6 +76,12 @@ pub struct PlaybackManager {
     event_tx: broadcast::Sender<PlaybackEvent>,
 }
 
+impl Default for PlaybackManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlaybackManager {
     pub fn new() -> Self {
         let (event_tx, _) = broadcast::channel(256);
@@ -118,6 +124,11 @@ impl PlaybackManager {
             data: serde_json::json!({
                 "title": np.title,
                 "artist_name": np.artist_name,
+                "album_title": np.album_title,
+                "cover_path": np.cover_path,
+                "duration_ms": np.duration_ms,
+                "source": np.source,
+                "source_id": np.source_id,
             }),
         });
     }

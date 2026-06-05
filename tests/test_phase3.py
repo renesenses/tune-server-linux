@@ -854,6 +854,10 @@ async def _make_test_client(with_deps=None):
         # Minimal deps for config endpoint
         deps.scanner = MagicMock()
         deps.scanner.is_scanning = False
+        deps.db = AsyncMock()
+        deps.db.fetchone = AsyncMock(return_value=None)
+        deps.db.execute = AsyncMock()
+        deps.db.commit = AsyncMock()
 
     app = wrap_for_serving(create_api_app())
 

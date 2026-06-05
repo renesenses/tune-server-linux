@@ -6,6 +6,8 @@ use tracing::info;
 use super::traits::*;
 
 const API_BASE: &str = "https://www.qobuz.com/api.json/0.2";
+const API_PROXY: &str = "https://mozaiklabs.fr/qobuz-api";
+const REMOTE_CONFIG_URL: &str = "https://mozaiklabs.fr/storage/api/v1/streaming-config.json";
 
 pub struct QobuzService {
     client: Client,
@@ -14,6 +16,9 @@ pub struct QobuzService {
     user_auth_token: Option<String>,
     username: Option<String>,
     subscription: Option<String>,
+    use_proxy: bool,
+    stored_username: Option<String>,
+    stored_password: Option<String>,
 }
 
 impl QobuzService {
@@ -21,6 +26,7 @@ impl QobuzService {
         Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
+                .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
                 .build()
                 .unwrap(),
             app_id,
@@ -28,15 +34,41 @@ impl QobuzService {
             user_auth_token: None,
             username: None,
             subscription: None,
+            use_proxy: true,
+            stored_username: None,
+            stored_password: None,
+        }
+    }
+
+    fn api_base(&self) -> &str {
+        if self.use_proxy { API_PROXY } else { API_BASE }
+    }
+
+    async fn refresh_credentials(&mut self) {
+        match self.client.get(REMOTE_CONFIG_URL).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    let qobuz = &data["qobuz"];
+                    if let (Some(id), Some(secret)) = (qobuz["app_id"].as_str(), qobuz["app_secret"].as_str()) {
+                        info!(old_id = %&self.app_id, new_id = %id, "qobuz_credentials_refreshed");
+                        self.app_id = id.to_string();
+                        self.app_secret = secret.to_string();
+                    }
+                }
+            }
+            _ => info!("qobuz_remote_config_unavailable"),
         }
     }
 
     async fn api_get(&self, path: &str, params: &[(&str, &str)]) -> Result<serde_json::Value, String> {
-        let url = format!("{API_BASE}{path}");
+        let base = self.api_base();
+        let url = format!("{base}{path}");
+        let app_id = self.app_id.as_str();
         let mut query: Vec<(&str, &str)> = params.to_vec();
-        query.push(("app_id", &self.app_id));
+        query.push(("app_id", app_id));
 
-        let mut req = self.client.get(&url).query(&query);
+        let mut req = self.client.get(&url).query(&query)
+            .header("X-App-Id", app_id);
 
         if let Some(ref token) = self.user_auth_token {
             req = req.header("X-User-Auth-Token", token.as_str());
@@ -44,7 +76,10 @@ impl QobuzService {
 
         let resp = req.send().await.map_err(|e| format!("qobuz api: {e}"))?;
         if !resp.status().is_success() {
-            return Err(format!("qobuz {}: {}", path, resp.status()));
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            info!(path, status, body = %body, "qobuz_api_error");
+            return Err(format!("qobuz {path}: {status} {body}"));
         }
 
         resp.json().await.map_err(|e| format!("qobuz json: {e}"))
@@ -62,7 +97,7 @@ impl QobuzService {
             album_id: album["id"].as_str().map(Into::into)
                 .or_else(|| album["id"].as_u64().map(|id| id.to_string())),
             duration_ms: item["duration"].as_u64().unwrap_or(0) * 1000,
-            cover_url: album["image"]["large"].as_str().map(Into::into),
+            cover_path: album["image"]["large"].as_str().map(Into::into),
             track_number: item["track_number"].as_u64().map(|n| n as u32),
             disc_number: item["media_number"].as_u64().map(|n| n as u32),
             explicit: item["parental_warning"].as_bool().unwrap_or(false),
@@ -83,14 +118,90 @@ impl QobuzService {
             title: item["title"].as_str().unwrap_or("").into(),
             artist: item["artist"]["name"].as_str().unwrap_or("").into(),
             artist_id: item["artist"]["id"].as_u64().map(|id| id.to_string()),
-            cover_url: item["image"]["large"].as_str().map(Into::into),
+            cover_path: item["image"]["large"].as_str().map(Into::into),
             year: item["released_at"].as_u64().map(|ts| {
-                let secs = ts;
-                let year = 1970 + (secs / 31_536_000) as u32;
-                year
+                1970 + (ts / 31_536_000) as u32
             }).or_else(|| item["release_date_original"].as_str().and_then(|d| d.get(..4)?.parse().ok())),
             track_count: item["tracks_count"].as_u64().unwrap_or(0) as u32,
             quality: None,
+        }
+    }
+
+    async fn login_internal(&mut self, username: &str, password: &str) -> Result<AuthStatus, String> {
+        self.refresh_credentials().await;
+
+        let base = self.api_base();
+        let resp = self.client
+            .post(format!("{base}/user/login"))
+            .query(&[("app_id", self.app_id.as_str())])
+            .form(&[("username", username), ("password", password)])
+            .send()
+            .await
+            .map_err(|e| format!("qobuz login: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            info!(status, body = %body, "qobuz_login_failed");
+            return Err(format!("qobuz login {status}: {body}"));
+        }
+
+        let data: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
+        self.user_auth_token = data["user_auth_token"].as_str().map(Into::into);
+        self.username = data["user"]["display_name"].as_str().map(Into::into);
+        self.subscription = data["user"]["credential"]["label"].as_str().map(Into::into);
+
+        info!(username = ?self.username, "qobuz_authenticated");
+        Ok(self.auth_status_internal())
+    }
+
+    fn auth_status_internal(&self) -> AuthStatus {
+        AuthStatus {
+            authenticated: self.user_auth_token.is_some(),
+            username: self.username.clone(),
+            subscription: self.subscription.clone(),
+            ..Default::default()
+        }
+    }
+
+    async fn auto_relogin(&mut self) -> bool {
+        if let (Some(u), Some(p)) = (self.stored_username.clone(), self.stored_password.clone()) {
+            info!("qobuz_auto_relogin");
+            self.login_internal(&u, &p).await.is_ok()
+        } else {
+            false
+        }
+    }
+
+    async fn api_post(&self, path: &str, params: &[(&str, &str)]) -> Result<serde_json::Value, String> {
+        let base = self.api_base();
+        let url = format!("{base}{path}");
+        let app_id = self.app_id.as_str();
+        let mut query: Vec<(&str, &str)> = params.to_vec();
+        query.push(("app_id", app_id));
+
+        let mut req = self.client.post(&url).query(&query)
+            .header("X-App-Id", app_id);
+
+        if let Some(ref token) = self.user_auth_token {
+            req = req.header("X-User-Auth-Token", token.as_str());
+        }
+
+        let resp = req.send().await.map_err(|e| format!("qobuz post: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("qobuz {path}: {status} {body}"));
+        }
+        resp.json().await.or_else(|_| Ok(serde_json::json!({"ok": true})))
+    }
+
+    fn map_genre(item: &serde_json::Value) -> StreamGenre {
+        StreamGenre {
+            id: item["id"].as_u64().unwrap_or(0).to_string(),
+            name: item["name"].as_str().unwrap_or("").into(),
+            has_children: item["subgenres"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+            image_url: item["image"].as_str().map(Into::into),
         }
     }
 
@@ -98,7 +209,7 @@ impl QobuzService {
         StreamArtist {
             id: item["id"].as_u64().unwrap_or(0).to_string(),
             name: item["name"].as_str().unwrap_or("").into(),
-            image_url: item["image"]["large"].as_str().map(Into::into),
+            image_path: item["image"]["large"].as_str().map(Into::into),
         }
     }
 }
@@ -117,34 +228,14 @@ impl StreamingService for QobuzService {
         let username = credentials["username"].as_str().ok_or("username required")?;
         let password = credentials["password"].as_str().ok_or("password required")?;
 
-        let resp = self.client
-            .post(&format!("{API_BASE}/user/login"))
-            .query(&[("app_id", self.app_id.as_str())])
-            .form(&[("username", username), ("password", password)])
-            .send()
-            .await
-            .map_err(|e| format!("qobuz login: {e}"))?;
+        self.stored_username = Some(username.to_string());
+        self.stored_password = Some(password.to_string());
 
-        if !resp.status().is_success() {
-            return Err("invalid credentials".into());
-        }
-
-        let data: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
-        self.user_auth_token = data["user_auth_token"].as_str().map(Into::into);
-        self.username = data["user"]["display_name"].as_str().map(Into::into);
-        self.subscription = data["user"]["credential"]["label"].as_str().map(Into::into);
-
-        info!(username = ?self.username, "qobuz_authenticated");
-        Ok(self.auth_status().await)
+        self.login_internal(username, password).await
     }
 
     async fn auth_status(&self) -> AuthStatus {
-        AuthStatus {
-            authenticated: self.user_auth_token.is_some(),
-            username: self.username.clone(),
-            subscription: self.subscription.clone(),
-            expires_at: None,
-        }
+        self.auth_status_internal()
     }
 
     async fn logout(&mut self) -> Result<(), String> {
@@ -184,19 +275,21 @@ impl StreamingService for QobuzService {
             _ => "27",
         };
 
-        let timestamp = std::time::SystemTime::now()
+        let dur = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+            .unwrap();
+        let timestamp = format!("{}.{}", dur.as_secs(), dur.subsec_millis());
 
         let sig_input = format!("trackgetFileUrlformat_id{format_id}intentstreamtrack_id{track_id}{timestamp}{}", self.app_secret);
         let sig = md5_hex(&sig_input);
+
+        info!(track_id, format_id, timestamp = %timestamp, sig = %sig, "qobuz_get_file_url");
 
         let data = self.api_get("/track/getFileUrl", &[
             ("track_id", track_id),
             ("format_id", format_id),
             ("intent", "stream"),
-            ("request_ts", &timestamp.to_string()),
+            ("request_ts", &timestamp),
             ("request_sig", &sig),
         ]).await?;
 
@@ -242,7 +335,7 @@ impl StreamingService for QobuzService {
             id: data["id"].as_u64().unwrap_or(0).to_string(),
             name: data["name"].as_str().unwrap_or("").into(),
             description: data["description"].as_str().map(Into::into),
-            cover_url: data["image_rectangle_mini"].as_array()
+            cover_path: data["image_rectangle_mini"].as_array()
                 .and_then(|a| a.first())
                 .and_then(|v| v.as_str())
                 .map(Into::into),
@@ -263,6 +356,79 @@ impl StreamingService for QobuzService {
         Ok(tracks)
     }
 
+    async fn get_genres(&self) -> Result<Vec<StreamGenre>, String> {
+        let data = self.api_get("/genre/list", &[]).await?;
+        let genres = data["genres"]["items"].as_array()
+            .or_else(|| data["genres"].as_array())
+            .or_else(|| data.as_array())
+            .map(|items| items.iter().map(Self::map_genre).collect())
+            .unwrap_or_default();
+        Ok(genres)
+    }
+
+    async fn get_genre_albums(&self, genre_id: &str, limit: usize) -> Result<Vec<StreamAlbum>, String> {
+        let limit_str = limit.to_string();
+        let data = self.api_get("/genre/get", &[
+            ("genre_id", genre_id),
+            ("type", "albums"),
+            ("limit", &limit_str),
+        ]).await?;
+        let albums = data["albums"]["items"].as_array()
+            .map(|items| items.iter().map(Self::map_album).collect())
+            .unwrap_or_default();
+        Ok(albums)
+    }
+
+    async fn get_featured_sections(&self) -> Result<Vec<FeaturedSection>, String> {
+        Ok(vec![
+            FeaturedSection { id: "new-releases".into(), name: "New Releases".into() },
+            FeaturedSection { id: "best-sellers".into(), name: "Best Sellers".into() },
+            FeaturedSection { id: "press-awards".into(), name: "Press Awards".into() },
+            FeaturedSection { id: "editor-picks".into(), name: "Editor Picks".into() },
+        ])
+    }
+
+    async fn get_featured_section(&self, section_id: &str) -> Result<Vec<StreamAlbum>, String> {
+        let data = self.api_get("/album/getFeatured", &[
+            ("type", section_id),
+            ("limit", "50"),
+        ]).await?;
+        let albums = data["albums"]["items"].as_array()
+            .map(|items| items.iter().map(Self::map_album).collect())
+            .unwrap_or_default();
+        Ok(albums)
+    }
+
+    async fn get_user_tracks(&self) -> Result<Vec<StreamTrack>, String> {
+        let data = self.api_get("/favorite/getUserFavorites", &[("type", "tracks"), ("limit", "500")]).await?;
+        let tracks = data["tracks"]["items"].as_array()
+            .map(|items| items.iter().map(Self::map_track).collect())
+            .unwrap_or_default();
+        Ok(tracks)
+    }
+
+    async fn add_favorite(&mut self, fav_type: &str, item_id: &str) -> Result<(), String> {
+        let key = match fav_type {
+            "tracks" => "track_ids",
+            "albums" => "album_ids",
+            "artists" => "artist_ids",
+            _ => return Err(format!("unknown favorite type: {fav_type}")),
+        };
+        self.api_post("/favorite/create", &[(key, item_id)]).await?;
+        Ok(())
+    }
+
+    async fn remove_favorite(&mut self, fav_type: &str, item_id: &str) -> Result<(), String> {
+        let key = match fav_type {
+            "tracks" => "track_ids",
+            "albums" => "album_ids",
+            "artists" => "artist_ids",
+            _ => return Err(format!("unknown favorite type: {fav_type}")),
+        };
+        self.api_post("/favorite/delete", &[(key, item_id)]).await?;
+        Ok(())
+    }
+
     async fn get_user_playlists(&self) -> Result<Vec<StreamPlaylist>, String> {
         let data = self.api_get("/playlist/getUserPlaylists", &[("limit", "500")]).await?;
         let playlists = data["playlists"]["items"].as_array()
@@ -270,12 +436,37 @@ impl StreamingService for QobuzService {
                 id: item["id"].as_u64().unwrap_or(0).to_string(),
                 name: item["name"].as_str().unwrap_or("").into(),
                 description: item["description"].as_str().map(Into::into),
-                cover_url: None,
+                cover_path: None,
                 track_count: item["tracks_count"].as_u64().unwrap_or(0) as u32,
                 owner: None,
             }).collect())
             .unwrap_or_default();
         Ok(playlists)
+    }
+
+    async fn get_artist_albums(&self, artist_id: &str) -> Result<Vec<StreamAlbum>, String> {
+        let data = self.api_get("/artist/get", &[
+            ("artist_id", artist_id),
+            ("extra", "albums"),
+            ("limit", "50"),
+        ]).await?;
+        let albums = data["albums"]["items"].as_array()
+            .map(|items| items.iter().map(Self::map_album).collect())
+            .unwrap_or_default();
+        Ok(albums)
+    }
+
+    async fn get_artist_top_tracks(&self, artist_id: &str) -> Result<Vec<StreamTrack>, String> {
+        let data = self.api_get("/artist/get", &[
+            ("artist_id", artist_id),
+            ("extra", "tracks_appears_on"),
+            ("limit", "20"),
+        ]).await?;
+        let tracks = data["tracks_appears_on"]["items"].as_array()
+            .or_else(|| data["tracks"]["items"].as_array())
+            .map(|items| items.iter().map(Self::map_track).collect())
+            .unwrap_or_default();
+        Ok(tracks)
     }
 
     async fn get_user_albums(&self) -> Result<Vec<StreamAlbum>, String> {
@@ -294,12 +485,32 @@ impl StreamingService for QobuzService {
         Ok(artists)
     }
 
+    async fn refresh_if_needed(&mut self) -> Result<bool, String> {
+        if self.user_auth_token.is_none() {
+            return Ok(false);
+        }
+        let test = self.api_get("/user/get", &[]).await;
+        if let Err(ref e) = test {
+            if e.contains("401") || e.contains("403") {
+                if self.auto_relogin().await {
+                    info!("qobuz_token_refreshed_via_relogin");
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     fn save_tokens(&self) -> Option<serde_json::Value> {
         let token = self.user_auth_token.as_ref()?;
         Some(serde_json::json!({
             "user_auth_token": token,
             "username": self.username,
             "subscription": self.subscription,
+            "app_id": self.app_id,
+            "app_secret": self.app_secret,
+            "stored_username": self.stored_username,
+            "stored_password": self.stored_password,
         }))
     }
 
@@ -308,6 +519,14 @@ impl StreamingService for QobuzService {
             self.user_auth_token = Some(t.into());
             self.username = tokens["username"].as_str().map(Into::into);
             self.subscription = tokens["subscription"].as_str().map(Into::into);
+            if let Some(id) = tokens["app_id"].as_str() {
+                self.app_id = id.into();
+            }
+            if let Some(secret) = tokens["app_secret"].as_str() {
+                self.app_secret = secret.into();
+            }
+            self.stored_username = tokens["stored_username"].as_str().map(Into::into);
+            self.stored_password = tokens["stored_password"].as_str().map(Into::into);
             true
         } else {
             false

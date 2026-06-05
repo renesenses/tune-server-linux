@@ -88,7 +88,7 @@ impl RustAudioStreamer {
         py.detach(|| {
             let inner = self.inner.blocking_lock();
             inner.runtime.block_on(
-                inner.streamer.create_proxy_session(info, url, is_radio),
+                inner.streamer.create_proxy_session(info, url, is_radio, None),
             )
         }).pipe(Ok)
     }

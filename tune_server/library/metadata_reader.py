@@ -72,6 +72,11 @@ def _clean_text(value: str) -> str:
     return value.replace("\x00", "").strip() if value else value
 
 
+_TAG_KEY_NAMES = frozenset({
+    "discsubtitle", "setsubtitle", "tsst", "releasedate", "originaldate",
+    "catalognumber", "catalogno", "musicbrainz_trackid",
+})
+
 def _get_first(tags: dict, keys: list[str], default: str = "") -> str:
     for key in keys:
         try:
@@ -80,9 +85,10 @@ def _get_first(tags: dict, keys: list[str], default: str = "") -> str:
             # Broken vorbis tags raise ValueError on .get()
             continue
         if val:
-            if isinstance(val, list):
-                return _clean_text(str(val[0]))
-            return _clean_text(str(val))
+            text = _clean_text(str(val[0]) if isinstance(val, list) else str(val))
+            if text.lower() in _TAG_KEY_NAMES:
+                continue
+            return text
     return default
 
 

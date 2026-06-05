@@ -31,8 +31,28 @@ class CastDiscovery:
     def get_cast_device(self, device_id: str):
         return self._cast_devices.get(device_id)
 
+    def resolve_device_id(self, device_id: str) -> str | None:
+        """Resolve a device_id to a UUID key in self._devices.
+
+        Handles the case where the Rust mDNS backend discovers Chromecast
+        devices with id format ``chromecast-{host}-{port}`` while this
+        module stores them by UUID.
+        """
+        if device_id in self._devices:
+            return device_id
+        for did, dev in self._devices.items():
+            if dev.host and device_id.endswith(f"-{dev.host}-{dev.port}"):
+                return did
+            if dev.host and dev.host in device_id:
+                return did
+        return None
+
     async def reconnect_cast_device(self, device_id: str):
         """Create a fresh pychromecast connection, replacing any stale one."""
+        resolved = self.resolve_device_id(device_id)
+        if not resolved:
+            return None
+        device_id = resolved
         device = self._devices.get(device_id)
         if not device or not self._pychromecast:
             return None

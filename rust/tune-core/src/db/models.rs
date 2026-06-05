@@ -68,15 +68,13 @@ impl Album {
         let sr = self.sample_rate.unwrap_or(0);
         let bd = self.bit_depth.unwrap_or(0);
         if fmt.contains("dsf") || fmt.contains("dff") || fmt.contains("dsd") {
-            Some("DSD".into())
-        } else if sr > 44100 || bd > 16 {
-            Some("Hi-Res".into())
-        } else if fmt == "flac" || fmt == "alac" || fmt == "wav" || fmt == "aiff" || fmt == "wv" {
-            Some("CD".into())
-        } else if fmt == "mp3" || fmt == "ogg" || fmt == "opus" || fmt == "wma" || fmt == "m4a" {
-            Some("Lossy".into())
+            Some("dsd".into())
+        } else if sr > 48000 || bd > 16 {
+            Some("hi-res".into())
+        } else if fmt == "mp3" || fmt == "ogg" || fmt == "opus" || fmt == "wma" || fmt == "aac" {
+            Some("lossy".into())
         } else if !fmt.is_empty() {
-            Some("CD".into())
+            Some("cd".into())
         } else {
             None
         }
@@ -119,6 +117,7 @@ pub struct Track {
     pub album_title: Option<String>,
     pub artist_id: Option<i64>,
     pub artist_name: Option<String>,
+    pub album_artist: Option<String>,
     pub disc_number: i32,
     pub disc_subtitle: Option<String>,
     pub track_number: i32,
@@ -140,6 +139,7 @@ pub struct Track {
     pub bpm: Option<f64>,
     pub label: Option<String>,
     pub musicbrainz_recording_id: Option<String>,
+    pub cover_path: Option<String>,
 }
 
 impl Track {
@@ -151,6 +151,7 @@ impl Track {
             album_title: None,
             artist_id: None,
             artist_name: None,
+            album_artist: None,
             disc_number: 1,
             disc_subtitle: None,
             track_number: 0,
@@ -172,6 +173,7 @@ impl Track {
             bpm: None,
             label: None,
             musicbrainz_recording_id: None,
+            cover_path: None,
         }
     }
 }

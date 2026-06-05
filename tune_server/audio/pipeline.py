@@ -8,7 +8,14 @@ import structlog
 
 from tune_server.audio.buffer import AsyncRingBuffer
 from tune_server.audio.decoder import FFmpegDecoder, IcyMetadataCallback
-from tune_server.audio.formats import AudioCapabilities, build_downmix_filter, can_passthrough
+from tune_server.audio.formats import (
+    AudioCapabilities,
+    build_downmix_filter,
+    can_passthrough,
+    dlna_transcode_target,
+    dsd_output_sample_rate,
+    needs_transcode_for_dlna,
+)
 from tune_server.models import AudioFormat, AudioStreamInfo
 
 logger = structlog.get_logger()
@@ -154,10 +161,14 @@ class AudioPipeline:
         else:
             # --- Compute output parameters ---
             is_dsd = source_format == AudioFormat.DSD
+            _needs_dlna_transcode = needs_transcode_for_dlna(source_format)
 
             if is_dsd:
-                # DSD: use 44.1kHz-family rate to avoid sample-rate conversion artefacts
-                out_rate = _best_dsd_rate(self._capabilities.max_sample_rate)
+                # DSD: compute appropriate 44.1kHz-family output rate
+                out_rate = min(
+                    dsd_output_sample_rate(sample_rate),
+                    self._capabilities.max_sample_rate,
+                )
                 out_depth = min(24, self._capabilities.max_bit_depth)
                 self._decisions.append(f"DSD→PCM: rate={out_rate}Hz (44.1kHz family), depth={out_depth}bit")
             else:
@@ -180,10 +191,27 @@ class AudioPipeline:
             if out_depth < 16:
                 out_depth = 16
 
-            # For URL sources, prefer FLAC over WAV if target supports it.
-            use_flac = _is_url and AudioFormat.FLAC in self._capabilities.formats
-            out_format = AudioFormat.FLAC if use_flac else AudioFormat.WAV
-            self._decisions.append(f"TRANSCODE: {source_format}→{out_format} {out_rate}Hz/{out_depth}bit (flac_encode={use_flac})")
+            # Determine output container format:
+            # 1. AIFF/DSD/WavPack/APE -> use dlna_transcode_target (AIFF->FLAC, DSD/WV/APE->WAV)
+            # 2. URL sources -> prefer FLAC if supported
+            # 3. Other cases -> WAV (raw PCM for local output)
+            if _needs_dlna_transcode:
+                out_format = dlna_transcode_target(source_format)
+            elif _is_url and AudioFormat.FLAC in self._capabilities.formats:
+                out_format = AudioFormat.FLAC
+            else:
+                out_format = AudioFormat.WAV
+
+            # Tell the decoder which container to encode to.
+            # - FLAC: decoder produces a complete FLAC stream (used for AIFF->FLAC, URL->FLAC)
+            # - WAV:  decoder outputs raw PCM; the HTTP streamer prepends a WAV header
+            #         (avoids double RIFF header if decoder also emitted one)
+            # - None: raw PCM output (local soundcard, or WAV with streamer header)
+            if out_format == AudioFormat.FLAC and (_needs_dlna_transcode or _is_url):
+                encode_output = AudioFormat.FLAC
+            else:
+                encode_output = None  # raw PCM; streamer adds WAV header when format==WAV
+            self._decisions.append(f"TRANSCODE: {source_format}→{out_format} {out_rate}Hz/{out_depth}bit (encode={encode_output is not None})")
 
             logger.info(
                 "pipeline_decode",
@@ -206,13 +234,13 @@ class AudioPipeline:
             if downmix_filter:
                 effective_channel_filter = f"{downmix_filter},{self._channel_filter}" if self._channel_filter else downmix_filter
 
-            # Decoder: source file → PCM or encoded format
+            # Decoder: source file → encoded format (FLAC/WAV container) or raw PCM
             self._decoder = FFmpegDecoder(
                 file_path=file_path,
                 sample_rate=out_rate,
                 bit_depth=out_depth,
                 channels=out_channels,
-                output_format=out_format if use_flac else None,
+                output_format=encode_output,
                 icy_callback=self._icy_callback if _is_url else None,
                 channel_filter=effective_channel_filter,
                 extra_filters=extra_filters,
@@ -437,10 +465,12 @@ def create_pipeline(
 ) -> AudioPipeline:
     """Factory: returns RustAudioPipeline if available, else Python."""
     import os
+    import sys
     engine = os.environ.get("TUNE_PIPELINE_ENGINE", "auto")
     use_rust = (
         _RUST_PIPELINE_AVAILABLE
         and engine != "python"
+        and sys.platform != "win32"
         and icy_callback is None  # Rust doesn't support ICY yet
         and channel_filter is None  # Rust doesn't support channel filter yet
     )

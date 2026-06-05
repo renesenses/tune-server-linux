@@ -99,16 +99,16 @@ class BluosOutput(OutputTarget):
         """Build a cover art URL reachable from the BluOS player."""
         if not track or not track.cover_path:
             return None
+        from tune_server.config import settings
+        port = settings.api_port
         cover = track.cover_path
         if cover.startswith("http"):
-            # Proxy through the Tune API so the player always gets a
-            # reachable HTTP URL (CDN tokens may expire or require HTTPS).
             from urllib.parse import quote
-            return f"http://{self._server_ip}:8888/api/v1/library/artwork/proxy?url={quote(cover, safe='')}"
+            return f"http://{self._server_ip}:{port}/api/v1/library/artwork/proxy?url={quote(cover, safe='')}"
         if cover.startswith("/"):
-            return f"http://{self._server_ip}:8888{cover}"
+            return f"http://{self._server_ip}:{port}{cover}"
         filename = cover.split("/")[-1]
-        return f"http://{self._server_ip}:8888/api/v1/library/artwork/{filename}"
+        return f"http://{self._server_ip}:{port}/api/v1/library/artwork/{filename}"
 
     async def start(self, stream_info: AudioStreamInfo, track: Optional[Track] = None) -> None:
         if self._stream_id:
