@@ -89,6 +89,14 @@ class ContentDirectoryHandler:
         if count == 0:
             count = 200
 
+        logger.debug(
+            "upnp_browse",
+            object_id=object_id,
+            flag=browse_flag,
+            start=start,
+            count=count,
+        )
+
         if browse_flag == "BrowseMetadata":
             return await self._browse_metadata(object_id)
         return await self._browse_children(object_id, start, count)
@@ -130,6 +138,10 @@ class ContentDirectoryHandler:
             if not artist:
                 return self._soap_ok("Browse", self._browse_result("", 0, 0))
             xml = artist_to_didl(artist)
+        elif object_id.startswith("genre/"):
+            genre_name = object_id[6:]
+            albums = await self._albums.list_by_genre(genre_name)
+            xml = container_to_didl(object_id, genre_name, "genres", len(albums))
         elif object_id.startswith("track/"):
             track_id = int(object_id.split("/")[1])
             track = await self._tracks.get(track_id)
@@ -185,12 +197,10 @@ class ContentDirectoryHandler:
         elif object_id.startswith("artists/@"):
             letter = object_id[9:]  # "artists/@A" -> "A"
             artists = await self._artists.list_by_letter(letter, limit=count, offset=start)
-            total = len(artists)
-            for a in artists[start:]:
+            total = len(artists)  # approximate; could add count_by_letter to ArtistRepo
+            for a in artists:
                 items_xml += artist_to_didl(a, parent_id=object_id)
                 returned += 1
-                if returned >= count:
-                    break
 
         elif object_id == "tracks":
             # Alphabetical index
@@ -228,7 +238,12 @@ class ContentDirectoryHandler:
             genres = await self._albums.list_genres()
             total = len(genres)
             for g in genres[start:start + count]:
-                items_xml += container_to_didl(f"genre/{g}", g, "genres")
+                genre_name = g["genre"]
+                genre_count = g.get("count", 0)
+                items_xml += container_to_didl(
+                    f"genre/{genre_name}", genre_name, "genres", genre_count,
+                    upnp_class="object.container.genre.musicGenre",
+                )
                 returned += 1
 
         elif object_id.startswith("genre/"):

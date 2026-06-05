@@ -185,58 +185,6 @@ impl AlbumRepo {
         Ok(albums)
     }
 
-    pub fn list_sorted(
-        &self, limit: i64, offset: i64,
-        sort: &str, order: &str,
-        quality: Option<&str>, format: Option<&str>,
-    ) -> Result<Vec<Album>, String> {
-        let sort_col = match sort {
-            "artist" => "ar.name COLLATE NOCASE",
-            "year" | "release_date" => "a.year",
-            "added_date" => "a.id",
-            "original_year" => "a.original_year",
-            _ => "a.title COLLATE NOCASE",
-        };
-        let dir = if order == "desc" { "DESC" } else { "ASC" };
-
-        let mut conditions = Vec::new();
-        let mut bind_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-        if let Some(q) = quality {
-            match q {
-                "hi-res" => conditions.push("a.sample_rate > 44100".to_string()),
-                "cd" => conditions.push("(a.sample_rate IS NULL OR a.sample_rate <= 44100) AND (a.format IS NULL OR a.format NOT IN ('mp3','aac','ogg','opus'))".to_string()),
-                "dsd" => conditions.push("a.format = 'dsd'".to_string()),
-                "lossy" => conditions.push("a.format IN ('mp3','aac','ogg','opus')".to_string()),
-                _ => {}
-            }
-        }
-        if let Some(fmt) = format {
-            conditions.push("a.format = ?".to_string());
-            bind_values.push(Box::new(fmt.to_string()));
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let sql = format!("{SELECT_ALBUM}{where_clause} ORDER BY {sort_col} {dir} LIMIT ? OFFSET ?");
-        bind_values.push(Box::new(limit));
-        bind_values.push(Box::new(offset));
-
-        let conn = self.db.connection().lock().unwrap();
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let refs: Vec<&dyn rusqlite::types::ToSql> = bind_values.iter().map(|v| v.as_ref()).collect();
-        let albums = stmt
-            .query_map(refs.as_slice(), |row| Ok(row_to_album(row)))
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-        Ok(albums)
-    }
-
     pub fn list_by_artist(&self, artist_id: i64) -> Result<Vec<Album>, String> {
         let conn = self.db.connection().lock().unwrap();
         let mut stmt = conn
@@ -248,6 +196,47 @@ impl AlbumRepo {
             .filter_map(|r| r.ok())
             .collect();
         Ok(albums)
+    }
+
+    pub fn list_by_genre(&self, genre: &str) -> Result<Vec<Album>, String> {
+        let conn = self.db.connection().lock().unwrap();
+        let mut stmt = conn
+            .prepare(&format!("{SELECT_ALBUM} WHERE a.genre = ? ORDER BY a.title COLLATE NOCASE"))
+            .map_err(|e| e.to_string())?;
+        let albums = stmt
+            .query_map(params![genre], |row| Ok(row_to_album(row)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(albums)
+    }
+
+    /// Return all local albums that have no cover art set.
+    /// Each entry is (album_id, title, artist_name, musicbrainz_release_id).
+    pub fn list_without_cover(&self) -> Result<Vec<(i64, String, Option<String>, Option<String>)>, String> {
+        let conn = self.db.connection().lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.id, a.title, ar.name, a.musicbrainz_release_id \
+                 FROM albums a LEFT JOIN artists ar ON a.artist_id = ar.id \
+                 WHERE (a.cover_path IS NULL OR a.cover_path = '') \
+                 AND a.source = 'local' \
+                 ORDER BY a.id"
+            )
+            .map_err(|e| e.to_string())?;
+        let items = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(items)
     }
 
     pub fn search(&self, query: &str, limit: i64) -> Result<Vec<Album>, String> {
@@ -346,7 +335,7 @@ mod tests {
         let artist_repo = ArtistRepo::new(db.clone());
         let repo = AlbumRepo::new(db);
 
-        let aid = artist_repo.create(&Artist::new("Test".into())).unwrap();
+        let _aid = artist_repo.create(&Artist::new("Test".into())).unwrap();
         repo.create(&Album::new("Orphan Album".into())).unwrap();
         let deleted = repo.delete_orphans().unwrap();
         assert_eq!(deleted, 1);

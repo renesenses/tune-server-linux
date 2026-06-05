@@ -460,6 +460,20 @@ class LibraryScanner:
                     "various artists", "various", "compilation", "va",
                     "artistes divers", "divers",
                 ))
+
+            # For compilations, resolve the per-track artist separately.
+            # The album keeps the album artist (e.g. "Various Artists"),
+            # but each track's artist_id must point to its own performer
+            # (e.g. "Gregory Porter"), otherwise the JOIN in _track_select
+            # overwrites the denormalized artist_name with the album artist.
+            if is_compilation and metadata.artist and metadata.artist != artist_name:
+                track_artist = await self._artist_repo.get_or_create(
+                    metadata.artist,
+                    musicbrainz_id=metadata.musicbrainz_artist_id,
+                )
+            else:
+                track_artist = artist
+
             track_year = metadata.year or metadata.original_year
             if not album:
                 if is_compilation:
@@ -534,7 +548,7 @@ class LibraryScanner:
             track = Track(
                 title=metadata.title or Path(file_path).stem,
                 album_id=album.id,
-                artist_id=artist.id,
+                artist_id=track_artist.id,
                 artist_name=metadata.artist or artist_name,
                 album_title=base_title,
                 disc_number=metadata.disc_number,

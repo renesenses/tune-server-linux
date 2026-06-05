@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tune-plugin-example"
+version = "0.1.0"
+description = "Example Tune Server plugin — rename and customize"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "tune-server>=0.7.90",
+    "structlog>=23.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.entry-points."tune_server.plugins"]
+example = "my_tune_plugin:ExamplePlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/my_tune_plugin"]

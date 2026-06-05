@@ -2,13 +2,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamTrack {
+    #[serde(rename(serialize = "source_id"), alias = "source_id")]
     pub id: String,
     pub title: String,
+    #[serde(alias = "artist_name")]
     pub artist: String,
     pub album: Option<String>,
     pub album_id: Option<String>,
     pub duration_ms: u64,
-    pub cover_url: Option<String>,
+    pub cover_path: Option<String>,
     pub track_number: Option<u32>,
     pub disc_number: Option<u32>,
     pub explicit: bool,
@@ -17,11 +19,13 @@ pub struct StreamTrack {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamAlbum {
+    #[serde(rename(serialize = "source_id"), alias = "source_id")]
     pub id: String,
     pub title: String,
+    #[serde(alias = "artist_name")]
     pub artist: String,
     pub artist_id: Option<String>,
-    pub cover_url: Option<String>,
+    pub cover_path: Option<String>,
     pub year: Option<u32>,
     pub track_count: u32,
     pub quality: Option<StreamQuality>,
@@ -31,15 +35,16 @@ pub struct StreamAlbum {
 pub struct StreamArtist {
     pub id: String,
     pub name: String,
-    pub image_url: Option<String>,
+    pub image_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamPlaylist {
+    #[serde(rename(serialize = "source_id"), alias = "source_id")]
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub cover_url: Option<String>,
+    pub cover_path: Option<String>,
     pub track_count: u32,
     pub owner: Option<String>,
 }
@@ -69,11 +74,27 @@ pub struct SearchResults {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamGenre {
+    pub id: String,
+    pub name: String,
+    pub has_children: bool,
+    pub image_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeaturedSection {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AuthStatus {
     pub authenticated: bool,
     pub username: Option<String>,
     pub subscription: Option<String>,
     pub expires_at: Option<String>,
+    pub verification_url: Option<String>,
+    pub user_code: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -91,6 +112,14 @@ pub trait StreamingService: Send + Sync {
     async fn get_album(&self, album_id: &str) -> Result<StreamAlbum, String>;
     async fn get_album_tracks(&self, album_id: &str) -> Result<Vec<StreamTrack>, String>;
     async fn get_artist(&self, artist_id: &str) -> Result<StreamArtist, String>;
+    async fn get_artist_albums(&self, artist_id: &str) -> Result<Vec<StreamAlbum>, String> {
+        let _ = artist_id;
+        Ok(vec![])
+    }
+    async fn get_artist_top_tracks(&self, artist_id: &str) -> Result<Vec<StreamTrack>, String> {
+        let _ = artist_id;
+        Ok(vec![])
+    }
     async fn get_playlist(&self, playlist_id: &str) -> Result<StreamPlaylist, String>;
     async fn get_playlist_tracks(&self, playlist_id: &str) -> Result<Vec<StreamTrack>, String>;
 
@@ -105,12 +134,40 @@ pub trait StreamingService: Send + Sync {
         Ok(vec![])
     }
 
+    async fn get_genres(&self) -> Result<Vec<StreamGenre>, String> {
+        Ok(vec![])
+    }
+    async fn get_genre_albums(&self, genre_id: &str, limit: usize) -> Result<Vec<StreamAlbum>, String> {
+        let _ = (genre_id, limit);
+        Ok(vec![])
+    }
+    async fn get_featured_sections(&self) -> Result<Vec<FeaturedSection>, String> {
+        Ok(vec![])
+    }
+    async fn get_featured_section(&self, section_id: &str) -> Result<Vec<StreamAlbum>, String> {
+        let _ = section_id;
+        Ok(vec![])
+    }
+    async fn get_user_tracks(&self) -> Result<Vec<StreamTrack>, String> {
+        Ok(vec![])
+    }
+    async fn add_favorite(&mut self, fav_type: &str, item_id: &str) -> Result<(), String> {
+        let _ = (fav_type, item_id);
+        Err("not supported".into())
+    }
+    async fn remove_favorite(&mut self, fav_type: &str, item_id: &str) -> Result<(), String> {
+        let _ = (fav_type, item_id);
+        Err("not supported".into())
+    }
+
     fn save_tokens(&self) -> Option<serde_json::Value> {
         None
     }
     fn restore_tokens(&mut self, _tokens: &serde_json::Value) -> bool {
         false
     }
+
+    async fn post_restore(&mut self) {}
 
     async fn refresh_if_needed(&mut self) -> Result<bool, String> {
         Ok(false)

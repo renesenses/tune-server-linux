@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     scanner_engine: str = "auto"
     discovery_engine: str = "auto"
     metadata_engine: str = "auto"
+    # HTTP streamer engine: "auto" = Rust sidecar if available, "rust" = require, "python" = force aiohttp
+    streamer_engine: str = "auto"
 
     # Library
     music_dirs: list[str] = Field(default_factory=lambda: [str(Path.home() / "Music")])
@@ -132,7 +134,7 @@ class Settings(BaseSettings):
     surround_crossover_hz: int = 120  # Bass crossover frequency for LFE redirect
 
     # Chromecast
-    chromecast_preload_secs: int = 30  # seconds before track end to QUEUE_INSERT next track
+    chromecast_preload_secs: int = 20  # seconds before track end to QUEUE_INSERT next track
     chromecast_live_stream: bool = False  # experimental: concatenate tracks into a single live stream
 
     # Crossfade
