@@ -250,7 +250,7 @@ fn execute_smart_track_query(
                     "genre": row.get::<_, Option<String>>(6).ok().flatten(),
                     "year": row.get::<_, Option<i32>>(7).ok().flatten(),
                     "album_id": row.get::<_, Option<i64>>(8).ok().flatten(),
-                    "album_cover": row.get::<_, Option<String>>(9).ok().flatten(),
+                    "cover_path": row.get::<_, Option<String>>(9).ok().flatten(),
                 }))
             })
             .map(|rows| rows.filter_map(|r| r.ok()).collect())
@@ -315,7 +315,7 @@ async fn smart_collection_albums(
                     "album_id": album_id,
                     "album_title": track.get("album_title"),
                     "artist_name": track.get("artist_name"),
-                    "album_cover": track.get("album_cover"),
+                    "cover_path": track.get("cover_path"),
                     "year": track.get("year"),
                 }));
             }
