@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["with_critical_section","with_critical_section2"],"mod":["critical_section"],"struct":["PyOnceLock"],"trait":["MutexExt","OnceExt","OnceLockExt","RwLockExt"]};

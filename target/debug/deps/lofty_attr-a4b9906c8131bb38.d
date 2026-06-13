@@ -1,0 +1,10 @@
+/Users/bertrand/DEV/tune-server-linux/target/debug/deps/lofty_attr-a4b9906c8131bb38.d: /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lib.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/attribute.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/internal.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_file.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_tag.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/util.rs
+
+/Users/bertrand/DEV/tune-server-linux/target/debug/deps/liblofty_attr-a4b9906c8131bb38.dylib: /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lib.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/attribute.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/internal.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_file.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_tag.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/util.rs
+
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lib.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/attribute.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/internal.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_file.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_tag.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/util.rs:

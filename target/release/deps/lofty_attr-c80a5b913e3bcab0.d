@@ -1,0 +1,10 @@
+/Users/bertrand/DEV/tune-server-linux/target/release/deps/lofty_attr-c80a5b913e3bcab0.d: /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lib.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/attribute.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/internal.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_file.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_tag.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/util.rs
+
+/Users/bertrand/DEV/tune-server-linux/target/release/deps/liblofty_attr-c80a5b913e3bcab0.dylib: /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lib.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/attribute.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/internal.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_file.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_tag.rs /Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/util.rs
+
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lib.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/attribute.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/internal.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_file.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/lofty_tag.rs:
+/Users/bertrand/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lofty_attr-0.11.1/src/util.rs:

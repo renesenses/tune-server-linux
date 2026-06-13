@@ -1,0 +1,11 @@
+error: failed to load manifest for workspace member `/Users/bertrand/DEV/tune-server-linux/rust/tune-server`
+referenced by workspace at `/Users/bertrand/DEV/tune-server-linux/Cargo.toml`
+
+Caused by:
+  failed to parse manifest at `/Users/bertrand/DEV/tune-server-linux/rust/tune-server/Cargo.toml`
+
+Caused by:
+  error inheriting `toml` from workspace root manifest's `workspace.dependencies.toml`
+
+Caused by:
+  `dependency.toml` was not found in `workspace.dependencies`

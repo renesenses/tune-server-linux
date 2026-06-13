@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["pyo3",[["impl&lt;T: <a class=\"trait\" href=\"pyo3/pyclass/trait.PyClass.html\" title=\"trait pyo3::pyclass::PyClass\">PyClass</a>&lt;Frozen = False&gt;&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/ops/deref/trait.DerefMut.html\" title=\"trait core::ops::deref::DerefMut\">DerefMut</a> for <a class=\"struct\" href=\"pyo3/pycell/struct.PyRefMut.html\" title=\"struct pyo3::pycell::PyRefMut\">PyRefMut</a>&lt;'_, T&gt;",0],["impl&lt;T: <a class=\"trait\" href=\"pyo3/pyclass/trait.PyClass.html\" title=\"trait pyo3::pyclass::PyClass\">PyClass</a>&lt;Frozen = False&gt;&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/ops/deref/trait.DerefMut.html\" title=\"trait core::ops::deref::DerefMut\">DerefMut</a> for <a class=\"struct\" href=\"pyo3/pyclass/struct.PyClassGuardMut.html\" title=\"struct pyo3::pyclass::PyClassGuardMut\">PyClassGuardMut</a>&lt;'_, T&gt;",0],["impl&lt;U: ?<a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/marker/trait.Sized.html\" title=\"trait core::marker::Sized\">Sized</a>&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/ops/deref/trait.DerefMut.html\" title=\"trait core::ops::deref::DerefMut\">DerefMut</a> for <a class=\"struct\" href=\"pyo3/pyclass/struct.PyClassGuardMap.html\" title=\"struct pyo3::pyclass::PyClassGuardMap\">PyClassGuardMap</a>&lt;'_, U, true&gt;",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1380]}

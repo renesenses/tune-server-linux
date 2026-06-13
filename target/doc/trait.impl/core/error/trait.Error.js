@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["pyo3",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"struct\" href=\"pyo3/struct.CastError.html\" title=\"struct pyo3::CastError\">CastError</a>&lt;'_, '_&gt;",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"struct\" href=\"pyo3/struct.CastIntoError.html\" title=\"struct pyo3::CastIntoError\">CastIntoError</a>&lt;'_&gt;",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"struct\" href=\"pyo3/struct.DowncastError.html\" title=\"struct pyo3::DowncastError\">DowncastError</a>&lt;'_, '_&gt;",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"struct\" href=\"pyo3/struct.DowncastIntoError.html\" title=\"struct pyo3::DowncastIntoError\">DowncastIntoError</a>&lt;'_&gt;",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"struct\" href=\"pyo3/struct.PyErr.html\" title=\"struct pyo3::PyErr\">PyErr</a>",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1354]}
