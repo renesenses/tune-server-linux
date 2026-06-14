@@ -40,10 +40,14 @@ BAT="$DEV/tune-server-linux/scripts/tune-update.bat"
 WEB="$DEV/tune-web-client/package.json"
 FLUTTER="$DEV/tune-server-flutter/pubspec.yaml"
 IPAD="$DEV/tune-server-ipados/Tune/project.yml"
+RUST="$DEV/tune-server-rust/Cargo.toml"
 
-for f in "$PYPROJECT" "$BAT" "$WEB" "$FLUTTER" "$IPAD"; do
+for f in "$PYPROJECT" "$BAT" "$WEB" "$FLUTTER" "$IPAD" "$RUST"; do
     [ -f "$f" ] || { echo "Error: missing $f" >&2; exit 1; }
 done
+
+# 0. Cargo.toml (workspace) — version = "X.Y.Z"
+sed -i.bak -E "s/^version = \"[0-9]+\\.[0-9]+\\.[0-9]+\"/version = \"$VERSION\"/" "$RUST" && rm "$RUST.bak"
 
 # 1. pyproject.toml — single line: version = "X.Y.Z"
 sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" "$PYPROJECT" && rm "$PYPROJECT.bak"
@@ -106,6 +110,7 @@ fi
 
 echo
 echo "Bumped Tune to v$VERSION (build $NEXT_BUILD for Apple targets)"
+echo "  - $RUST"
 echo "  - $PYPROJECT"
 echo "  - $BAT"
 echo "  - $WEB"
