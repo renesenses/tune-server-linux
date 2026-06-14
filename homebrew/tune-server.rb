@@ -2,7 +2,7 @@ class TuneServer < Formula
   desc "Multi-room music server with DLNA/UPnP, AirPlay, and streaming services"
   homepage "https://mozaiklabs.fr"
   url "https://github.com/renesenses/tune-server-linux/archive/refs/tags/v0.8.110.tar.gz"
-  sha256 "5171a8d9333e3eaa7b08b1571f0d17355446a6e1f75e8faa1a9eaa083e789122"
+  sha256 "e9a2e2ef09860fb91602eb87ccd6f3272e0d834939ed1d1eb15c78206d07ee6d"
   version "0.8.110"
   license "MIT"
 
@@ -13,7 +13,7 @@ class TuneServer < Formula
 
   resource "web-client" do
     url "https://github.com/renesenses/tune-web-client/archive/refs/tags/v0.8.110.tar.gz"
-    sha256 "3ee457292ad700ffe50a823ac7d40feac3abf0bb083d9a0f95df38a342fe09f6"
+    sha256 "4a2c726be40af412b1b3e7466818533c5fe58921fd2b43c5737cab11469bcab4"
   end
 
   def install
