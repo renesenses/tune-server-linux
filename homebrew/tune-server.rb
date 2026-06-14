@@ -1,9 +1,9 @@
 class TuneServer < Formula
   desc "Multi-room music server with DLNA/UPnP, AirPlay, and streaming services"
   homepage "https://mozaiklabs.fr"
-  url "https://github.com/renesenses/tune-server-linux/archive/refs/tags/v0.8.110.tar.gz"
+  url "https://github.com/renesenses/tune-server-linux/archive/refs/tags/v0.8.111.tar.gz"
   sha256 "e9a2e2ef09860fb91602eb87ccd6f3272e0d834939ed1d1eb15c78206d07ee6d"
-  version "0.8.110"
+  version "0.8.111"
   license "MIT"
 
   depends_on "node" => :build
@@ -12,7 +12,7 @@ class TuneServer < Formula
   depends_on "portaudio"
 
   resource "web-client" do
-    url "https://github.com/renesenses/tune-web-client/archive/refs/tags/v0.8.110.tar.gz"
+    url "https://github.com/renesenses/tune-web-client/archive/refs/tags/v0.8.111.tar.gz"
     sha256 "4a2c726be40af412b1b3e7466818533c5fe58921fd2b43c5737cab11469bcab4"
   end
 
@@ -43,7 +43,7 @@ class TuneServer < Formula
 
   def caveats
     <<~EOS
-      Tune Server v0.8.110 installed!
+      Tune Server v0.8.111 installed!
 
       Start the server:
         tune-server
