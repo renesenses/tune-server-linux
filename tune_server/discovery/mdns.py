@@ -160,7 +160,7 @@ class MdnsDiscovery:
 
                     found_ids = set()
                     for atv_config in atvs:
-                        dev_id = str(atv_config.identifier) or atv_config.name
+                        dev_id = str(atv_config.identifier).replace(":", "") or atv_config.name
                         found_ids.add(dev_id)
 
                         address = str(atv_config.address)
@@ -235,7 +235,7 @@ class MdnsDiscovery:
         atvs = await pyatv.scan(asyncio.get_running_loop(), timeout=10)
 
         for atv_config in atvs:
-            dev_id = str(atv_config.identifier) or atv_config.name
+            dev_id = str(atv_config.identifier).replace(":", "") or atv_config.name
             address = str(atv_config.address)
             name = atv_config.name
             airplay_version, mac_address = _extract_airplay_info(atv_config)
