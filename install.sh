@@ -35,6 +35,52 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# DEPRECATED — the Python edition of Tune Server is no longer maintained.
+#
+# Its HTTP API has fallen behind the current Tune web/mobile clients: a fresh
+# install serves a UI that calls routes this backend never implemented, so the
+# user gets 404 errors, a wrong "FREE" licence display, and empty log
+# downloads. The current, actively developed server is tune-server-rust —
+# install that instead. Refuse by default; a documented escape hatch
+# (TUNE_ALLOW_DEPRECATED=1) still lets a determined user proceed.
+# ---------------------------------------------------------------------------
+if [[ "${TUNE_ALLOW_DEPRECATED:-0}" != "1" ]]; then
+    cat >&2 <<'EOF'
+
+============================================================================
+  Tune Server — Python edition — DEPRECATED / NO LONGER MAINTAINED
+============================================================================
+
+  This installer ships an old server whose API no longer matches the Tune
+  web and mobile clients. Installing it leads to 404 errors, a wrong "FREE"
+  licence display, and empty log downloads.
+
+  Install the current server instead — tune-server-rust:
+
+    * Docker (recommended on Linux):
+        docker run -d --name tune-server --network host \
+          -v /path/to/music:/music:ro -v tune-data:/data \
+          -e TUNE_AUTO_SCAN=true renesenses/tune:dev
+
+    * Download page (binaries, macOS DMG, Windows):
+        https://mozaiklabs.fr/download
+
+    * GitHub releases:
+        https://github.com/renesenses/tune-server-rust/releases
+
+  (Advanced) To force this legacy Python install anyway:
+        TUNE_ALLOW_DEPRECATED=1 sudo ./install.sh [--systemd]
+
+============================================================================
+
+EOF
+    exit 1
+fi
+
+echo "==> WARNING: installing the DEPRECATED Python edition (TUNE_ALLOW_DEPRECATED=1 set)."
+echo "==> The current server is tune-server-rust — https://mozaiklabs.fr/download"
+
 # Detect package manager
 PKG_MANAGER=""
 if command -v apt-get &> /dev/null; then
