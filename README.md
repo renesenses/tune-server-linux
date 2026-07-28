@@ -1,5 +1,17 @@
 # Tune Server
 
+> ## ⚠️ This edition is deprecated — use **tune-server-rust** instead
+>
+> This is the **legacy Python edition**. It is no longer maintained and its API
+> has fallen behind the current Tune clients — installing it produces 404 errors,
+> a wrong **FREE** licence display, and empty log downloads. `install.sh` now
+> refuses to run for this reason.
+>
+> **Install the current server instead:**
+> - **Docker (recommended on Linux):** `docker run -d --name tune-server --network host -v /path/to/music:/music:ro -v tune-data:/data -e TUNE_AUTO_SCAN=true renesenses/tune:dev`
+> - **Download page (binaries, macOS DMG, Windows):** https://mozaiklabs.fr/download
+> - **GitHub releases:** https://github.com/renesenses/tune-server-rust/releases
+
 A free, open-source multi-room music server for audiophiles. Manage your local library and streaming services (Tidal, Qobuz, YouTube Music) from a single interface. Stream to any DLNA/UPnP renderer, AirPlay device, or local soundcard.
 
 Available on **Linux**, **macOS** (signed `.dmg`), **Windows**, **iPadOS/iOS** (native Swift), and **Flutter** (cross-platform).
